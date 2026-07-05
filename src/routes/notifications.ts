@@ -94,7 +94,12 @@ export function createNotificationsRouter(
     }
 
     const emails = toEmailList(existing.sendto).filter((e) => e !== req.params.email);
-    const updated = medias.map((m) => (m === existing ? { ...m, sendto: emails } : m));
+    // Zabbixはmedia.sendtoを空配列にできないため、最後の1件を削除する場合は
+    // media自体をmedias配列から除去する。
+    const updated =
+      emails.length > 0
+        ? medias.map((m) => (m === existing ? { ...m, sendto: emails } : m))
+        : medias.filter((m) => m !== existing);
 
     await zabbixClient.updateUserMedias(zabbixUserId, updated);
     res.status(204).end();
@@ -132,9 +137,11 @@ export function createNotificationsRouter(
   return router;
 }
 
-function reverseSeverityPreset(severity: number): keyof typeof SEVERITY_PRESETS {
+function reverseSeverityPreset(severity: number | string): keyof typeof SEVERITY_PRESETS {
+  // Zabbix APIはseverityを文字列（例: "48"）で返すため、数値に揃えてから比較する。
+  const severityNum = Number(severity);
   const match = (Object.keys(SEVERITY_PRESETS) as Array<keyof typeof SEVERITY_PRESETS>).find(
-    (key) => SEVERITY_PRESETS[key] === severity,
+    (key) => SEVERITY_PRESETS[key] === severityNum,
   );
   return match ?? 'warningAndAbove';
 }

@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import { Agent } from 'undici';
 import type { Config } from '../config';
 
@@ -13,7 +14,7 @@ export interface ZabbixMedia {
   mediatypeid: string;
   sendto: string | string[];
   active: '0' | '1'; // 0=有効, 1=無効 (Zabbix API仕様どおり)
-  severity: number; // ビットマスク
+  severity: number | string; // ビットマスク（Zabbix APIからの読み取り時は文字列で返る）
   period: string;
 }
 
@@ -147,15 +148,33 @@ export class ZabbixClient {
   }
 
   async updateUserMedias(zabbixUserId: string, medias: ZabbixMedia[]): Promise<void> {
+    // user.get(selectMedias)が返すオブジェクトには mediaid/userdirectory_mediaid など
+    // user.update が受け付けない読み取り専用フィールドが含まれるため、書き込み可能な
+    // フィールドだけを再構築してから送る。
+    const sanitized = medias.map((m) => ({
+      mediatypeid: m.mediatypeid,
+      sendto: m.sendto,
+      active: m.active,
+      severity: m.severity,
+      period: m.period,
+    }));
     await this.call('user.update', {
       userid: zabbixUserId,
-      medias,
+      medias: sanitized,
     });
   }
 
   // ---- onboarding スクリプト専用（信頼されたCLIからのみ呼ばれる） ----
 
+  /** 既に同名のホストグループが存在する場合はそれを再利用する（オンボーディング再実行時の冪等性のため）。 */
   async createHostGroup(name: string): Promise<string> {
+    const existing = await this.call<Array<{ groupid: string }>>('hostgroup.get', {
+      output: ['groupid'],
+      filter: { name: [name] },
+    });
+    if (existing[0]) {
+      return existing[0].groupid;
+    }
     const result = await this.call<{ groupids: string[] }>('hostgroup.create', { name });
     const groupId = result.groupids[0];
     if (!groupId) throw new Error(`hostgroup.create returned no groupid for "${name}"`);
@@ -163,8 +182,12 @@ export class ZabbixClient {
   }
 
   async createNotificationUser(username: string, notificationUserGroupId: string): Promise<string> {
+    // 通知専用アカウントはパスワードでログインすることを想定していないが、
+    // 内部認証が有効な環境ではuser.createにpasswdが必須のため、使われないランダム値を割り当てる。
+    const dummyPassword = crypto.randomBytes(24).toString('base64');
     const result = await this.call<{ userids: string[] }>('user.create', {
       username,
+      passwd: dummyPassword,
       roleid: this.config.notificationRoleId, // Zabbix 7.0のuser.createで必須
       usrgrps: [{ usrgrpid: notificationUserGroupId }],
       medias: [],
