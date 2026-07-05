@@ -31,6 +31,21 @@ export const PERIOD_PRESETS = {
   businessHours: '1-5,09:00-18:00',
 } as const;
 
+export interface ZabbixHost {
+  hostid: string;
+  name: string;
+}
+
+export interface ZabbixMaintenance {
+  maintenanceid: string;
+  name: string;
+  active_since: string;
+  active_till: string;
+  maintenance_type: string; // '0' | '1'（Zabbix APIからの読み取り時は文字列）
+  hosts?: Array<{ hostid: string; host: string }>;
+  groups?: Array<{ groupid: string; name: string }>;
+}
+
 interface JsonRpcError {
   code: number;
   message: string;
@@ -224,5 +239,94 @@ export class ZabbixClient {
     const actionId = result.actionids[0];
     if (!actionId) throw new Error(`action.create returned no actionid for "${name}"`);
     return actionId;
+  }
+
+  // ---- Phase 2: メンテナンス設定（顧客向けルートから呼ばれる公開メソッド） ----
+
+  /** 顧客のホストグループに属する機器一覧（対象機器選択肢用）。groupidsは呼び出し側（customerRepo経由）で解決した値のみ受け付ける。 */
+  async getHosts(groupIds: string[]): Promise<ZabbixHost[]> {
+    return this.call<ZabbixHost[]>('host.get', {
+      groupids: groupIds,
+      output: ['hostid', 'name'],
+    });
+  }
+
+  async getMaintenances(groupIds: string[]): Promise<ZabbixMaintenance[]> {
+    return this.call<ZabbixMaintenance[]>('maintenance.get', {
+      groupids: groupIds,
+      output: 'extend',
+      selectHosts: ['hostid', 'host'],
+      selectGroups: ['groupid', 'name'],
+    });
+  }
+
+  async createMaintenance(params: {
+    name: string;
+    activeSince: number; // UNIXタイムスタンプ（秒）
+    activeTill: number;
+    maintenanceType: 0 | 1; // 0: 通知停止のみ, 1: 監視停止
+    groupIds: string[]; // バックエンドで強制付与された顧客グループのみ
+    hostIds?: string[];
+  }): Promise<string> {
+    const result = await this.call<{ maintenanceids: string[] }>('maintenance.create', {
+      name: params.name,
+      active_since: params.activeSince,
+      active_till: params.activeTill,
+      maintenance_type: params.maintenanceType,
+      groupids: params.groupIds,
+      ...(params.hostIds && params.hostIds.length > 0 ? { hostids: params.hostIds } : {}),
+      timeperiods: [
+        {
+          timeperiod_type: 0, // ワンタイム
+          start_date: params.activeSince,
+          period: params.activeTill - params.activeSince,
+        },
+      ],
+    });
+    const id = result.maintenanceids[0];
+    if (!id) throw new Error(`maintenance.create returned no id for "${params.name}"`);
+    return id;
+  }
+
+  /**
+   * 指定されたmaintenanceidが顧客自身のホストグループに属するかを確認する。
+   * update/delete前に必ずこれを呼び、falseなら404として扱うこと（他顧客のメンテナンスを操作させないため）。
+   */
+  async verifyMaintenanceOwnership(maintenanceId: string, groupIds: string[]): Promise<boolean> {
+    const result = await this.call<Array<{ maintenanceid: string }>>('maintenance.get', {
+      maintenanceids: [maintenanceId],
+      groupids: groupIds,
+      output: ['maintenanceid'],
+    });
+    return result.length > 0;
+  }
+
+  async updateMaintenance(
+    maintenanceId: string,
+    params: {
+      name?: string;
+      activeSince?: number;
+      activeTill?: number;
+      maintenanceType?: 0 | 1;
+      hostIds?: string[];
+      groupIds: string[]; // 更新時も常に顧客グループへ強制的に固定し直す
+    },
+  ): Promise<void> {
+    const body: Record<string, unknown> = { maintenanceid: maintenanceId, groupids: params.groupIds };
+    if (params.name !== undefined) body.name = params.name;
+    if (params.maintenanceType !== undefined) body.maintenance_type = params.maintenanceType;
+    if (params.hostIds !== undefined) body.hostids = params.hostIds;
+    if (params.activeSince !== undefined) body.active_since = params.activeSince;
+    if (params.activeTill !== undefined) body.active_till = params.activeTill;
+    if (params.activeSince !== undefined && params.activeTill !== undefined) {
+      body.timeperiods = [
+        { timeperiod_type: 0, start_date: params.activeSince, period: params.activeTill - params.activeSince },
+      ];
+    }
+    await this.call('maintenance.update', body);
+  }
+
+  async deleteMaintenance(maintenanceId: string): Promise<void> {
+    await this.call('maintenance.delete', [maintenanceId]);
   }
 }

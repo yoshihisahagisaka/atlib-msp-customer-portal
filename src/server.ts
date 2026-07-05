@@ -10,6 +10,7 @@ import { AuthService } from './services/authService';
 import { ZabbixClient } from './services/zabbixClient';
 import { createAuthRouter } from './routes/auth';
 import { createNotificationsRouter } from './routes/notifications';
+import { createMaintenanceRouter } from './routes/maintenance';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
     '/api/notifications',
     createNotificationsRouter(authService, customerRepo, zabbixClient, config.zabbix),
   );
+  app.use('/api/maintenance', createMaintenanceRouter(authService, customerRepo, zabbixClient));
 
   app.listen(config.port, () => {
     logger.info(`msp-customer-portal listening on :${config.port}`);
