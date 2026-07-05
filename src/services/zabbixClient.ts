@@ -36,6 +36,21 @@ export interface ZabbixHost {
   name: string;
 }
 
+export interface ZabbixHostInterface {
+  type: string; // '1'=Agent(ICMP流用), '2'=SNMP
+  ip: string;
+  port: string;
+  details?: { community?: string };
+}
+
+export interface ZabbixHostDetail {
+  hostid: string;
+  host: string;
+  name: string;
+  status: string; // '0'=有効, '1'=無効
+  interfaces?: ZabbixHostInterface[];
+}
+
 export interface ZabbixMaintenance {
   maintenanceid: string;
   name: string;
@@ -328,5 +343,75 @@ export class ZabbixClient {
 
   async deleteMaintenance(maintenanceId: string): Promise<void> {
     await this.call('maintenance.delete', [maintenanceId]);
+  }
+
+  // ---- Phase 3: ホスト管理（顧客向けルートから呼ばれる公開メソッド） ----
+
+  async getHostsDetailed(groupIds: string[]): Promise<ZabbixHostDetail[]> {
+    return this.call<ZabbixHostDetail[]>('host.get', {
+      groupids: groupIds,
+      output: ['hostid', 'host', 'name', 'status'],
+      selectInterfaces: ['type', 'ip', 'port', 'details'],
+    });
+  }
+
+  async createHost(params: {
+    name: string;
+    ip: string;
+    monitorType: 'icmp' | 'snmp';
+    snmpCommunity?: string;
+    groupIds: string[]; // バックエンドで強制付与された顧客グループのみ
+    proxyHostId?: string | null; // 顧客環境のProxy ID（未設定ならZabbixサーバーが直接監視）
+  }): Promise<string> {
+    const isIcmp = params.monitorType === 'icmp';
+    // Zabbixの技術名（host）は表示名からスペースをアンダースコアに変換して生成する（設計書どおり）
+    // Zabbixの技術名（host）は日本語等のマルチバイト文字を受け付けず、使える文字種も限定される。
+    // 表示名（name）には顧客入力の名称をそのまま使い、技術名は衝突しないランダムなASCII識別子にする。
+    const technicalName = `host-${crypto.randomBytes(4).toString('hex')}`;
+
+    const body: Record<string, unknown> = {
+      host: technicalName,
+      name: params.name,
+      interfaces: isIcmp
+        ? [{ type: 1, main: 1, useip: 1, ip: params.ip, dns: '', port: '10050' }]
+        : [
+            {
+              type: 2,
+              main: 1,
+              useip: 1,
+              ip: params.ip,
+              dns: '',
+              port: '161',
+              details: { version: 2, bulk: 1, community: params.snmpCommunity || 'public' },
+            },
+          ],
+      groups: params.groupIds.map((groupid) => ({ groupid })),
+      templates: [{ templateid: isIcmp ? this.config.templateIcmpId : this.config.templateSnmpId }],
+      inventory_mode: 1,
+      ...(params.proxyHostId ? { proxy_hostid: params.proxyHostId } : {}),
+    };
+
+    const result = await this.call<{ hostids: string[] }>('host.create', body);
+    const id = result.hostids[0];
+    if (!id) throw new Error(`host.create returned no id for "${params.name}"`);
+    return id;
+  }
+
+  /** update/delete前に必ず呼ぶこと。falseなら404として扱う（他顧客の機器を操作させないため）。 */
+  async verifyHostOwnership(hostId: string, groupIds: string[]): Promise<boolean> {
+    const result = await this.call<Array<{ hostid: string }>>('host.get', {
+      hostids: [hostId],
+      groupids: groupIds,
+      output: ['hostid'],
+    });
+    return result.length > 0;
+  }
+
+  async setHostStatus(hostId: string, status: 0 | 1): Promise<void> {
+    await this.call('host.update', { hostid: hostId, status });
+  }
+
+  async deleteHost(hostId: string): Promise<void> {
+    await this.call('host.delete', [hostId]);
   }
 }

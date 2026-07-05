@@ -7,6 +7,7 @@ export interface Customer {
   email: string;
   passwordHash: string;
   zabbixUserId: string;
+  zabbixProxyId: string | null;
   status: 'active' | 'suspended';
 }
 
@@ -21,7 +22,7 @@ export class CustomerRepo {
 
   async findByEmail(email: string): Promise<Customer | null> {
     const { rows } = await this.pool.query(
-      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, status
+      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, zabbix_proxy_id, status
        FROM customers WHERE email = $1 AND status = 'active'`,
       [email],
     );
@@ -30,7 +31,7 @@ export class CustomerRepo {
 
   async findById(customerId: string): Promise<Customer | null> {
     const { rows } = await this.pool.query(
-      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, status
+      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, zabbix_proxy_id, status
        FROM customers WHERE id = $1 AND status = 'active'`,
       [customerId],
     );
@@ -50,6 +51,13 @@ export class CustomerRepo {
     const customer = await this.findById(customerId);
     if (!customer) throw new Error(`Customer not found: ${customerId}`);
     return customer.zabbixUserId;
+  }
+
+  /** 顧客環境のZabbix Proxy ID（未設定の場合はnull＝Zabbixサーバーが直接監視）。 */
+  async getZabbixProxyId(customerId: string): Promise<string | null> {
+    const customer = await this.findById(customerId);
+    if (!customer) throw new Error(`Customer not found: ${customerId}`);
+    return customer.zabbixProxyId;
   }
 
   async updatePasswordHash(customerId: string, passwordHash: string): Promise<void> {
@@ -99,6 +107,7 @@ export class CustomerRepo {
     email: string;
     password_hash: string;
     zabbix_userid: string;
+    zabbix_proxy_id: string | null;
     status: 'active' | 'suspended';
   }): Customer {
     return {
@@ -108,6 +117,7 @@ export class CustomerRepo {
       email: row.email,
       passwordHash: row.password_hash,
       zabbixUserId: row.zabbix_userid,
+      zabbixProxyId: row.zabbix_proxy_id,
       status: row.status,
     };
   }

@@ -22,6 +22,8 @@ export interface Config {
     mediaTypeEmailId: string;
     notificationUsrgrpId: string; // オンボーディング時に通知用Zabbixユーザーを所属させるユーザーグループID
     notificationRoleId: string; // Zabbix 7.0のuser.createで必須のroleid（通知専用ユーザーに割り当てるロール）
+    templateIcmpId: string; // 「ICMP Ping」テンプレートID
+    templateSnmpId: string; // 「Network Generic Device by SNMP」テンプレートID
   };
   smtp: {
     host: string;
@@ -87,6 +89,8 @@ export async function loadConfig(): Promise<Config> {
       mediaTypeEmailId: required('ZABBIX_MEDIATYPE_EMAIL', process.env.ZABBIX_MEDIATYPE_EMAIL),
       notificationUsrgrpId: required('ZABBIX_NOTIFICATION_USRGRPID', process.env.ZABBIX_NOTIFICATION_USRGRPID),
       notificationRoleId: required('ZABBIX_NOTIFICATION_ROLEID', process.env.ZABBIX_NOTIFICATION_ROLEID),
+      templateIcmpId: required('ZABBIX_TEMPLATE_ICMP', process.env.ZABBIX_TEMPLATE_ICMP),
+      templateSnmpId: required('ZABBIX_TEMPLATE_SNMP', process.env.ZABBIX_TEMPLATE_SNMP),
     },
     smtp: {
       host: required('SMTP_HOST', process.env.SMTP_HOST),
