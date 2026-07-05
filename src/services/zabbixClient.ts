@@ -1,4 +1,13 @@
+import { Agent } from 'undici';
 import type { Config } from '../config';
+
+/**
+ * ZabbixServerの内部IPへ直接接続する場合（DNS名ではなくIPをapiUrlに使う場合）、
+ * TLS証明書のホスト名検証は失敗する（証明書はhostHeaderのFQDN用のため）。
+ * api-bridge.php（既存のPHP実装）が CURLOPT_SSL_VERIFYPEER=false としているのと
+ * 同じ理由で、内部ネットワーク経由の接続に限り検証を無効化する。
+ */
+const insecureInternalAgent = new Agent({ connect: { rejectUnauthorized: false } });
 
 export interface ZabbixMedia {
   mediatypeid: string;
@@ -71,6 +80,7 @@ export class ZabbixClient {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      dispatcher: this.config.hostHeader ? insecureInternalAgent : undefined,
     });
 
     if (!res.ok) {
@@ -89,6 +99,7 @@ export class ZabbixClient {
           method: 'POST',
           headers,
           body: JSON.stringify(retryBody),
+          dispatcher: this.config.hostHeader ? insecureInternalAgent : undefined,
         });
         const retryJson = (await retryRes.json()) as JsonRpcResponse<T>;
         if (retryJson.error) {
