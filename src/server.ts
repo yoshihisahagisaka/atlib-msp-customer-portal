@@ -1,3 +1,4 @@
+import path from 'path';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
   );
   app.use('/api/maintenance', createMaintenanceRouter(authService, customerRepo, zabbixClient));
   app.use('/api/hosts', createHostsRouter(authService, customerRepo, zabbixClient));
+
+  app.use(express.static(path.join(__dirname, '../public')));
 
   app.listen(config.port, () => {
     logger.info(`msp-customer-portal listening on :${config.port}`);

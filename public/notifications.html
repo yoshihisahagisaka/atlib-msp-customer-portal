@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>通知設定 | atLIB InfraVision ポータル</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav class="app-nav" id="app-nav"></nav>
+
+<div class="page">
+  <h1>通知設定</h1>
+
+  <div class="card">
+    <h2>通知先メールアドレス</h2>
+    <table>
+      <thead><tr><th>メールアドレス</th><th></th></tr></thead>
+      <tbody id="email-list"></tbody>
+    </table>
+    <p id="no-email-message" class="info-message" style="display:none;">通知先メールアドレスが登録されていません。</p>
+
+    <div class="form-row" style="margin-top:1rem; display:flex; gap:0.5rem; align-items:flex-end;">
+      <div style="flex:1;">
+        <label for="new-email">メールアドレスを追加</label>
+        <input type="email" id="new-email" placeholder="example@atlib.jp">
+      </div>
+      <button class="btn" id="add-email-btn">+ 追加</button>
+    </div>
+    <div id="email-error" class="error-message" style="display:none;"></div>
+  </div>
+
+  <div class="card">
+    <h2>通知レベル</h2>
+    <div class="radio-group" id="severity-group">
+      <label><input type="radio" name="severity" value="criticalOnly"> 重大のみ</label>
+      <label><input type="radio" name="severity" value="warningAndAbove"> 警告以上</label>
+      <label><input type="radio" name="severity" value="all"> すべて</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>通知時間帯</h2>
+    <div class="radio-group" id="period-group">
+      <label><input type="radio" name="period" value="always"> 24時間</label>
+      <label><input type="radio" name="period" value="businessHours"> 営業時間のみ（平日 9:00-18:00）</label>
+    </div>
+    <p id="settings-message" class="info-message" style="display:none;"></p>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let currentEmails = [];
+
+function renderEmails() {
+  const tbody = document.getElementById('email-list');
+  const noEmailMsg = document.getElementById('no-email-message');
+  tbody.innerHTML = '';
+
+  if (currentEmails.length === 0) {
+    noEmailMsg.style.display = 'block';
+    return;
+  }
+  noEmailMsg.style.display = 'none';
+
+  currentEmails.forEach((email) => {
+    const tr = document.createElement('tr');
+    const tdEmail = document.createElement('td');
+    tdEmail.textContent = email;
+    const tdAction = document.createElement('td');
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-secondary btn-small';
+    delBtn.textContent = '削除';
+    delBtn.addEventListener('click', () => deleteEmail(email));
+    tdAction.appendChild(delBtn);
+    tr.appendChild(tdEmail);
+    tr.appendChild(tdAction);
+    tbody.appendChild(tr);
+  });
+}
+
+function setSettingsEnabled(enabled) {
+  document.querySelectorAll('#severity-group input, #period-group input').forEach((el) => {
+    el.disabled = !enabled;
+  });
+  const msg = document.getElementById('settings-message');
+  if (!enabled) {
+    msg.textContent = '先に通知先メールアドレスを追加してください。';
+    msg.style.display = 'block';
+  } else {
+    msg.style.display = 'none';
+  }
+}
+
+async function loadNotifications() {
+  const data = await apiFetch('/notifications');
+  currentEmails = data.emails;
+  renderEmails();
+  document.querySelector(`input[name="severity"][value="${data.severityPreset}"]`).checked = true;
+  document.querySelector(`input[name="period"][value="${data.periodPreset}"]`).checked = true;
+  setSettingsEnabled(currentEmails.length > 0);
+}
+
+async function deleteEmail(email) {
+  if (!confirm(`${email} を通知先から削除しますか？`)) return;
+  await apiFetch(`/notifications/emails/${encodeURIComponent(email)}`, { method: 'DELETE' });
+  await loadNotifications();
+}
+
+document.getElementById('add-email-btn').addEventListener('click', async () => {
+  const input = document.getElementById('new-email');
+  const errorEl = document.getElementById('email-error');
+  errorEl.style.display = 'none';
+  const email = input.value.trim();
+  if (!email) return;
+
+  try {
+    await apiFetch('/notifications/emails', { method: 'POST', body: { email } });
+    input.value = '';
+    await loadNotifications();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+
+async function submitSettings() {
+  const severityPreset = document.querySelector('input[name="severity"]:checked')?.value;
+  const periodPreset = document.querySelector('input[name="period"]:checked')?.value;
+  if (!severityPreset || !periodPreset) return;
+  await apiFetch('/notifications/settings', { method: 'PUT', body: { severityPreset, periodPreset } });
+}
+
+document.querySelectorAll('#severity-group input, #period-group input').forEach((el) => {
+  el.addEventListener('change', submitSettings);
+});
+
+initAppNav('notifications');
+loadNotifications();
+</script>
+</body>
+</html>

@@ -1,0 +1,753 @@
+:root {
+  --color-primary: #1f3556;
+  --color-primary-dark: #16263f;
+  --color-accent: #2dbe9d;
+  --color-accent-dark: #219c80;
+  --color-orange: #f28c38;
+  --color-orange-dark: #d9761f;
+  --color-danger: #dc2626;
+  --color-border: #d8dee6;
+  --color-bg: #f8fafc;
+  --color-bg-sky: #eaf4fb;
+  --color-text: #1f2937;
+  --color-muted: #6b7280;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.7;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+.lp-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.9rem 1.5rem;
+}
+
+.lp-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-outline {
+  display: inline-block;
+  background: transparent;
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.6rem 1.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  font-size: 0.9rem;
+}
+
+.btn-outline:hover {
+  background: #f3f6f9;
+  border-color: var(--color-primary);
+}
+
+.lp-nav .brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--color-primary);
+}
+
+.lp-nav .brand span {
+  color: var(--color-orange);
+}
+
+.section {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.section-title {
+  text-align: center;
+  font-size: 1.8rem;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.section-subtitle {
+  text-align: center;
+  color: var(--color-accent-dark);
+  font-weight: 600;
+  margin-bottom: 2.5rem;
+}
+
+/* ボタン */
+.btn-cta {
+  display: inline-block;
+  background: var(--color-orange);
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  padding: 0.9rem 2rem;
+  border-radius: 999px;
+  font-size: 1.05rem;
+  box-shadow: 0 4px 14px rgba(242, 140, 56, 0.35);
+}
+
+.btn-cta:hover {
+  background: var(--color-orange-dark);
+}
+
+.btn-cta-small {
+  padding: 0.6rem 1.4rem;
+  font-size: 0.9rem;
+}
+
+/* ヒーロー */
+.hero {
+  background: linear-gradient(180deg, var(--color-bg-sky), #fff);
+  padding: 3rem 1.5rem 4rem;
+  text-align: center;
+}
+
+.hero-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.hero-eyebrow {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: 1rem;
+}
+
+.hero h1 {
+  font-size: 2.4rem;
+  color: var(--color-primary);
+  margin: 0.5rem 0;
+}
+
+.hero .service-name-ja {
+  color: var(--color-accent-dark);
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+
+.hero-image-wrap {
+  margin: 2rem auto;
+  max-width: 640px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #dbe9f4;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.hero-copy {
+  font-size: 1.1rem;
+  color: var(--color-text);
+  margin: 1.5rem 0 2rem;
+}
+
+.hero-badges {
+  display: flex;
+  justify-content: center;
+  gap: 2.5rem;
+  flex-wrap: wrap;
+  margin-top: 2rem;
+}
+
+.hero-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.icon-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #eaf4fb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent-dark);
+}
+
+/* カードグリッド共通 */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+.card-grid.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.info-card {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.info-card h3 {
+  color: var(--color-primary);
+  margin: 0 0 0.6rem;
+  font-size: 1.05rem;
+}
+
+.info-card p {
+  color: var(--color-muted);
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.info-card .num-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-orange);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 0.6rem;
+}
+
+/* CTAバナー */
+.cta-banner {
+  background: #fff7ed;
+  border: 2px solid var(--color-orange);
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+  margin-top: 2rem;
+}
+
+.cta-banner .headline {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.cta-banner p {
+  color: var(--color-muted);
+  margin-bottom: 1.2rem;
+}
+
+/* 差別化（2カラム比較） */
+.diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.diff-card {
+  border-radius: 12px;
+  padding: 1.5rem;
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.diff-card.highlight {
+  border-color: var(--color-accent);
+  background: #f2fbf9;
+}
+
+.diff-card .diff-label {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--color-primary);
+  margin-bottom: 0.3rem;
+}
+
+.diff-card .diff-metaphor {
+  color: var(--color-accent-dark);
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
+.callout-box {
+  background: #fff;
+  border-left: 4px solid var(--color-orange);
+  border-radius: 8px;
+  padding: 1.2rem 1.5rem;
+  color: var(--color-text);
+}
+
+.callout-box strong {
+  color: var(--color-orange-dark);
+}
+
+/* 機能セクション（画像＋リスト） */
+.feature-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+.feature-image-wrap {
+  border-radius: 12px;
+  overflow: hidden;
+  background: #dbe9f4;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.feature-plan-tag {
+  display: inline-block;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.feature-item {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.feature-item .icon-circle {
+  flex-shrink: 0;
+}
+
+.feature-item h4 {
+  margin: 0 0 0.3rem;
+  color: var(--color-primary);
+}
+
+.feature-item p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.95rem;
+}
+
+/* 料金プラン */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  align-items: stretch;
+}
+
+.pricing-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.pricing-card.featured {
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 8px 24px rgba(45, 190, 157, 0.15);
+}
+
+.pricing-badge {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-orange);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.3rem 1rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pricing-card .plan-name {
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-primary);
+  font-size: 1.1rem;
+}
+
+.pricing-card .plan-sub {
+  text-align: center;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.pricing-card .plan-price {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-orange);
+  margin: 0.5rem 0;
+}
+
+.pricing-card .plan-price small {
+  font-size: 0.95rem;
+  color: var(--color-muted);
+  font-weight: 400;
+}
+
+.pricing-card .plan-initial {
+  text-align: center;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.pricing-card .plan-dashboard {
+  text-align: center;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.pricing-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+  flex-grow: 1;
+}
+
+.pricing-card ul li {
+  padding: 0.35rem 0;
+  font-size: 0.9rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pricing-card ul li::before {
+  content: "✓";
+  color: var(--color-accent-dark);
+  font-weight: 700;
+}
+
+.pricing-note {
+  text-align: center;
+  margin-top: 2rem;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  background: #fff;
+  border-radius: 10px;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+}
+
+/* 比較テーブル */
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  background: #fff;
+}
+
+.comparison-table th,
+.comparison-table td {
+  border: 1px solid var(--color-border);
+  padding: 0.8rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.comparison-table thead th {
+  background: #f3f6f9;
+  color: var(--color-primary);
+}
+
+.comparison-table td:first-child,
+.comparison-table th:first-child {
+  text-align: left;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.comparison-table .best-col {
+  background: #f2fbf9;
+  font-weight: 600;
+}
+
+.comparison-table thead .best-col {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.reasons-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.reasons-grid .reason {
+  font-weight: 600;
+  color: var(--color-primary);
+  font-size: 0.9rem;
+}
+
+/* 導入ステップ */
+.steps-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.step-card {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.step-card .step-num {
+  color: var(--color-orange);
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.step-card h4 {
+  color: var(--color-primary);
+  margin: 0.5rem 0;
+}
+
+.step-card p {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* FAQ */
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.faq-item {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1.2rem 1.5rem;
+}
+
+.faq-q {
+  display: flex;
+  gap: 0.7rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: 0.6rem;
+}
+
+.faq-a {
+  display: flex;
+  gap: 0.7rem;
+  color: var(--color-muted);
+  font-size: 0.95rem;
+}
+
+.faq-q .qa-badge,
+.faq-a .qa-badge {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  font-size: 0.85rem;
+}
+
+.faq-q .qa-badge {
+  background: var(--color-primary);
+}
+
+.faq-a .qa-badge {
+  background: var(--color-accent-dark);
+}
+
+/* フッター */
+.lp-footer {
+  background: var(--color-primary);
+  color: #eef2f6;
+  padding: 3rem 1.5rem 2rem;
+}
+
+.footer-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 2rem;
+}
+
+.footer-company h3 {
+  color: #fff;
+  margin-top: 0;
+}
+
+.footer-company p {
+  margin: 0.3rem 0;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+}
+
+.footer-cert {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1.2rem;
+}
+
+.footer-cert p {
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.cert-logo-wrap {
+  background: #fff;
+  border-radius: 8px;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+}
+
+.cert-logo-wrap img {
+  max-height: 70px;
+}
+
+.footer-bottom {
+  text-align: center;
+  margin-top: 2.5rem;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.footer-bottom a {
+  color: #cbd5e1;
+}
+
+/* ポリシー系ドキュメントページ */
+.policy-page {
+  max-width: 760px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 2.5rem;
+  margin-top: 2.5rem;
+  margin-bottom: 3rem;
+}
+
+.policy-page h2 {
+  color: var(--color-primary);
+  font-size: 1.15rem;
+  margin-top: 2rem;
+}
+
+.policy-page p,
+.policy-page li {
+  color: var(--color-text);
+  font-size: 0.95rem;
+}
+
+.policy-page .policy-date {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin-top: 2rem;
+}
+
+/* レスポンシブ */
+@media (max-width: 640px) {
+  .lp-nav {
+    flex-direction: column;
+    gap: 0.7rem;
+    align-items: stretch;
+  }
+
+  .lp-nav-actions {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 860px) {
+  .card-grid,
+  .card-grid.cols-3,
+  .diff-grid,
+  .pricing-grid,
+  .steps-grid,
+  .reasons-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-inner {
+    grid-template-columns: 1fr;
+  }
+
+  .hero h1 {
+    font-size: 1.8rem;
+  }
+
+  .comparison-table {
+    min-width: 560px;
+  }
+}

@@ -38,6 +38,16 @@ export class CustomerRepo {
     return rows[0] ? this.mapRow(rows[0]) : null;
   }
 
+  /** オンボーディングスクリプトの再実行防止（customer_codeの重複チェック）専用。ステータス問わず検索する。 */
+  async findByCustomerCode(customerCode: string): Promise<Customer | null> {
+    const { rows } = await this.pool.query(
+      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, zabbix_proxy_id, status
+       FROM customers WHERE customer_code = $1`,
+      [customerCode],
+    );
+    return rows[0] ? this.mapRow(rows[0]) : null;
+  }
+
   /** 顧客に紐づく全ホストグループIDを返す。1件のみの顧客も配列長1で返す（分岐不要にするため）。 */
   async resolveHostgroupIds(customerId: string): Promise<string[]> {
     const { rows } = await this.pool.query<{ zabbix_groupid: string }>(
@@ -74,10 +84,11 @@ export class CustomerRepo {
     passwordHash: string;
     zabbixUserId: string;
     zabbixActionId?: string;
+    zabbixProxyId?: string;
   }): Promise<string> {
     const { rows } = await this.pool.query<{ id: string }>(
-      `INSERT INTO customers (customer_code, company_name, email, password_hash, zabbix_userid, zabbix_actionid)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO customers (customer_code, company_name, email, password_hash, zabbix_userid, zabbix_actionid, zabbix_proxy_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         input.customerCode,
@@ -86,6 +97,7 @@ export class CustomerRepo {
         input.passwordHash,
         input.zabbixUserId,
         input.zabbixActionId ?? null,
+        input.zabbixProxyId ?? null,
       ],
     );
     const id = rows[0]?.id;

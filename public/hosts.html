@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>機器管理 | atLIB InfraVision ポータル</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav class="app-nav" id="app-nav"></nav>
+
+<div class="page">
+  <h1>機器管理</h1>
+
+  <div class="card">
+    <h2>登録済み機器</h2>
+    <table>
+      <thead>
+        <tr><th>名称</th><th>IPアドレス</th><th>監視方式</th><th>状態</th><th></th></tr>
+      </thead>
+      <tbody id="host-list"></tbody>
+    </table>
+    <p id="no-host-message" class="info-message" style="display:none;">登録済みの機器はありません。</p>
+  </div>
+
+  <div class="card">
+    <h2>+ 機器を追加</h2>
+    <form id="host-form">
+      <div class="form-row">
+        <label for="name">名称</label>
+        <input type="text" id="name" required>
+      </div>
+      <div class="form-row">
+        <label for="ip">IPアドレス</label>
+        <input type="text" id="ip" required placeholder="192.168.1.10">
+      </div>
+      <div class="form-row">
+        <label>監視方式</label>
+        <div class="radio-group">
+          <label><input type="radio" name="monitor-type" value="icmp" checked> ICMPのみ（死活監視）</label>
+          <label><input type="radio" name="monitor-type" value="snmp"> SNMP</label>
+        </div>
+      </div>
+      <div class="form-row" id="snmp-community-wrap" style="display:none;">
+        <label for="snmp-community">SNMPコミュニティ名</label>
+        <input type="text" id="snmp-community" placeholder="public">
+      </div>
+      <div id="form-error" class="error-message" style="display:none;"></div>
+      <button type="submit" class="btn" id="submit-btn">追加する</button>
+    </form>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+document.querySelectorAll('input[name="monitor-type"]').forEach((el) => {
+  el.addEventListener('change', () => {
+    const isSnmp = document.querySelector('input[name="monitor-type"]:checked').value === 'snmp';
+    document.getElementById('snmp-community-wrap').style.display = isSnmp ? 'block' : 'none';
+  });
+});
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+async function loadHosts() {
+  const hosts = await apiFetch('/hosts');
+  const tbody = document.getElementById('host-list');
+  const noMsg = document.getElementById('no-host-message');
+  tbody.innerHTML = '';
+
+  if (hosts.length === 0) {
+    noMsg.style.display = 'block';
+    return;
+  }
+  noMsg.style.display = 'none';
+
+  hosts.forEach((h) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(h.name)}</td>
+      <td>${escapeHtml(h.ip)}</td>
+      <td>${h.monitorType === 'snmp' ? 'SNMP' : 'ICMPのみ'}</td>
+      <td><span class="badge ${h.enabled ? 'badge-enabled' : 'badge-disabled'}">${h.enabled ? '有効' : '無効'}</span></td>
+      <td class="actions"></td>
+    `;
+    const actionsTd = tr.querySelector('.actions');
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'btn btn-secondary btn-small';
+    toggleBtn.textContent = h.enabled ? '無効化' : '有効化';
+    toggleBtn.addEventListener('click', () => toggleStatus(h.id, !h.enabled));
+    actionsTd.appendChild(toggleBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger btn-small';
+    delBtn.textContent = '削除';
+    delBtn.addEventListener('click', () => deleteHost(h.id, h.name));
+    actionsTd.appendChild(delBtn);
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function toggleStatus(id, enabled) {
+  await apiFetch(`/hosts/${id}/status`, { method: 'PUT', body: { enabled } });
+  await loadHosts();
+}
+
+async function deleteHost(id, name) {
+  if (!confirm(`機器「${name}」を削除します。監視履歴・統計データもすべて削除され、元に戻せません。よろしいですか？`)) {
+    return;
+  }
+  const typed = prompt(`削除を確定するには、機器名「${name}」を正確に入力してください。`);
+  if (typed !== name) {
+    if (typed !== null) alert('入力された名称が一致しないため、削除を中止しました。');
+    return;
+  }
+  await apiFetch(`/hosts/${id}`, { method: 'DELETE' });
+  await loadHosts();
+}
+
+document.getElementById('host-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('form-error');
+  errorEl.style.display = 'none';
+
+  const monitorType = document.querySelector('input[name="monitor-type"]:checked').value;
+  const body = {
+    name: document.getElementById('name').value,
+    ip: document.getElementById('ip').value,
+    monitorType,
+    snmpCommunity: monitorType === 'snmp' ? document.getElementById('snmp-community').value : undefined,
+  };
+
+  try {
+    await apiFetch('/hosts', { method: 'POST', body });
+    document.getElementById('host-form').reset();
+    document.getElementById('snmp-community-wrap').style.display = 'none';
+    await loadHosts();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+
+initAppNav('hosts');
+loadHosts();
+</script>
+</body>
+</html>

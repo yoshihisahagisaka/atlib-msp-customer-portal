@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>メンテナンス設定 | atLIB InfraVision ポータル</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav class="app-nav" id="app-nav"></nav>
+
+<div class="page">
+  <h1>メンテナンス設定</h1>
+
+  <div class="card">
+    <h2>登録済みメンテナンス</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th><th>開始</th><th>終了</th><th>種別</th><th>対象</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="maintenance-list"></tbody>
+    </table>
+    <p id="no-maintenance-message" class="info-message" style="display:none;">登録済みのメンテナンスはありません。</p>
+  </div>
+
+  <div class="card">
+    <h2 id="form-title">+ メンテナンスを追加</h2>
+    <form id="maintenance-form">
+      <input type="hidden" id="edit-id">
+      <div class="form-row">
+        <label for="name">名称</label>
+        <input type="text" id="name" required>
+      </div>
+      <div class="form-row" style="display:flex; gap:1rem;">
+        <div style="flex:1;">
+          <label for="active-since">開始日時</label>
+          <input type="datetime-local" id="active-since" required>
+        </div>
+        <div style="flex:1;">
+          <label for="active-till">終了日時</label>
+          <input type="datetime-local" id="active-till" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>種別</label>
+        <div class="radio-group">
+          <label><input type="radio" name="maintenance-type" value="notificationsOnly" checked> 停止通知のみ</label>
+          <label><input type="radio" name="maintenance-type" value="fullStop"> 監視停止</label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="all-hosts" checked style="width:auto; margin-right:0.4rem;">すべての機器を対象にする</label>
+      </div>
+      <div class="form-row" id="host-checklist-wrap" style="display:none;">
+        <label>対象機器</label>
+        <div class="host-checklist" id="host-checklist"></div>
+      </div>
+      <div id="form-error" class="error-message" style="display:none;"></div>
+      <div style="display:flex; gap:0.5rem;">
+        <button type="submit" class="btn" id="submit-btn">追加する</button>
+        <button type="button" class="btn btn-secondary" id="cancel-edit-btn" style="display:none;">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allHosts = [];
+
+function toDatetimeLocal(unixSeconds) {
+  const d = new Date(unixSeconds * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocal(value) {
+  return Math.floor(new Date(value).getTime() / 1000);
+}
+
+function formatDisplay(unixSeconds) {
+  const d = new Date(unixSeconds * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderHostChecklist(selectedIds) {
+  const wrap = document.getElementById('host-checklist');
+  wrap.innerHTML = '';
+  allHosts.forEach((h) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = h.id;
+    cb.style.width = 'auto';
+    if (selectedIds && selectedIds.includes(h.id)) cb.checked = true;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(h.name));
+    wrap.appendChild(label);
+  });
+}
+
+document.getElementById('all-hosts').addEventListener('change', (e) => {
+  document.getElementById('host-checklist-wrap').style.display = e.target.checked ? 'none' : 'block';
+});
+
+async function loadHosts() {
+  allHosts = await apiFetch('/maintenance/hosts');
+  renderHostChecklist([]);
+}
+
+async function loadMaintenances() {
+  const list = await apiFetch('/maintenance');
+  const tbody = document.getElementById('maintenance-list');
+  const noMsg = document.getElementById('no-maintenance-message');
+  tbody.innerHTML = '';
+
+  if (list.length === 0) {
+    noMsg.style.display = 'block';
+    return;
+  }
+  noMsg.style.display = 'none';
+
+  list.forEach((m) => {
+    const tr = document.createElement('tr');
+    const target = m.hosts.length > 0 ? m.hosts.map((h) => h.name).join(', ') : 'すべての機器';
+    tr.innerHTML = `
+      <td>${escapeHtml(m.name)}</td>
+      <td>${formatDisplay(m.activeSince)}</td>
+      <td>${formatDisplay(m.activeTill)}</td>
+      <td>${m.maintenanceType === 'fullStop' ? '監視停止' : '停止通知のみ'}</td>
+      <td>${escapeHtml(target)}</td>
+      <td class="actions"></td>
+    `;
+    const actionsTd = tr.querySelector('.actions');
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-secondary btn-small';
+    editBtn.textContent = '編集';
+    editBtn.addEventListener('click', () => startEdit(m));
+    actionsTd.appendChild(editBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger btn-small';
+    delBtn.textContent = '削除';
+    delBtn.addEventListener('click', () => deleteMaintenance(m.id, m.name));
+    actionsTd.appendChild(delBtn);
+
+    tbody.appendChild(tr);
+  });
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function startEdit(m) {
+  document.getElementById('edit-id').value = m.id;
+  document.getElementById('name').value = m.name;
+  document.getElementById('active-since').value = toDatetimeLocal(m.activeSince);
+  document.getElementById('active-till').value = toDatetimeLocal(m.activeTill);
+  document.querySelector(`input[name="maintenance-type"][value="${m.maintenanceType}"]`).checked = true;
+
+  const isAllHosts = m.hosts.length === 0;
+  document.getElementById('all-hosts').checked = isAllHosts;
+  document.getElementById('host-checklist-wrap').style.display = isAllHosts ? 'none' : 'block';
+  renderHostChecklist(m.hosts.map((h) => h.id));
+
+  document.getElementById('form-title').textContent = 'メンテナンスを編集';
+  document.getElementById('submit-btn').textContent = '更新する';
+  document.getElementById('cancel-edit-btn').style.display = 'inline-block';
+  window.scrollTo({ top: document.getElementById('maintenance-form').offsetTop - 20, behavior: 'smooth' });
+}
+
+function resetForm() {
+  document.getElementById('maintenance-form').reset();
+  document.getElementById('edit-id').value = '';
+  document.getElementById('host-checklist-wrap').style.display = 'none';
+  renderHostChecklist([]);
+  document.getElementById('form-title').textContent = '+ メンテナンスを追加';
+  document.getElementById('submit-btn').textContent = '追加する';
+  document.getElementById('cancel-edit-btn').style.display = 'none';
+}
+
+document.getElementById('cancel-edit-btn').addEventListener('click', resetForm);
+
+async function deleteMaintenance(id, name) {
+  if (!confirm(`メンテナンス「${name}」を削除しますか？`)) return;
+  await apiFetch(`/maintenance/${id}`, { method: 'DELETE' });
+  await loadMaintenances();
+}
+
+document.getElementById('maintenance-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('form-error');
+  errorEl.style.display = 'none';
+
+  const editId = document.getElementById('edit-id').value;
+  const allHostsChecked = document.getElementById('all-hosts').checked;
+  const selectedHostIds = Array.from(document.querySelectorAll('#host-checklist input:checked')).map((el) => el.value);
+
+  const body = {
+    name: document.getElementById('name').value,
+    activeSince: fromDatetimeLocal(document.getElementById('active-since').value),
+    activeTill: fromDatetimeLocal(document.getElementById('active-till').value),
+    maintenanceType: document.querySelector('input[name="maintenance-type"]:checked').value,
+    allHosts: allHostsChecked,
+    hostIds: allHostsChecked ? undefined : selectedHostIds,
+  };
+
+  if (body.activeTill <= body.activeSince) {
+    errorEl.textContent = '終了日時は開始日時より後にしてください。';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    if (editId) {
+      await apiFetch(`/maintenance/${editId}`, { method: 'PUT', body });
+    } else {
+      await apiFetch('/maintenance', { method: 'POST', body });
+    }
+    resetForm();
+    await loadMaintenances();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+
+initAppNav('maintenance');
+loadHosts();
+loadMaintenances();
+</script>
+</body>
+</html>

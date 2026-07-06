@@ -13,10 +13,14 @@ import { ZabbixClient } from '../../src/services/zabbixClient';
  * 使い方:
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --plan "エントリープラン"
+ *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --proxy-id 10123
  *
  * --plan は複数指定可（本体グループに加えてプラン別サブグループを追加作成する）。
+ * --proxy-id は顧客拠点のSensor Edge（Zabbix Proxy）経由で監視する場合のみ指定する
+ * （未指定の場合はZabbixサーバーが直接監視する）。
  * Sensor Edge/add_customer.sh と同様、冪等性より「一度きりの手動実行を前提とした
- * シンプルさ」を優先している（重複実行時の再入可能性は今後の課題）。
+ * シンプルさ」を優先している（重複実行時の再入可能性は今後の課題）。ただし
+ * customer_code の重複だけは事前チェックし、誤って同じ顧客を二重登録しないようにする。
  */
 
 interface Args {
@@ -24,6 +28,7 @@ interface Args {
   name: string;
   email: string;
   plans: string[];
+  proxyId?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -46,10 +51,12 @@ function parseArgs(argv: string[]): Args {
   const name = get('--name');
   const email = get('--email');
   if (!code || !name || !email) {
-    throw new Error('Usage: --code <customer_code> --name <company_name> --email <admin_email> [--plan <plan_name>]...');
+    throw new Error(
+      'Usage: --code <customer_code> --name <company_name> --email <admin_email> [--plan <plan_name>]... [--proxy-id <zabbix_proxy_id>]',
+    );
   }
 
-  return { code, name, email, plans: getAll('--plan') };
+  return { code, name, email, plans: getAll('--plan'), proxyId: get('--proxy-id') };
 }
 
 function generateTemporaryPassword(): string {
@@ -65,6 +72,13 @@ async function run(): Promise<void> {
   const mailer = new Mailer(config.smtp);
   const authService = new AuthService(pool, customerRepo, mailer, config);
   const zabbixClient = new ZabbixClient(config.zabbix);
+
+  const existing = await customerRepo.findByCustomerCode(args.code);
+  if (existing) {
+    throw new Error(
+      `customer_code "${args.code}" は既に登録済みです（customer_id: ${existing.id}）。二重登録を防ぐため処理を中止しました。`,
+    );
+  }
 
   console.log(`[1/5] ホストグループ作成: MSP/${args.name}`);
   const baseGroupId = await zabbixClient.createHostGroup(`MSP/${args.name}`);
@@ -100,13 +114,14 @@ async function run(): Promise<void> {
     passwordHash,
     zabbixUserId,
     zabbixActionId: actionId,
+    zabbixProxyId: args.proxyId,
   });
   for (const g of groupIds) {
     await customerRepo.insertHostgroup(customerId, g.id, g.name);
   }
 
   console.log('[5/5] 初期パスワード通知メール送信');
-  const loginUrl = config.passwordResetUrlBase.replace(/\/reset-password$/, '/login');
+  const loginUrl = `${new URL(config.passwordResetUrlBase).origin}/login.html`;
   await mailer.sendWelcomeEmail(args.email, args.name, temporaryPassword, loginUrl);
 
   console.log('');
@@ -115,6 +130,7 @@ async function run(): Promise<void> {
   console.log(`customer_code: ${args.code}`);
   console.log(`zabbix_userid: ${zabbixUserId}`);
   console.log(`zabbix_actionid: ${actionId}`);
+  console.log(`zabbix_proxy_id: ${args.proxyId ?? '(未設定・Zabbixサーバーが直接監視)'}`);
   console.log(`hostgroups: ${groupIds.map((g) => g.name).join(', ')}`);
 
   await pool.end();
