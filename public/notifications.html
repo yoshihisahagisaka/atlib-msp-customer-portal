@@ -48,6 +48,12 @@
     </div>
     <p id="settings-message" class="info-message" style="display:none;"></p>
   </div>
+
+  <div class="card">
+    <h2>未知機器の検出</h2>
+    <label><input type="checkbox" id="unknown-device-alert-toggle"> ネットワーク上でSNMP対応の新しい機器が検出された際に通知する</label>
+    <p id="unknown-device-alert-message" class="info-message" style="display:none;"></p>
+  </div>
 </div>
 
 <script src="/js/api.js"></script>
@@ -94,6 +100,21 @@ function setSettingsEnabled(enabled) {
   }
 }
 
+function applyUnknownDeviceAlertState(state) {
+  const toggle = document.getElementById('unknown-device-alert-toggle');
+  const msg = document.getElementById('unknown-device-alert-message');
+  if (!state || !state.available) {
+    toggle.checked = false;
+    toggle.disabled = true;
+    msg.textContent = 'この機能は現在ご利用いただけません（準備中です）。';
+    msg.style.display = 'block';
+    return;
+  }
+  toggle.disabled = false;
+  toggle.checked = state.enabled;
+  msg.style.display = 'none';
+}
+
 async function loadNotifications() {
   const data = await apiFetch('/notifications');
   currentEmails = data.emails;
@@ -101,6 +122,7 @@ async function loadNotifications() {
   document.querySelector(`input[name="severity"][value="${data.severityPreset}"]`).checked = true;
   document.querySelector(`input[name="period"][value="${data.periodPreset}"]`).checked = true;
   setSettingsEnabled(currentEmails.length > 0);
+  applyUnknownDeviceAlertState(data.unknownDeviceAlert);
 }
 
 async function deleteEmail(email) {
@@ -135,6 +157,18 @@ async function submitSettings() {
 
 document.querySelectorAll('#severity-group input, #period-group input').forEach((el) => {
   el.addEventListener('change', submitSettings);
+});
+
+document.getElementById('unknown-device-alert-toggle').addEventListener('change', async (e) => {
+  const msg = document.getElementById('unknown-device-alert-message');
+  msg.style.display = 'none';
+  try {
+    await apiFetch('/notifications/unknown-device-alert', { method: 'PUT', body: { enabled: e.target.checked } });
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    msg.textContent = err.message;
+    msg.style.display = 'block';
+  }
 });
 
 initAppNav('notifications');

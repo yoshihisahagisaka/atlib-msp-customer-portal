@@ -414,4 +414,76 @@ export class ZabbixClient {
   async deleteHost(hostId: string): Promise<void> {
     await this.call('host.delete', [hostId]);
   }
+
+  // ---- Phase 4: 未知機器検出アラート設定（顧客向けルートから呼ばれる公開メソッド） ----
+  //
+  // 対象のディスカバリアクション（zabbixserver/batch/setup_discovery.py が命名規約
+  // "MSP_新規機器検知通知_{customerCode}" で作成）は、社内ユーザー(atladmin)を常時の
+  // 送信先として持つ。顧客ポータルの通知設定トグルは、顧客自身の notify_{customerCode}
+  // ユーザーをこの送信先(opmessage_usr)に追加/除外するだけで、status・conditions には
+  // 一切触れない（誤って無効化したり検出条件を壊したりしないため）。
+
+  /** 命名規約からディスカバリアクションを解決する。ディスカバリ未設定の顧客ではnullを返す。 */
+  async findNewDeviceActionId(customerCode: string): Promise<string | null> {
+    const actions = await this.call<Array<{ actionid: string }>>('action.get', {
+      output: ['actionid'],
+      filter: { name: `MSP_新規機器検知通知_${customerCode}`, eventsource: 1 },
+    });
+    return actions[0]?.actionid ?? null;
+  }
+
+  async isUnknownDeviceAlertEnabled(actionId: string, notifyUserId: string): Promise<boolean> {
+    const messageOp = await this.getMessageOperation(actionId);
+    return (messageOp?.opmessage_usr ?? []).some((u) => u.userid === notifyUserId);
+  }
+
+  async setUnknownDeviceAlertEnabled(actionId: string, notifyUserId: string, enabled: boolean): Promise<void> {
+    const messageOp = await this.getMessageOperation(actionId);
+    if (!messageOp) {
+      throw new Error(`action ${actionId} has no message-send operation`);
+    }
+
+    const existingIds = new Set((messageOp.opmessage_usr ?? []).map((u) => u.userid));
+    if (enabled) {
+      existingIds.add(notifyUserId);
+    } else {
+      existingIds.delete(notifyUserId);
+    }
+
+    // action.update の operations は全件を渡し直す必要があるため、action.get が返す
+    // 読み取り専用フィールド（operationid等）は含めず、書き込み可能なフィールドのみで
+    // 再構築する（updateUserMedias と同じサニタイズ方針）。
+    await this.call('action.update', {
+      actionid: actionId,
+      operations: [
+        {
+          operationtype: messageOp.operationtype,
+          opmessage_usr: [...existingIds].map((userid) => ({ userid })),
+          opmessage: messageOp.opmessage,
+        },
+      ],
+    });
+  }
+
+  private async getMessageOperation(actionId: string): Promise<{
+    operationtype: string;
+    opmessage_usr?: Array<{ userid: string }>;
+    opmessage?: { default_msg: string; mediatypeid: string };
+  } | null> {
+    const actions = await this.call<
+      Array<{
+        operations: Array<{
+          operationtype: string;
+          opmessage_usr?: Array<{ userid: string }>;
+          opmessage?: { default_msg: string; mediatypeid: string };
+        }>;
+      }>
+    >('action.get', {
+      actionids: [actionId],
+      output: ['actionid'],
+      selectOperations: 'extend',
+    });
+    const operations = actions[0]?.operations ?? [];
+    return operations.find((op) => op.operationtype === '0') ?? null;
+  }
 }
