@@ -13,11 +13,18 @@ import { ZabbixClient } from '../../src/services/zabbixClient';
  * 使い方:
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --plan "エントリープラン"
- *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --proxy-id 10123
+ *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --proxy-id 10123 --ip-range 192.168.1.1-254
  *
  * --plan は複数指定可（本体グループに加えてプラン別サブグループを追加作成する）。
  * --proxy-id は顧客拠点のSensor Edge（Zabbix Proxy）経由で監視する場合のみ指定する
  * （未指定の場合はZabbixサーバーが直接監視する）。
+ * --ip-range は顧客のネットワークレンジ（手順0のヒアリングで判明していれば指定）。
+ * 本スクリプトはこの値を使ってディスカバリ設定を自動投入するわけではなく、完了時に
+ * 表示する次のステップ（zabbixserver/batch/setup_discovery.py の実行コマンド）に
+ * 埋め込むためだけに使う。setup_discovery.py はCloud Run（本スクリプトの本番実行
+ * 環境）からは実行できない（Python非搭載・Zabbixへの直接到達性なし）ため、
+ * msp-frontend-server上での別実行が必要（詳細は運用手順書_顧客オンボーディング統合
+ * フロー.md 手順3-bを参照）。
  * Sensor Edge/add_customer.sh と同様、冪等性より「一度きりの手動実行を前提とした
  * シンプルさ」を優先している（重複実行時の再入可能性は今後の課題）。ただし
  * customer_code の重複だけは事前チェックし、誤って同じ顧客を二重登録しないようにする。
@@ -29,6 +36,7 @@ interface Args {
   email: string;
   plans: string[];
   proxyId?: string;
+  ipRange?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -52,11 +60,11 @@ function parseArgs(argv: string[]): Args {
   const email = get('--email');
   if (!code || !name || !email) {
     throw new Error(
-      'Usage: --code <customer_code> --name <company_name> --email <admin_email> [--plan <plan_name>]... [--proxy-id <zabbix_proxy_id>]',
+      'Usage: --code <customer_code> --name <company_name> --email <admin_email> [--plan <plan_name>]... [--proxy-id <zabbix_proxy_id>] [--ip-range <customer_ip_range>]',
     );
   }
 
-  return { code, name, email, plans: getAll('--plan'), proxyId: get('--proxy-id') };
+  return { code, name, email, plans: getAll('--plan'), proxyId: get('--proxy-id'), ipRange: get('--ip-range') };
 }
 
 function generateTemporaryPassword(): string {
@@ -133,7 +141,26 @@ async function run(): Promise<void> {
   console.log(`zabbix_proxy_id: ${args.proxyId ?? '(未設定・Zabbixサーバーが直接監視)'}`);
   console.log(`hostgroups: ${groupIds.map((g) => g.name).join(', ')}`);
 
+  console.log('');
+  console.log('=== 次のステップ: ディスカバリルール・アクションのセットアップ ===');
+  console.log('msp-frontend-server にSSHして、以下をそのまま実行してください:');
+  console.log('');
+  console.log('  cd /opt/atlib-msp-dev/zabbixserver/batch');
+  console.log(`  python setup_discovery.py --apply ${buildDiscoveryArgs(args)}`);
+
   await pool.end();
+}
+
+function buildDiscoveryArgs(args: Args): string {
+  const parts = [
+    `--customer-code ${args.code}`,
+    `--company-name "${args.name}"`,
+    `--ip-range ${args.ipRange ?? '<顧客のIPレンジ。例: 192.168.1.1-254>'}`,
+  ];
+  if (args.proxyId) {
+    parts.push(`--proxy-id ${args.proxyId}`);
+  }
+  return parts.join(' ');
 }
 
 run().catch((err) => {
