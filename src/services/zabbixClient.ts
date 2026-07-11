@@ -486,4 +486,63 @@ export class ZabbixClient {
     const operations = actions[0]?.operations ?? [];
     return operations.find((op) => op.operationtype === '0') ?? null;
   }
+
+  // ---- Phase 5: リアルタイムトポロジー・障害可視化（顧客向けルートから呼ばれる公開メソッド） ----
+
+  /**
+   * 顧客のホストグループに属する機器一覧を、障害状態（トリガー）とLLDPネイバー情報つきで取得する。
+   * LLDPアイテムのキーは zabbixserver/atlib_monthly_report.html の _buildTopologyData と
+   * 同じ規約（key_に"lldp.rem"を含み、sysname/portで対向ホスト名・ポートを表す）を踏襲する。
+   */
+  async getTopologyData(groupIds: string[]): Promise<ZabbixTopologyHost[]> {
+    const [hosts, items] = await Promise.all([
+      this.call<
+        Array<{
+          hostid: string;
+          name: string;
+          status: string;
+          interfaces?: ZabbixHostInterface[];
+          triggers?: Array<{ triggerid: string; description: string; priority: string; value: string }>;
+        }>
+      >('host.get', {
+        groupids: groupIds,
+        output: ['hostid', 'name', 'status'],
+        selectInterfaces: ['type', 'ip', 'port'],
+        selectTriggers: ['triggerid', 'description', 'priority', 'value'],
+      }),
+      this.call<Array<{ hostid: string; key_: string; lastvalue: string }>>('item.get', {
+        groupids: groupIds,
+        output: ['hostid', 'key_', 'lastvalue'],
+        search: { key_: 'lldp.rem' },
+      }),
+    ]);
+
+    return hosts.map((h) => {
+      const hostItems = items.filter((i) => i.hostid === h.hostid);
+      const lldpSys = hostItems.find((i) => i.key_.includes('sysname'));
+      const lldpPort = hostItems.find((i) => i.key_.includes('port'));
+      // value: '1'=障害中, '0'=正常（Zabbix API仕様どおり）。障害中のみ返す。
+      const activeProblems = (h.triggers ?? [])
+        .filter((t) => t.value === '1')
+        .map((t) => ({ description: t.description, priority: t.priority }));
+
+      return {
+        hostid: h.hostid,
+        name: h.name,
+        ip: h.interfaces?.[0]?.ip ?? '',
+        enabled: h.status === '0',
+        problems: activeProblems,
+        lldpNeighbor: lldpSys?.lastvalue ? { name: lldpSys.lastvalue.trim(), port: lldpPort?.lastvalue ?? '' } : null,
+      };
+    });
+  }
+}
+
+export interface ZabbixTopologyHost {
+  hostid: string;
+  name: string;
+  ip: string;
+  enabled: boolean;
+  problems: Array<{ description: string; priority: string }>;
+  lldpNeighbor: { name: string; port: string } | null;
 }

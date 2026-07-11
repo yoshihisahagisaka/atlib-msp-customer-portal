@@ -13,6 +13,7 @@ import { createAuthRouter } from './routes/auth';
 import { createNotificationsRouter } from './routes/notifications';
 import { createMaintenanceRouter } from './routes/maintenance';
 import { createHostsRouter } from './routes/hosts';
+import { createTopologyRouter } from './routes/topology';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   );
   app.use('/api/maintenance', createMaintenanceRouter(authService, customerRepo, zabbixClient));
   app.use('/api/hosts', createHostsRouter(authService, customerRepo, zabbixClient));
+  app.use('/api/topology', createTopologyRouter(authService, customerRepo, zabbixClient));
 
   app.use(express.static(path.join(__dirname, '../public')));
 
