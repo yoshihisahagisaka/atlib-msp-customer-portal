@@ -503,12 +503,14 @@ export class ZabbixClient {
           status: string;
           interfaces?: ZabbixHostInterface[];
           triggers?: Array<{ triggerid: string; description: string; priority: string; value: string; status: string }>;
+          tags?: Array<{ tag: string; value: string }>;
         }>
       >('host.get', {
         groupids: groupIds,
         output: ['hostid', 'name', 'status'],
         selectInterfaces: ['type', 'ip', 'port'],
         selectTriggers: ['triggerid', 'description', 'priority', 'value', 'status'],
+        selectTags: ['tag', 'value'],
       }),
       this.call<Array<{ hostid: string; key_: string; lastvalue: string }>>('item.get', {
         groupids: groupIds,
@@ -528,6 +530,10 @@ export class ZabbixClient {
         .filter((t) => t.value === '1' && t.status === '0')
         .map((t) => ({ description: t.description, priority: t.priority }));
 
+      // 役割は host タグ（tag="role"）に一元化する。atlib_monthly_report.html も同じタグを参照するため、
+      // ブラウザのlocalStorageに保存していた頃と違い、どちらのツールで見ても同じ値になる。
+      const roleTag = (h.tags ?? []).find((t) => t.tag === 'role');
+
       return {
         hostid: h.hostid,
         name: h.name,
@@ -535,7 +541,26 @@ export class ZabbixClient {
         enabled: h.status === '0',
         problems: activeProblems,
         lldpNeighbor: lldpSys?.lastvalue ? { name: lldpSys.lastvalue.trim(), port: lldpPort?.lastvalue ?? '' } : null,
+        role: roleTag?.value ?? 'other',
       };
+    });
+  }
+
+  /**
+   * 機器の役割（トポロジー図の表示分類）をZabbixホストタグに保存する。
+   * atlib_monthly_report.html（月次報告書）も同じ "role" タグを読むため、ここが唯一の書き込み口になる
+   * （報告書側は読み取り専用。setup_discovery.py の notify_{code} と同じ単一責任の考え方）。
+   * 呼び出し前に verifyHostOwnership で他顧客の機器でないことを確認しておくこと。
+   */
+  async setHostRole(hostId: string, role: string): Promise<void> {
+    const hosts = await this.call<Array<{ hostid: string; tags?: Array<{ tag: string; value: string }> }>>(
+      'host.get',
+      { hostids: [hostId], output: ['hostid'], selectTags: ['tag', 'value'] },
+    );
+    const existingTags = (hosts[0]?.tags ?? []).filter((t) => t.tag !== 'role');
+    await this.call('host.update', {
+      hostid: hostId,
+      tags: [...existingTags, { tag: 'role', value: role }],
     });
   }
 }
@@ -547,4 +572,5 @@ export interface ZabbixTopologyHost {
   enabled: boolean;
   problems: Array<{ description: string; priority: string }>;
   lldpNeighbor: { name: string; port: string } | null;
+  role: string;
 }

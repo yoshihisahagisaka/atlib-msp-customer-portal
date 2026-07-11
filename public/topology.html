@@ -83,7 +83,7 @@
 
   <div class="card">
     <h2>機器一覧・役割設定</h2>
-    <p class="info-message">図の表示色は役割の設定から変更できます（この端末のブラウザにのみ保存されます）。</p>
+    <p class="info-message">図の表示色は役割の設定から変更できます（Zabbix側に保存され、月次報告書にも反映されます）。</p>
     <table>
       <thead>
         <tr><th>名称</th><th>IPアドレス</th><th>役割</th><th>状態</th></tr>
@@ -96,27 +96,23 @@
 
 <script src="/js/api.js"></script>
 <script>
+// levelはzabbixserver/atlib_monthly_report.htmlのroleStyleと同じ値（役割ごとに階層を固定し、
+// hierarchicalレイアウトで上から下へ役割順に流れるようにする）
 const ROLE_STYLE = {
-  router:  { background: '#1a237e', border: '#0d1b3e', size: 20 },
-  switch:  { background: '#f57c00', border: '#e65100', size: 17 },
-  ap:      { background: '#0288d1', border: '#01579b', size: 15 },
-  printer: { background: '#7b1fa2', border: '#4a148c', size: 13 },
-  other:   { background: '#26a69a', border: '#004d40', size: 13 },
+  router:  { background: '#1a237e', border: '#0d1b3e', size: 20, level: 0 },
+  switch:  { background: '#f57c00', border: '#e65100', size: 17, level: 1 },
+  ap:      { background: '#0288d1', border: '#01579b', size: 15, level: 2 },
+  printer: { background: '#7b1fa2', border: '#4a148c', size: 13, level: 3 },
+  other:   { background: '#26a69a', border: '#004d40', size: 13, level: 3 },
 };
 const ROLE_LABELS = { router: 'ルーター', switch: 'スイッチ', ap: 'AP', printer: 'プリンター', other: 'その他' };
 const FAULT_BORDER = '#d32f2f';
 const REFRESH_INTERVAL_MS = 30000;
 
-function roleKey(hostId) {
-  return `topo-role-${hostId}`;
-}
-
-function getRole(hostId) {
-  return localStorage.getItem(roleKey(hostId)) || 'other';
-}
-
-function setRole(hostId, role) {
-  localStorage.setItem(roleKey(hostId), role);
+// 役割はZabbixホストタグ(tag="role")に一元化されている（zabbixserver/atlib_monthly_report.html
+// も同じタグを参照する）。ここではAPIから取得した値をそのまま使い、変更時はPUTで書き戻す。
+async function updateRole(hostId, role) {
+  await apiFetch(`/topology/${hostId}/role`, { method: 'PUT', body: { role } });
 }
 
 function escapeHtml(s) {
@@ -136,10 +132,30 @@ function initNetwork() {
     container,
     { nodes: nodesDataSet, edges: edgesDataSet },
     {
-      physics: { stabilization: true, barnesHut: { gravitationalConstant: -6000, springLength: 140 } },
+      // physicsを使わずhierarchical（役割別level固定）にすることで、更新のたびに配置が
+      // 変わる問題を解消する。zabbixserver/atlib_monthly_report.htmlの_renderTopologyMapと同じ設定。
+      layout: {
+        hierarchical: {
+          enabled: true,
+          direction: 'UD',
+          sortMethod: 'directed',
+          nodeSpacing: 200,
+          levelSeparation: 140,
+          treeSpacing: 250,
+          blockShifting: true,
+          edgeMinimization: true,
+          parentCentralization: true,
+        },
+      },
+      physics: { enabled: false },
       nodes: { shape: 'dot', font: { size: 11, face: 'Noto Sans JP,Arial', strokeWidth: 3, strokeColor: '#ffffff' } },
-      edges: { color: { color: '#2e7d32' }, width: 2, smooth: false },
-      interaction: { hover: true },
+      edges: {
+        color: { color: '#2e7d32' },
+        width: 2,
+        smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+      },
+      interaction: { hover: true, dragNodes: true },
     },
   );
 }
@@ -154,7 +170,7 @@ function buildGraph(hosts) {
   });
 
   hosts.forEach((h) => {
-    const role = getRole(h.hostid);
+    const role = h.role || 'other';
     const style = ROLE_STYLE[role] || ROLE_STYLE.other;
     const hasFault = h.problems.length > 0;
     const title = hasFault
@@ -165,6 +181,7 @@ function buildGraph(hosts) {
       id: `host-${h.hostid}`,
       label: `${h.name}\n${h.ip}`,
       size: style.size,
+      level: style.level,
       color: {
         background: style.background,
         border: hasFault ? FAULT_BORDER : style.border,
@@ -184,6 +201,7 @@ function buildGraph(hosts) {
             id: toId,
             label: `${toName}\n(LLDP対向)`,
             size: 12,
+            level: style.level + 1,
             color: { background: '#90a4ae', border: '#455a64' },
           });
         }
@@ -229,7 +247,7 @@ function renderHostTable(hosts) {
 
   hosts.forEach((h) => {
     const tr = document.createElement('tr');
-    const role = getRole(h.hostid);
+    const role = h.role || 'other';
     const statusHtml = h.problems.length > 0
       ? `<span class="badge" style="background:#fdecea;color:${FAULT_BORDER};">障害中</span><ul class="problem-list">${h.problems.map((p) => `<li>${escapeHtml(p.description)}</li>`).join('')}</ul>`
       : `<span class="badge ${h.enabled ? 'badge-enabled' : 'badge-disabled'}">${h.enabled ? '正常' : '無効'}</span>`;
@@ -251,10 +269,21 @@ function renderHostTable(hosts) {
       if (key === role) opt.selected = true;
       select.appendChild(opt);
     });
-    select.addEventListener('change', () => {
-      setRole(h.hostid, select.value);
-      const { nodes, edges } = buildGraph(latestHosts);
-      applyIncrementalUpdate(nodes, edges);
+    select.addEventListener('change', async () => {
+      const previousRole = h.role;
+      const newRole = select.value;
+      select.disabled = true;
+      try {
+        await updateRole(h.hostid, newRole);
+        h.role = newRole;
+        const { nodes, edges } = buildGraph(latestHosts);
+        applyIncrementalUpdate(nodes, edges);
+      } catch (err) {
+        select.value = previousRole || 'other';
+        alert(`役割の更新に失敗しました: ${err.message}`);
+      } finally {
+        select.disabled = false;
+      }
     });
     roleTd.appendChild(select);
 
