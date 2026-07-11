@@ -502,13 +502,13 @@ export class ZabbixClient {
           name: string;
           status: string;
           interfaces?: ZabbixHostInterface[];
-          triggers?: Array<{ triggerid: string; description: string; priority: string; value: string }>;
+          triggers?: Array<{ triggerid: string; description: string; priority: string; value: string; status: string }>;
         }>
       >('host.get', {
         groupids: groupIds,
         output: ['hostid', 'name', 'status'],
         selectInterfaces: ['type', 'ip', 'port'],
-        selectTriggers: ['triggerid', 'description', 'priority', 'value'],
+        selectTriggers: ['triggerid', 'description', 'priority', 'value', 'status'],
       }),
       this.call<Array<{ hostid: string; key_: string; lastvalue: string }>>('item.get', {
         groupids: groupIds,
@@ -521,9 +521,11 @@ export class ZabbixClient {
       const hostItems = items.filter((i) => i.hostid === h.hostid);
       const lldpSys = hostItems.find((i) => i.key_.includes('sysname'));
       const lldpPort = hostItems.find((i) => i.key_.includes('port'));
-      // value: '1'=障害中, '0'=正常（Zabbix API仕様どおり）。障害中のみ返す。
+      // value: '1'=障害中, '0'=正常。status: '0'=有効, '1'=無効（いずれもZabbix API仕様どおり）。
+      // 無効化されたトリガーは、対応するアイテムが無効化された後もvalueがPROBLEMのまま固着することがあるため、
+      // 有効なトリガーのみを障害として扱う（zabbixserver/運用手順書_デプロイ.md参照）。
       const activeProblems = (h.triggers ?? [])
-        .filter((t) => t.value === '1')
+        .filter((t) => t.value === '1' && t.status === '0')
         .map((t) => ({ description: t.description, priority: t.priority }));
 
       return {
