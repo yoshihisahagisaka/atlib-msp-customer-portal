@@ -388,7 +388,10 @@ export class ZabbixClient {
       groups: params.groupIds.map((groupid) => ({ groupid })),
       templates: [{ templateid: isIcmp ? this.config.templateIcmpId : this.config.templateSnmpId }],
       inventory_mode: 1,
-      ...(params.proxyHostId ? { proxy_hostid: params.proxyHostId } : {}),
+      // Zabbix 7.0でhostオブジェクトのproxy_hostidはmonitored_by(1=プロキシ監視)+proxyidに変更された
+      // （公式APIリファレンスで確認済み）。旧フィールド名のままだとAPIがエラーを返さず黙って無視するため、
+      // Proxyが設定されないままZabbixサーバーが直接監視しようとし、到達できずアラートが発生していた。
+      ...(params.proxyHostId ? { monitored_by: 1, proxyid: params.proxyHostId } : {}),
     };
 
     const result = await this.call<{ hostids: string[] }>('host.create', body);
