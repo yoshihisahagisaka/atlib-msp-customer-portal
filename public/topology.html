@@ -46,7 +46,7 @@
     background: #fff;
     border: 3px solid #d32f2f;
   }
-  select.role-select {
+  select.topo-select {
     width: auto;
     padding: 0.3rem 0.5rem;
     font-size: 0.85rem;
@@ -83,10 +83,10 @@
 
   <div class="card">
     <h2>機器一覧・役割設定</h2>
-    <p class="info-message">図の表示色は役割の設定から変更できます（Zabbix側に保存され、月次報告書にも反映されます）。</p>
+    <p class="info-message">図の表示色は役割の設定から変更できます（Zabbix側に保存され、月次報告書にも反映されます）。「上位接続先」は、LLDPで自動検出できない機器（AP配下の無線機器等）の接続関係を手動で示すためのものです。</p>
     <table>
       <thead>
-        <tr><th>名称</th><th>IPアドレス</th><th>役割</th><th>状態</th></tr>
+        <tr><th>名称</th><th>IPアドレス</th><th>役割</th><th>上位接続先</th><th>ケーブル種別</th><th>状態</th></tr>
       </thead>
       <tbody id="topo-host-list"></tbody>
     </table>
@@ -114,6 +114,19 @@ const REFRESH_INTERVAL_MS = 30000;
 async function updateRole(hostId, role) {
   await apiFetch(`/topology/${hostId}/role`, { method: 'PUT', body: { role } });
 }
+
+// LLDP非対応機器向けの手動接続先・ケーブル種別。同じくZabbixホストタグ(tag="uplink"/"cableType")
+// に一元化されており、zabbixserver/atlib_monthly_report.htmlは読み取り専用でこれを参照する。
+async function updateConnection(hostId, uplinkHostName, cableType) {
+  await apiFetch(`/topology/${hostId}/connection`, { method: 'PUT', body: { uplinkHostName, cableType } });
+}
+
+const CABLE_TYPE_LABELS = { cat6: 'Cat6 (1G)', cat5e: 'Cat5e (100M)', wifi: 'Wi-Fi' };
+const CABLE_TYPE_EDGE_STYLE = {
+  cat6:  { color: { color: '#2e7d32' } },
+  cat5e: { color: { color: '#e65100' } },
+  wifi:  { color: { color: '#0288d1' }, dashes: [5, 5] },
+};
 
 function escapeHtml(s) {
   const div = document.createElement('div');
@@ -152,7 +165,9 @@ function initNetwork() {
       edges: {
         color: { color: '#2e7d32' },
         width: 2,
-        smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+        // 「カギ線」に近づけるため縦方向の中間点を経由するタイプにする（vis-networkには
+        // 完全な直角エッジ描画機能がないため、cubicBezierより角ばった見た目になる近似）。
+        smooth: { type: 'vertical', roundness: 0 },
         arrows: { to: { enabled: true, scaleFactor: 0.6 } },
       },
       interaction: { hover: true, dragNodes: true },
@@ -213,6 +228,18 @@ function buildGraph(hosts) {
         to: toId,
         title: h.lldpNeighbor.port ? `LLDP: ${h.lldpNeighbor.port}` : 'LLDP検出',
       });
+    } else if (h.uplinkHostName && nameToId[h.uplinkHostName.trim()]) {
+      // LLDPネイバーが無い機器のみ、手動指定の上位接続先をエッジとして描画する
+      // （zabbixserver/atlib_monthly_report.htmlの「手動接続エッジ」と同じ配色規則）。
+      const toId = nameToId[h.uplinkHostName.trim()];
+      const style2 = CABLE_TYPE_EDGE_STYLE[h.cableType] || CABLE_TYPE_EDGE_STYLE.cat6;
+      edges.push({
+        id: `edge-${h.hostid}-${toId}`,
+        from: `host-${h.hostid}`,
+        to: toId,
+        title: `手動指定: ${CABLE_TYPE_LABELS[h.cableType] || h.cableType}`,
+        ...style2,
+      });
     }
   });
 
@@ -256,40 +283,106 @@ function renderHostTable(hosts) {
       <td>${escapeHtml(h.name)}</td>
       <td>${escapeHtml(h.ip)}</td>
       <td></td>
+      <td></td>
+      <td></td>
       <td>${statusHtml}</td>
     `;
 
-    const roleTd = tr.children[2];
-    const select = document.createElement('select');
-    select.className = 'role-select';
+    const [, , roleTd, uplinkTd, cableTypeTd] = tr.children;
+
+    const roleSelect = document.createElement('select');
+    roleSelect.className = 'topo-select';
     Object.keys(ROLE_LABELS).forEach((key) => {
       const opt = document.createElement('option');
       opt.value = key;
       opt.textContent = ROLE_LABELS[key];
       if (key === role) opt.selected = true;
-      select.appendChild(opt);
+      roleSelect.appendChild(opt);
     });
-    select.addEventListener('change', async () => {
+    roleSelect.addEventListener('change', async () => {
       const previousRole = h.role;
-      const newRole = select.value;
-      select.disabled = true;
+      const newRole = roleSelect.value;
+      roleSelect.disabled = true;
       try {
         await updateRole(h.hostid, newRole);
         h.role = newRole;
         const { nodes, edges } = buildGraph(latestHosts);
         applyIncrementalUpdate(nodes, edges);
       } catch (err) {
-        select.value = previousRole || 'other';
+        roleSelect.value = previousRole || 'other';
         alert(`役割の更新に失敗しました: ${err.message}`);
       } finally {
-        select.disabled = false;
+        roleSelect.disabled = false;
       }
     });
-    roleTd.appendChild(select);
+    roleTd.appendChild(roleSelect);
+
+    // 上位接続先: LLDPで自動検出済みの機器は編集不要のため表示のみ。それ以外は手動選択できる。
+    if (h.lldpNeighbor && h.lldpNeighbor.name) {
+      uplinkTd.textContent = `${h.lldpNeighbor.name}（LLDP自動）`;
+      cableTypeTd.textContent = '－';
+    } else {
+      const uplinkSelect = document.createElement('select');
+      uplinkSelect.className = 'topo-select';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '未設定';
+      if (!h.uplinkHostName) noneOpt.selected = true;
+      uplinkSelect.appendChild(noneOpt);
+      hosts
+        .filter((other) => other.hostid !== h.hostid)
+        .forEach((other) => {
+          const opt = document.createElement('option');
+          opt.value = other.name;
+          opt.textContent = other.name;
+          if (h.uplinkHostName === other.name) opt.selected = true;
+          uplinkSelect.appendChild(opt);
+        });
+
+      const cableTypeSelect = document.createElement('select');
+      cableTypeSelect.className = 'topo-select';
+      Object.keys(CABLE_TYPE_LABELS).forEach((key) => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = CABLE_TYPE_LABELS[key];
+        if ((h.cableType || 'cat6') === key) opt.selected = true;
+        cableTypeSelect.appendChild(opt);
+      });
+
+      const saveConnection = async () => {
+        const previousUplink = h.uplinkHostName;
+        const previousCableType = h.cableType;
+        const newUplink = uplinkSelect.value || null;
+        const newCableType = cableTypeSelect.value;
+        uplinkSelect.disabled = true;
+        cableTypeSelect.disabled = true;
+        try {
+          await updateConnection(h.hostid, newUplink, newCableType);
+          h.uplinkHostName = newUplink;
+          h.cableType = newCableType;
+          const { nodes, edges } = buildGraph(latestHosts);
+          applyIncrementalUpdate(nodes, edges);
+        } catch (err) {
+          uplinkSelect.value = previousUplink || '';
+          cableTypeSelect.value = previousCableType || 'cat6';
+          alert(`接続情報の更新に失敗しました: ${err.message}`);
+        } finally {
+          uplinkSelect.disabled = false;
+          cableTypeSelect.disabled = false;
+        }
+      };
+      uplinkSelect.addEventListener('change', saveConnection);
+      cableTypeSelect.addEventListener('change', saveConnection);
+
+      uplinkTd.appendChild(uplinkSelect);
+      cableTypeTd.appendChild(cableTypeSelect);
+    }
 
     tbody.appendChild(tr);
   });
 }
+
+let hasFittedOnce = false;
 
 async function refreshTopology() {
   try {
@@ -299,6 +392,13 @@ async function refreshTopology() {
     applyIncrementalUpdate(nodes, edges);
     renderHostTable(hosts);
     document.getElementById('topo-updated').textContent = `最終更新: ${new Date().toLocaleTimeString('ja-JP')}`;
+
+    // 初回表示時のみ画面に収まるようズームを自動調整する（2回目以降はユーザーの
+    // ズーム・パン操作を尊重してfit()を呼ばない）。
+    if (!hasFittedOnce && nodes.length > 0) {
+      hasFittedOnce = true;
+      network.once('afterDrawing', () => network.fit({ animation: { duration: 400 } }));
+    }
   } catch (err) {
     document.getElementById('topo-updated').textContent = `更新エラー: ${err.message}`;
   }

@@ -9,6 +9,11 @@ const roleSchema = z.object({
   role: z.enum(['router', 'switch', 'ap', 'printer', 'other']),
 });
 
+const connectionSchema = z.object({
+  uplinkHostName: z.string().min(1).max(255).nullable(),
+  cableType: z.enum(['cat6', 'cat5e', 'wifi']),
+});
+
 export function createTopologyRouter(
   authService: AuthService,
   customerRepo: CustomerRepo,
@@ -38,6 +43,24 @@ export function createTopologyRouter(
     }
 
     await zabbixClient.setHostRole(req.params.hostId, parsed.data.role);
+    res.status(204).end();
+  });
+
+  router.put('/:hostId/connection', async (req, res) => {
+    const parsed = connectionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request' });
+      return;
+    }
+
+    const groupIds = await customerRepo.resolveHostgroupIds(req.customerId!);
+    const owns = await zabbixClient.verifyHostOwnership(req.params.hostId, groupIds);
+    if (!owns) {
+      res.status(404).json({ error: 'Host not found' });
+      return;
+    }
+
+    await zabbixClient.setHostConnection(req.params.hostId, parsed.data);
     res.status(204).end();
   });
 

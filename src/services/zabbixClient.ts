@@ -530,9 +530,13 @@ export class ZabbixClient {
         .filter((t) => t.value === '1' && t.status === '0')
         .map((t) => ({ description: t.description, priority: t.priority }));
 
-      // 役割は host タグ（tag="role"）に一元化する。atlib_monthly_report.html も同じタグを参照するため、
-      // ブラウザのlocalStorageに保存していた頃と違い、どちらのツールで見ても同じ値になる。
-      const roleTag = (h.tags ?? []).find((t) => t.tag === 'role');
+      // 役割・上位接続先・ケーブル種別は host タグ（tag="role"/"uplink"/"cableType"）に一元化する。
+      // atlib_monthly_report.html も同じタグを参照するため、ブラウザのlocalStorageに保存していた頃と
+      // 違い、どちらのツールで見ても同じ値になる。
+      const tags = h.tags ?? [];
+      const roleTag = tags.find((t) => t.tag === 'role');
+      const uplinkTag = tags.find((t) => t.tag === 'uplink');
+      const cableTypeTag = tags.find((t) => t.tag === 'cableType');
 
       return {
         hostid: h.hostid,
@@ -542,7 +546,29 @@ export class ZabbixClient {
         problems: activeProblems,
         lldpNeighbor: lldpSys?.lastvalue ? { name: lldpSys.lastvalue.trim(), port: lldpPort?.lastvalue ?? '' } : null,
         role: roleTag?.value ?? 'other',
+        uplinkHostName: uplinkTag?.value || null,
+        cableType: (cableTypeTag?.value as 'cat6' | 'cat5e' | 'wifi' | undefined) ?? 'cat6',
       };
+    });
+  }
+
+  /**
+   * 既存のホストタグのうち、指定したタグ名だけを置き換えて保存する（他のタグは温存）。
+   * setHostRole / setHostConnection で共通して使う。
+   */
+  private async patchHostTags(hostId: string, patch: Record<string, string | null>): Promise<void> {
+    const hosts = await this.call<Array<{ hostid: string; tags?: Array<{ tag: string; value: string }> }>>(
+      'host.get',
+      { hostids: [hostId], output: ['hostid'], selectTags: ['tag', 'value'] },
+    );
+    const patchedNames = new Set(Object.keys(patch));
+    const remainingTags = (hosts[0]?.tags ?? []).filter((t) => !patchedNames.has(t.tag));
+    const newTags = Object.entries(patch)
+      .filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== '')
+      .map(([tag, value]) => ({ tag, value }));
+    await this.call('host.update', {
+      hostid: hostId,
+      tags: [...remainingTags, ...newTags],
     });
   }
 
@@ -553,15 +579,19 @@ export class ZabbixClient {
    * 呼び出し前に verifyHostOwnership で他顧客の機器でないことを確認しておくこと。
    */
   async setHostRole(hostId: string, role: string): Promise<void> {
-    const hosts = await this.call<Array<{ hostid: string; tags?: Array<{ tag: string; value: string }> }>>(
-      'host.get',
-      { hostids: [hostId], output: ['hostid'], selectTags: ['tag', 'value'] },
-    );
-    const existingTags = (hosts[0]?.tags ?? []).filter((t) => t.tag !== 'role');
-    await this.call('host.update', {
-      hostid: hostId,
-      tags: [...existingTags, { tag: 'role', value: role }],
-    });
+    await this.patchHostTags(hostId, { role });
+  }
+
+  /**
+   * LLDP非対応機器向けの手動接続情報（上位接続先ホスト名・ケーブル種別）をZabbixホストタグに保存する。
+   * uplinkHostNameにnullを渡すとタグを削除する（LLDP自動検出に戻す）。setHostRoleと同じく、
+   * atlib_monthly_report.html側は読み取り専用。呼び出し前にverifyHostOwnershipで所有権確認を行うこと。
+   */
+  async setHostConnection(
+    hostId: string,
+    params: { uplinkHostName: string | null; cableType: 'cat6' | 'cat5e' | 'wifi' },
+  ): Promise<void> {
+    await this.patchHostTags(hostId, { uplink: params.uplinkHostName, cableType: params.cableType });
   }
 }
 
@@ -573,4 +603,6 @@ export interface ZabbixTopologyHost {
   problems: Array<{ description: string; priority: string }>;
   lldpNeighbor: { name: string; port: string } | null;
   role: string;
+  uplinkHostName: string | null;
+  cableType: 'cat6' | 'cat5e' | 'wifi';
 }
