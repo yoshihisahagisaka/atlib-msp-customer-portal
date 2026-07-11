@@ -537,6 +537,7 @@ export class ZabbixClient {
       const roleTag = tags.find((t) => t.tag === 'role');
       const uplinkTag = tags.find((t) => t.tag === 'uplink');
       const cableTypeTag = tags.find((t) => t.tag === 'cableType');
+      const uplinkPortTag = tags.find((t) => t.tag === 'uplinkPort');
 
       return {
         hostid: h.hostid,
@@ -548,6 +549,7 @@ export class ZabbixClient {
         role: roleTag?.value ?? 'other',
         uplinkHostName: uplinkTag?.value || null,
         cableType: (cableTypeTag?.value as 'cat6' | 'cat5e' | 'wifi' | undefined) ?? 'cat6',
+        uplinkPort: uplinkPortTag?.value ?? '',
       };
     });
   }
@@ -589,9 +591,13 @@ export class ZabbixClient {
    */
   async setHostConnection(
     hostId: string,
-    params: { uplinkHostName: string | null; cableType: 'cat6' | 'cat5e' | 'wifi' },
+    params: { uplinkHostName: string | null; cableType: 'cat6' | 'cat5e' | 'wifi'; uplinkPort: string },
   ): Promise<void> {
-    await this.patchHostTags(hostId, { uplink: params.uplinkHostName, cableType: params.cableType });
+    await this.patchHostTags(hostId, {
+      uplink: params.uplinkHostName,
+      cableType: params.cableType,
+      uplinkPort: params.uplinkPort || null,
+    });
   }
 }
 
@@ -605,4 +611,5 @@ export interface ZabbixTopologyHost {
   role: string;
   uplinkHostName: string | null;
   cableType: 'cat6' | 'cat5e' | 'wifi';
+  uplinkPort: string;
 }

@@ -86,7 +86,7 @@
     <p class="info-message">図の表示色は役割の設定から変更できます（Zabbix側に保存され、月次報告書にも反映されます）。「上位接続先」は、LLDPで自動検出できない機器（AP配下の無線機器等）の接続関係を手動で示すためのものです。</p>
     <table>
       <thead>
-        <tr><th>名称</th><th>IPアドレス</th><th>役割</th><th>上位接続先</th><th>ケーブル種別</th><th>状態</th></tr>
+        <tr><th>名称</th><th>IPアドレス</th><th>役割</th><th>上位接続先</th><th>上位ポート</th><th>ケーブル種別</th><th>状態</th></tr>
       </thead>
       <tbody id="topo-host-list"></tbody>
     </table>
@@ -115,10 +115,11 @@ async function updateRole(hostId, role) {
   await apiFetch(`/topology/${hostId}/role`, { method: 'PUT', body: { role } });
 }
 
-// LLDP非対応機器向けの手動接続先・ケーブル種別。同じくZabbixホストタグ(tag="uplink"/"cableType")
-// に一元化されており、zabbixserver/atlib_monthly_report.htmlは読み取り専用でこれを参照する。
-async function updateConnection(hostId, uplinkHostName, cableType) {
-  await apiFetch(`/topology/${hostId}/connection`, { method: 'PUT', body: { uplinkHostName, cableType } });
+// LLDP非対応機器向けの手動接続先・ケーブル種別・上位ポート。同じくZabbixホストタグ
+// (tag="uplink"/"cableType"/"uplinkPort")に一元化されており、zabbixserver/atlib_monthly_report.html
+// は読み取り専用でこれを参照する。
+async function updateConnection(hostId, uplinkHostName, cableType, uplinkPort) {
+  await apiFetch(`/topology/${hostId}/connection`, { method: 'PUT', body: { uplinkHostName, cableType, uplinkPort } });
 }
 
 const CABLE_TYPE_LABELS = { cat6: 'Cat6 (1G)', cat5e: 'Cat5e (100M)', wifi: 'Wi-Fi' };
@@ -165,9 +166,8 @@ function initNetwork() {
       edges: {
         color: { color: '#2e7d32' },
         width: 2,
-        // 「カギ線」に近づけるため縦方向の中間点を経由するタイプにする（vis-networkには
-        // 完全な直角エッジ描画機能がないため、cubicBezierより角ばった見た目になる近似）。
-        smooth: { type: 'vertical', roundness: 0 },
+        // 完全な直角「カギ線」はvis-network標準では描けないため、直線（smooth無効）にする。
+        smooth: false,
         arrows: { to: { enabled: true, scaleFactor: 0.6 } },
       },
       interaction: { hover: true, dragNodes: true },
@@ -175,10 +175,49 @@ function initNetwork() {
   );
 }
 
+/**
+ * ノードの階層（level）を役割の固定値ではなく、実際の接続関係（LLDPネイバー／手動指定の
+ * 上位接続先）を辿った深さで決める。役割が同じでも接続の深さが違う機器（例: スイッチ02・03が
+ * 両方スイッチ01の下にぶら下がるケース）を正しく別の段に配置するための計算。
+ * LLDPネイバーは既存のエッジ描画方向（h→neighbor）に合わせ、neighborをhの子として扱う。
+ * 手動指定の上位接続先は、指定した側（h）がuplinkHostNameの子として扱う。
+ */
+function computeLevels(hosts) {
+  const hostNames = new Set(hosts.map((h) => h.name.trim()));
+  const parentOf = {};
+  hosts.forEach((h) => {
+    const selfName = h.name.trim();
+    if (h.lldpNeighbor && h.lldpNeighbor.name) {
+      const neighborName = h.lldpNeighbor.name.trim();
+      if (hostNames.has(neighborName) && parentOf[neighborName] === undefined) {
+        parentOf[neighborName] = selfName;
+      }
+    } else if (h.uplinkHostName) {
+      const upName = h.uplinkHostName.trim();
+      if (hostNames.has(upName)) {
+        parentOf[selfName] = upName;
+      }
+    }
+  });
+
+  const levelCache = {};
+  function levelOf(name, seen) {
+    if (levelCache[name] !== undefined) return levelCache[name];
+    const parent = parentOf[name];
+    if (!parent || parent === name || seen.has(name)) {
+      return (levelCache[name] = 0);
+    }
+    return (levelCache[name] = levelOf(parent, new Set(seen).add(name)) + 1);
+  }
+  hosts.forEach((h) => levelOf(h.name.trim(), new Set()));
+  return levelCache;
+}
+
 function buildGraph(hosts) {
   const nodes = [];
   const edges = [];
   const nameToId = {};
+  const levels = computeLevels(hosts);
 
   hosts.forEach((h) => {
     nameToId[h.name.trim()] = `host-${h.hostid}`;
@@ -187,6 +226,7 @@ function buildGraph(hosts) {
   hosts.forEach((h) => {
     const role = h.role || 'other';
     const style = ROLE_STYLE[role] || ROLE_STYLE.other;
+    const level = levels[h.name.trim()] ?? style.level;
     const hasFault = h.problems.length > 0;
     const title = hasFault
       ? `${h.name} (${h.ip})\n役割: ${ROLE_LABELS[role]}\n\n⚠️ 障害:\n${h.problems.map((p) => '- ' + p.description).join('\n')}`
@@ -196,7 +236,7 @@ function buildGraph(hosts) {
       id: `host-${h.hostid}`,
       label: `${h.name}\n${h.ip}`,
       size: style.size,
-      level: style.level,
+      level,
       color: {
         background: style.background,
         border: hasFault ? FAULT_BORDER : style.border,
@@ -216,7 +256,7 @@ function buildGraph(hosts) {
             id: toId,
             label: `${toName}\n(LLDP対向)`,
             size: 12,
-            level: style.level + 1,
+            level: level + 1,
             color: { background: '#90a4ae', border: '#455a64' },
           });
         }
@@ -237,7 +277,7 @@ function buildGraph(hosts) {
         id: `edge-${h.hostid}-${toId}`,
         from: `host-${h.hostid}`,
         to: toId,
-        title: `手動指定: ${CABLE_TYPE_LABELS[h.cableType] || h.cableType}`,
+        title: `手動指定: ${CABLE_TYPE_LABELS[h.cableType] || h.cableType}${h.uplinkPort ? ' / ポート: ' + h.uplinkPort : ''}`,
         ...style2,
       });
     }
@@ -285,10 +325,11 @@ function renderHostTable(hosts) {
       <td></td>
       <td></td>
       <td></td>
+      <td></td>
       <td>${statusHtml}</td>
     `;
 
-    const [, , roleTd, uplinkTd, cableTypeTd] = tr.children;
+    const [, , roleTd, uplinkTd, uplinkPortTd, cableTypeTd] = tr.children;
 
     const roleSelect = document.createElement('select');
     roleSelect.className = 'topo-select';
@@ -320,6 +361,7 @@ function renderHostTable(hosts) {
     // 上位接続先: LLDPで自動検出済みの機器は編集不要のため表示のみ。それ以外は手動選択できる。
     if (h.lldpNeighbor && h.lldpNeighbor.name) {
       uplinkTd.textContent = `${h.lldpNeighbor.name}（LLDP自動）`;
+      uplinkPortTd.textContent = h.lldpNeighbor.port || '－';
       cableTypeTd.textContent = '－';
     } else {
       const uplinkSelect = document.createElement('select');
@@ -339,6 +381,13 @@ function renderHostTable(hosts) {
           uplinkSelect.appendChild(opt);
         });
 
+      const uplinkPortInput = document.createElement('input');
+      uplinkPortInput.type = 'text';
+      uplinkPortInput.className = 'topo-select';
+      uplinkPortInput.placeholder = '例: Gi0/1';
+      uplinkPortInput.value = h.uplinkPort || '';
+      uplinkPortInput.style.width = '90px';
+
       const cableTypeSelect = document.createElement('select');
       cableTypeSelect.className = 'topo-select';
       Object.keys(CABLE_TYPE_LABELS).forEach((key) => {
@@ -352,29 +401,37 @@ function renderHostTable(hosts) {
       const saveConnection = async () => {
         const previousUplink = h.uplinkHostName;
         const previousCableType = h.cableType;
+        const previousUplinkPort = h.uplinkPort;
         const newUplink = uplinkSelect.value || null;
         const newCableType = cableTypeSelect.value;
+        const newUplinkPort = uplinkPortInput.value.trim();
         uplinkSelect.disabled = true;
         cableTypeSelect.disabled = true;
+        uplinkPortInput.disabled = true;
         try {
-          await updateConnection(h.hostid, newUplink, newCableType);
+          await updateConnection(h.hostid, newUplink, newCableType, newUplinkPort);
           h.uplinkHostName = newUplink;
           h.cableType = newCableType;
+          h.uplinkPort = newUplinkPort;
           const { nodes, edges } = buildGraph(latestHosts);
           applyIncrementalUpdate(nodes, edges);
         } catch (err) {
           uplinkSelect.value = previousUplink || '';
           cableTypeSelect.value = previousCableType || 'cat6';
+          uplinkPortInput.value = previousUplinkPort || '';
           alert(`接続情報の更新に失敗しました: ${err.message}`);
         } finally {
           uplinkSelect.disabled = false;
           cableTypeSelect.disabled = false;
+          uplinkPortInput.disabled = false;
         }
       };
       uplinkSelect.addEventListener('change', saveConnection);
       cableTypeSelect.addEventListener('change', saveConnection);
+      uplinkPortInput.addEventListener('change', saveConnection);
 
       uplinkTd.appendChild(uplinkSelect);
+      uplinkPortTd.appendChild(uplinkPortInput);
       cableTypeTd.appendChild(cableTypeSelect);
     }
 

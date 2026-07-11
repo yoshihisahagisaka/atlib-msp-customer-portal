@@ -12,6 +12,7 @@ const roleSchema = z.object({
 const connectionSchema = z.object({
   uplinkHostName: z.string().min(1).max(255).nullable(),
   cableType: z.enum(['cat6', 'cat5e', 'wifi']),
+  uplinkPort: z.string().max(50),
 });
 
 export function createTopologyRouter(
