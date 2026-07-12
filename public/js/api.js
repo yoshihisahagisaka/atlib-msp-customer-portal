@@ -36,11 +36,13 @@ async function initAppNav(activePage) {
     <div class="brand">atLIB InfraVision ポータル</div>
     <div class="links">
       <span class="company" id="nav-company"></span>
+      <a href="/home.html" data-page="home">ホーム</a>
       <a href="/notifications.html" data-page="notifications">通知設定</a>
       <a href="/maintenance.html" data-page="maintenance">メンテナンス</a>
       <a href="/hosts.html" data-page="hosts">機器管理</a>
       <a href="/topology.html" data-page="topology">トポロジー</a>
       <a href="/inquiry.html" data-page="inquiry">お問い合わせ</a>
+      <a href="/manual.html" data-page="manual">マニュアル</a>
       <button class="logout" id="nav-logout">ログアウト</button>
     </div>
   `;

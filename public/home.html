@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ホーム | atLIB InfraVision ポータル</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<nav class="app-nav" id="app-nav"></nav>
+
+<div class="page">
+  <h1 id="welcome-heading">ようこそ</h1>
+  <p class="info-message">現在の状況をひと目で確認できます。詳細は各カードをクリックしてください。</p>
+
+  <div class="dash-grid">
+    <a class="dash-card" href="/hosts.html">
+      <h2>機器管理</h2>
+      <p class="dash-stat" id="stat-hosts">読み込み中...</p>
+      <p class="dash-sub" id="stat-hosts-sub"></p>
+    </a>
+    <a class="dash-card" href="/topology.html">
+      <h2>トポロジー・障害状況</h2>
+      <p class="dash-stat" id="stat-problems">読み込み中...</p>
+      <p class="dash-sub" id="stat-problems-sub"></p>
+    </a>
+    <a class="dash-card" href="/maintenance.html">
+      <h2>メンテナンス</h2>
+      <p class="dash-stat" id="stat-maintenance">読み込み中...</p>
+      <p class="dash-sub" id="stat-maintenance-sub"></p>
+    </a>
+    <a class="dash-card" href="/notifications.html">
+      <h2>通知設定</h2>
+      <p class="dash-stat" id="stat-notify">読み込み中...</p>
+      <p class="dash-sub" id="stat-notify-sub"></p>
+    </a>
+  </div>
+
+  <div class="card">
+    <h2>その他</h2>
+    <div class="quick-links">
+      <a class="btn btn-secondary" href="/manual.html">使い方マニュアル</a>
+      <a class="btn btn-secondary" href="/inquiry.html">お問い合わせ</a>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const SEVERITY_LABELS = { criticalOnly: '重大のみ', warningAndAbove: '警告以上', all: 'すべて' };
+const PERIOD_LABELS = { always: '24時間', businessHours: '営業時間のみ（平日9:00-18:00）' };
+
+function setStat(prefix, text, subText, variant) {
+  const statEl = document.getElementById(`stat-${prefix}`);
+  const subEl = document.getElementById(`stat-${prefix}-sub`);
+  statEl.textContent = text;
+  statEl.className = 'dash-stat' + (variant ? ` stat-${variant}` : '');
+  subEl.textContent = subText || '';
+}
+
+async function loadWelcome() {
+  try {
+    const me = await apiFetch('/auth/me');
+    document.getElementById('welcome-heading').textContent = `ようこそ、${me.companyName} 様`;
+  } catch {
+    // apiFetchが401時に自動でログイン画面へリダイレクトするため、ここでは何もしない
+  }
+}
+
+async function loadHostsStat() {
+  try {
+    const hosts = await apiFetch('/hosts');
+    const disabled = hosts.filter((h) => !h.enabled).length;
+    setStat('hosts', `${hosts.length}台 登録中`, disabled > 0 ? `うち${disabled}台を無効化中` : '');
+  } catch {
+    setStat('hosts', '取得できませんでした');
+  }
+}
+
+async function loadProblemsStat() {
+  try {
+    const topo = await apiFetch('/topology');
+    const problemCount = topo.reduce((sum, h) => sum + h.problems.length, 0);
+    const hostCount = topo.filter((h) => h.problems.length > 0).length;
+    if (problemCount === 0) {
+      setStat('problems', '異常なし', '現在、検出されている障害はありません', 'ok');
+    } else {
+      setStat('problems', `${problemCount}件の障害`, `${hostCount}台の機器で検出中`, 'danger');
+    }
+  } catch {
+    setStat('problems', '取得できませんでした');
+  }
+}
+
+async function loadMaintenanceStat() {
+  try {
+    const list = await apiFetch('/maintenance');
+    const now = Math.floor(Date.now() / 1000);
+    const active = list.filter((m) => m.activeSince <= now && now < m.activeTill);
+    if (active.length > 0) {
+      setStat('maintenance', '実施中', active.map((m) => m.name).join('、'), 'highlight');
+      return;
+    }
+    const upcoming = list
+      .filter((m) => m.activeSince > now)
+      .sort((a, b) => a.activeSince - b.activeSince)[0];
+    if (upcoming) {
+      const d = new Date(upcoming.activeSince * 1000);
+      const pad = (n) => String(n).padStart(2, '0');
+      const formatted = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      setStat('maintenance', `次回: ${formatted}`, upcoming.name);
+      return;
+    }
+    setStat('maintenance', '予定なし', '登録済みのメンテナンスはありません');
+  } catch {
+    setStat('maintenance', '取得できませんでした');
+  }
+}
+
+async function loadNotifyStat() {
+  try {
+    const data = await apiFetch('/notifications');
+    if (data.emails.length === 0) {
+      setStat('notify', '未設定', '通知先メールアドレスが登録されていません');
+      return;
+    }
+    const sub = `${SEVERITY_LABELS[data.severityPreset]} / ${PERIOD_LABELS[data.periodPreset]}`;
+    setStat('notify', `${data.emails.length}件のメール登録済み`, sub);
+  } catch {
+    setStat('notify', '取得できませんでした');
+  }
+}
+
+initAppNav('home');
+loadWelcome();
+loadHostsStat();
+loadProblemsStat();
+loadMaintenanceStat();
+loadNotifyStat();
+</script>
+</body>
+</html>

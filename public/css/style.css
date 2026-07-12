@@ -290,3 +290,65 @@ label {
   display: flex;
   gap: 0.4rem;
 }
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.dash-card {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-accent);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  text-decoration: none;
+  color: inherit;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+
+.dash-card:hover {
+  box-shadow: 0 4px 14px rgba(31, 53, 86, 0.1);
+  transform: translateY(-2px);
+}
+
+.dash-card h2 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.dash-stat {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.dash-stat.stat-danger {
+  color: var(--color-danger);
+}
+
+.dash-stat.stat-ok {
+  color: var(--color-accent-dark);
+}
+
+.dash-stat.stat-highlight {
+  color: var(--color-orange-dark);
+}
+
+.dash-sub {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}

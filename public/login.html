@@ -48,7 +48,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       credentials: 'include',
     });
     if (res.status === 204) {
-      location.href = '/notifications.html';
+      location.href = '/home.html';
       return;
     }
     const data = await res.json().catch(() => ({}));
