@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>お問い合わせ | atLIB InfraVision</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/lp.css">
+</head>
+<body>
+
+<nav class="lp-nav">
+  <div class="brand"><a href="/" style="color:inherit; text-decoration:none;">atLIB <span>InfraVision</span></a></div>
+</nav>
+
+<div class="section" style="max-width:520px;">
+  <h1 class="section-title" style="text-align:left;">お問い合わせ</h1>
+  <p class="info-message">サービスに関するご質問・ご相談は、以下のフォームよりお送りください。担当者より折り返しご連絡いたします。</p>
+
+  <form id="inquiry-form">
+    <div class="form-row">
+      <label for="company">会社名</label>
+      <input type="text" id="company" required autocomplete="organization">
+    </div>
+    <div class="form-row">
+      <label for="contact-name">氏名</label>
+      <input type="text" id="contact-name" required autocomplete="name">
+    </div>
+    <div class="form-row">
+      <label for="email">メールアドレス</label>
+      <input type="email" id="email" required autocomplete="email">
+    </div>
+    <div class="form-row">
+      <label for="subject">件名</label>
+      <input type="text" id="subject" required>
+    </div>
+    <div class="form-row">
+      <label for="content">お問合せ内容</label>
+      <textarea id="content" rows="6" required></textarea>
+    </div>
+    <div id="inquiry-error" class="error-message" style="display:none;"></div>
+    <div id="inquiry-success" class="success-message" style="display:none;">
+      お問い合わせを受け付けました。担当者より折り返しご連絡いたします。
+    </div>
+    <button type="submit" class="btn" style="width:100%;" id="inquiry-submit">送信する</button>
+  </form>
+
+  <p style="margin-top:2rem;"><a href="/">トップページに戻る</a></p>
+</div>
+
+<script>
+document.getElementById('inquiry-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('inquiry-error');
+  const successEl = document.getElementById('inquiry-success');
+  const form = document.getElementById('inquiry-form');
+  const submitBtn = document.getElementById('inquiry-submit');
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+  submitBtn.disabled = true;
+
+  const payload = {
+    company: document.getElementById('company').value,
+    contactName: document.getElementById('contact-name').value,
+    email: document.getElementById('email').value,
+    subject: document.getElementById('subject').value,
+    content: document.getElementById('content').value,
+  };
+
+  try {
+    const res = await fetch('/api/inquiry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 204) {
+      successEl.style.display = 'block';
+      form.reset();
+      form.style.display = 'none';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errorEl.textContent = data.error || '送信に失敗しました。しばらくしてから再度お試しください。';
+      errorEl.style.display = 'block';
+    }
+  } catch {
+    errorEl.textContent = '通信エラーが発生しました。しばらくしてから再度お試しください。';
+    errorEl.style.display = 'block';
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
