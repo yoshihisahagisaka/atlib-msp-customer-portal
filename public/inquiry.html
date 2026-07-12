@@ -16,7 +16,7 @@
 
 <div class="section" style="max-width:520px;">
   <h1 class="section-title" style="text-align:left;">お問い合わせ</h1>
-  <p class="info-message">サービスに関するご質問・ご相談は、以下のフォームよりお送りください。担当者より折り返しご連絡いたします。</p>
+  <p class="info-message" id="intro-message">サービスに関するご質問・ご相談は、以下のフォームよりお送りください。担当者より折り返しご連絡いたします。</p>
 
   <form id="inquiry-form">
     <div class="form-row">
@@ -75,6 +75,7 @@ document.getElementById('inquiry-form').addEventListener('submit', async (e) => 
       body: JSON.stringify(payload),
     });
     if (res.status === 204) {
+      document.getElementById('intro-message').style.display = 'none';
       successEl.style.display = 'block';
       form.reset();
       form.style.display = 'none';
