@@ -40,6 +40,7 @@ async function initAppNav(activePage) {
       <a href="/maintenance.html" data-page="maintenance">メンテナンス</a>
       <a href="/hosts.html" data-page="hosts">機器管理</a>
       <a href="/topology.html" data-page="topology">トポロジー</a>
+      <a href="/inquiry.html" data-page="inquiry">お問い合わせ</a>
       <button class="logout" id="nav-logout">ログアウト</button>
     </div>
   `;
