@@ -7,6 +7,17 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/css/style.css">
 <link rel="stylesheet" href="/css/lp.css">
+<style>
+  /* 質問文(Q)は通常のフォームlabel(小さめ・薄いグレー)より目立たせる */
+  .question-prompt {
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.6rem;
+    line-height: 1.5;
+  }
+</style>
 </head>
 <body>
 
@@ -66,6 +77,7 @@ function renderQuestion(question) {
   wrap.className = 'form-row';
 
   const legend = document.createElement('label');
+  legend.className = 'question-prompt';
   legend.textContent = question.prompt;
   wrap.appendChild(legend);
 
