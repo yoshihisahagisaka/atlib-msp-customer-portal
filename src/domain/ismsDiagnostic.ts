@@ -43,7 +43,10 @@ export interface CategoryThreshold {
   planCode: string;
   label: string;
   recommended?: boolean;
+  /** 実質負担額（IT導入補助金1/2採択時、年額・税抜）。 */
   priceJpy?: number;
+  /** パッケージ総費用（補助金適用前、年額・税抜）。priceJpyのちょうど2倍（＝1/2補助）。 */
+  packagePriceJpy?: number;
 }
 
 export interface Category {
@@ -59,7 +62,14 @@ export const CATEGORIES: Category[] = [
     label: 'ISMS推進リソース・知識（コンサルプランの判定）',
     scored: true,
     thresholds: [
-      { min: 11, max: 12, planCode: 'light', label: '自走（ライト）プラン', priceJpy: 570000 },
+      {
+        min: 11,
+        max: 12,
+        planCode: 'light',
+        label: '自走（ライト）プラン',
+        priceJpy: 570000,
+        packagePriceJpy: 1140000,
+      },
       {
         min: 7,
         max: 10,
@@ -67,8 +77,16 @@ export const CATEGORIES: Category[] = [
         label: '伴走（スタンダード）プラン',
         recommended: true,
         priceJpy: 900000,
+        packagePriceJpy: 1800000,
       },
-      { min: 4, max: 6, planCode: 'premium', label: '徹底伴走（プレミアム）プラン', priceJpy: 1230000 },
+      {
+        min: 4,
+        max: 6,
+        planCode: 'premium',
+        label: '徹底伴走（プレミアム）プラン',
+        priceJpy: 1230000,
+        packagePriceJpy: 2460000,
+      },
     ],
   },
   {
@@ -420,6 +438,7 @@ export interface CategoryRecommendation {
   label: string;
   recommended?: boolean;
   priceJpy?: number;
+  packagePriceJpy?: number;
 }
 
 export interface ScoredSubmission {
@@ -469,6 +488,7 @@ export function scoreSubmission(rawAnswers: AnswerInput[]): ScoredSubmission {
         label: matched.label,
         recommended: matched.recommended,
         priceJpy: matched.priceJpy,
+        packagePriceJpy: matched.packagePriceJpy,
       };
     }
   }

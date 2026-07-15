@@ -66,7 +66,10 @@ export class Mailer {
   async sendDiagnosticSubmissionNotification(to: string, summary: DiagnosticNotificationSummary): Promise<void> {
     const scoreLines = Object.entries(summary.categoryScores).map(([categoryId, score]) => `  ${categoryId}: ${score}点`);
     const recommendationLines = Object.entries(summary.recommendations).map(([categoryId, rec]) => {
-      const price = rec.priceJpy !== undefined ? `（${rec.priceJpy.toLocaleString('ja-JP')}円）` : '';
+      const price =
+        rec.priceJpy !== undefined
+          ? `（パッケージ${rec.packagePriceJpy?.toLocaleString('ja-JP')}円 / 実質負担${rec.priceJpy.toLocaleString('ja-JP')}円）`
+          : '';
       const recommendedMark = rec.recommended ? ' ★推奨' : '';
       return `  ${categoryId}: ${rec.label}${recommendedMark}${price}`;
     });

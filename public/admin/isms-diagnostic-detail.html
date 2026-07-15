@@ -227,18 +227,47 @@ function renderPlans(item) {
     const table = document.createElement('table');
     table.className = 'plan-table';
     const matchedPlanCode = (item.recommendations[category.id] || {}).planCode;
+    const hasPricing = category.thresholds.some((t) => t.priceJpy !== undefined);
+
+    if (hasPricing) {
+      const thead = document.createElement('thead');
+      thead.innerHTML = `
+        <tr>
+          <th>プラン</th>
+          <th>パッケージ費用（年額・税抜）</th>
+          <th>実質負担額（IT導入補助金1/2採択時）</th>
+        </tr>
+      `;
+      table.appendChild(thead);
+    }
 
     category.thresholds.forEach((threshold) => {
       const tr = document.createElement('tr');
       if (threshold.planCode === matchedPlanCode) tr.className = 'matched';
       const recommendedBadge = threshold.recommended ? '<span class="recommended-badge">推奨</span>' : '';
       const matchedBadge = threshold.planCode === matchedPlanCode ? ' ← 該当' : '';
+      const priceCells = hasPricing
+        ? `
+        <td class="plan-price">${formatPrice(threshold.packagePriceJpy)}</td>
+        <td class="plan-price">${formatPrice(threshold.priceJpy)}</td>
+      `
+        : '';
       tr.innerHTML = `
         <td>${threshold.label}${recommendedBadge}${matchedBadge}</td>
-        <td class="plan-price">${formatPrice(threshold.priceJpy)}</td>
+        ${priceCells}
       `;
       table.appendChild(tr);
     });
+
+    if (hasPricing) {
+      const note = document.createElement('p');
+      note.className = 'print-hint';
+      note.style.marginBottom = '1.5rem';
+      note.textContent = '※ 実質負担額は、2026年度デジタル化・AI導入補助金（IT導入補助金）1/2採択を前提とした金額です。';
+      container.appendChild(table);
+      container.appendChild(note);
+      return;
+    }
 
     container.appendChild(table);
   });
