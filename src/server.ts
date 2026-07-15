@@ -41,6 +41,9 @@ async function main(): Promise<void> {
   app.use(cookieParser());
 
   app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+  // ルート（/）はLPページ(index.html)ではなくログイン画面へリダイレクトする。
+  // express.staticのindexファイル解決より前に登録すること。
+  app.get('/', (_req, res) => res.redirect('/login.html'));
 
   app.use('/api/auth', createAuthRouter(authService, customerRepo, config.nodeEnv === 'production'));
   app.use(
