@@ -33,6 +33,12 @@ export interface Config {
     from: string;
   };
   passwordResetUrlBase: string;
+  adminAuth: {
+    user: string;
+    password: string;
+  };
+  diagnosticNotifyEmail: string; // ISMS診断フォーム: 新規回答の通知先（カンマ区切りで複数可）
+  portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
 }
 
 /**
@@ -61,11 +67,19 @@ export async function loadConfig(): Promise<Config> {
     'portal-zabbix-password',
   );
   const smtpPassword = await resolveSecret(gcpProjectId, process.env.SMTP_PASSWORD, 'portal-smtp-password');
+  const adminAuthUser = await resolveSecret(gcpProjectId, process.env.ADMIN_BASIC_AUTH_USER, 'portal-admin-user');
+  const adminAuthPassword = await resolveSecret(
+    gcpProjectId,
+    process.env.ADMIN_BASIC_AUTH_PASSWORD,
+    'portal-admin-password',
+  );
 
   const required = (name: string, value: string | undefined): string => {
     if (!value) throw new Error(`Missing required config value: ${name}`);
     return value;
   };
+
+  const passwordResetUrlBase = required('PASSWORD_RESET_URL_BASE', process.env.PASSWORD_RESET_URL_BASE);
 
   return {
     nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -99,6 +113,14 @@ export async function loadConfig(): Promise<Config> {
       password: smtpPassword,
       from: required('SMTP_FROM', process.env.SMTP_FROM),
     },
-    passwordResetUrlBase: required('PASSWORD_RESET_URL_BASE', process.env.PASSWORD_RESET_URL_BASE),
+    passwordResetUrlBase,
+    adminAuth: {
+      user: adminAuthUser,
+      password: adminAuthPassword,
+    },
+    diagnosticNotifyEmail: required('DIAGNOSTIC_NOTIFY_EMAIL', process.env.DIAGNOSTIC_NOTIFY_EMAIL),
+    // 新規env不要でportalBaseUrlを導出する（passwordResetUrlBaseは既にportalのオリジンを含んでいるため）。
+    // 同じ導出パターンをscripts/onboarding/create_customer.tsのloginUrl組み立てでも使っている。
+    portalBaseUrl: new URL(passwordResetUrlBase).origin,
   };
 }

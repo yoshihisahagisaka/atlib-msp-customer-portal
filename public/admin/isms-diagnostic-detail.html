@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ISMS診断 回答詳細 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="page" style="max-width:820px;">
+  <p><a href="/admin/isms-diagnostic.html">&larr; 一覧に戻る</a></p>
+  <h1>ISMS診断 回答詳細</h1>
+
+  <div id="detail-error" class="error-message" style="display:none;"></div>
+  <div id="detail-loading" class="info-message">読み込み中...</div>
+
+  <div id="detail-content" style="display:none;">
+    <div class="card">
+      <h2>ご連絡先</h2>
+      <table>
+        <tbody>
+          <tr><th>会社名</th><td id="f-company"></td></tr>
+          <tr><th>担当者</th><td id="f-contact"></td></tr>
+          <tr><th>メール</th><td id="f-email"></td></tr>
+          <tr><th>電話番号</th><td id="f-phone"></td></tr>
+          <tr><th>送信日時</th><td id="f-submitted"></td></tr>
+          <tr><th>通知メール</th><td id="f-notified"></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>診断結果</h2>
+      <table>
+        <tbody id="f-recommendations"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>対応状況</h2>
+      <div class="form-row" style="max-width:240px;">
+        <select id="status-select">
+          <option value="new">未対応</option>
+          <option value="contacted">対応中</option>
+          <option value="closed">完了</option>
+        </select>
+      </div>
+      <button class="btn" id="save-status">保存する</button>
+      <div id="save-message" class="success-message" style="display:none;">保存しました。</div>
+    </div>
+
+    <div class="card">
+      <h2>回答内容（全問）</h2>
+      <table>
+        <thead><tr><th>質問</th><th>回答</th><th>配点</th></tr></thead>
+        <tbody id="f-answers"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const STATUS_LABELS = { new: '未対応', contacted: '対応中', closed: '完了' };
+
+function getId() {
+  return new URLSearchParams(location.search).get('id');
+}
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadDetail() {
+  const id = getId();
+  const loadingEl = document.getElementById('detail-loading');
+  const errorEl = document.getElementById('detail-error');
+  const content = document.getElementById('detail-content');
+
+  if (!id) {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = 'idが指定されていません。';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/admin/isms-diagnostic/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('failed to load');
+    const item = await res.json();
+
+    document.getElementById('f-company').textContent = item.companyName;
+    document.getElementById('f-contact').textContent = item.contactName;
+    document.getElementById('f-email').textContent = item.email;
+    document.getElementById('f-phone').textContent = item.phone || '-';
+    document.getElementById('f-submitted').textContent = formatDate(item.submittedAt);
+    document.getElementById('f-notified').textContent = item.notificationEmailSentAt
+      ? `送信済（${formatDate(item.notificationEmailSentAt)}）`
+      : '未送信';
+
+    const recBody = document.getElementById('f-recommendations');
+    recBody.innerHTML = '';
+    Object.entries(item.recommendations).forEach(([categoryId, rec]) => {
+      const score = item.categoryScores[categoryId];
+      const price = rec.priceJpy !== undefined ? `（${rec.priceJpy.toLocaleString('ja-JP')}円）` : '';
+      const mark = rec.recommended ? ' ★推奨' : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<th>カテゴリ${categoryId}</th><td>${score}点 → ${rec.label}${mark}${price}</td>`;
+      recBody.appendChild(tr);
+    });
+
+    const answersBody = document.getElementById('f-answers');
+    answersBody.innerHTML = '';
+    item.answers.forEach((a) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${a.questionPrompt}</td><td>${a.valueLabel}</td><td>${a.score !== undefined ? a.score + '点' : '-'}</td>`;
+      answersBody.appendChild(tr);
+    });
+
+    document.getElementById('status-select').value = item.reviewStatus;
+
+    loadingEl.style.display = 'none';
+    content.style.display = 'block';
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '詳細の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+document.getElementById('save-status').addEventListener('click', async () => {
+  const id = getId();
+  const status = document.getElementById('status-select').value;
+  const saveMessage = document.getElementById('save-message');
+  saveMessage.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/admin/isms-diagnostic/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) throw new Error('failed to save');
+    saveMessage.className = 'success-message';
+    saveMessage.textContent = '保存しました。';
+    saveMessage.style.display = 'block';
+  } catch {
+    saveMessage.className = 'error-message';
+    saveMessage.textContent = '保存に失敗しました。';
+    saveMessage.style.display = 'block';
+  }
+});
+
+loadDetail();
+</script>
+</body>
+</html>

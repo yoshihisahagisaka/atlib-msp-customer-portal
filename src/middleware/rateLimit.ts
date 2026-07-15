@@ -53,3 +53,37 @@ export function checkLoginRateLimit(req: Request, res: Response, next: NextFunct
   }
   next();
 }
+
+/**
+ * IPアドレスキーの固定ウィンドウ・レート制限ミドルウェアを生成する汎用ファクトリ。
+ * LoginRateLimiterと同じインメモリMap方式のため、Cloud Runが複数インスタンスに
+ * スケールした場合はインスタンスごとに独立してカウントされる（同じ割り切り）。
+ * req.ip の値が正しくクライアントIPを指すには、Cloud Run環境で app.set('trust proxy', true)
+ * が設定されている必要がある（server.tsで設定済み）。
+ */
+export function createIpRateLimiter(opts: {
+  windowMs: number;
+  maxRequests: number;
+}): (req: Request, res: Response, next: NextFunction) => void {
+  const hits = new Map<string, { count: number; windowStart: number }>();
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const key = req.ip ?? 'unknown';
+    const now = Date.now();
+    const record = hits.get(key);
+
+    if (!record || now - record.windowStart >= opts.windowMs) {
+      hits.set(key, { count: 1, windowStart: now });
+      next();
+      return;
+    }
+
+    if (record.count >= opts.maxRequests) {
+      res.status(429).json({ error: 'Too many requests. Try again later.' });
+      return;
+    }
+
+    record.count += 1;
+    next();
+  };
+}
