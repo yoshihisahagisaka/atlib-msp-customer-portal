@@ -6,41 +6,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/css/style.css">
+<style>
+  .no-print { }
+  .report {
+    background: #fff;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+  }
+  .report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid var(--color-primary);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .report-header .brand { font-weight: 700; color: var(--color-primary); font-size: 1.1rem; }
+  .report-header .brand span { color: var(--color-orange); }
+  .report-header .meta { text-align: right; font-size: 0.85rem; color: var(--color-muted); }
+  .report h1 { font-size: 1.3rem; margin: 0 0 0.3rem; }
+  .report-addressee { margin-bottom: 1.5rem; font-size: 0.95rem; }
+  .report-section { margin-bottom: 2rem; }
+  .report-section h2 {
+    font-size: 1.05rem;
+    color: var(--color-primary);
+    border-left: 4px solid var(--color-accent);
+    padding-left: 0.6rem;
+    margin-bottom: 1rem;
+  }
+  .report-category-group { margin-bottom: 1.2rem; }
+  .report-category-group h3 { font-size: 0.9rem; color: var(--color-muted); margin: 0 0 0.5rem; }
+  .qa-row { display: flex; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px dashed var(--color-border); font-size: 0.9rem; }
+  .qa-row .qa-flag { flex-shrink: 0; width: 4.5rem; }
+  .flag-issue { color: var(--color-orange-dark); font-weight: 700; font-size: 0.8rem; }
+  .flag-ok { color: var(--color-accent-dark); font-size: 0.8rem; }
+  .action-list { margin: 0; padding-left: 1.2rem; }
+  .action-list li { margin-bottom: 0.5rem; font-size: 0.9rem; }
+  .plan-table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+  .plan-table th, .plan-table td { border: 1px solid var(--color-border); padding: 0.5rem 0.7rem; font-size: 0.9rem; text-align: left; }
+  .plan-table tr.matched { background: #f2fbf9; }
+  .plan-table tr.matched td:first-child { font-weight: 700; color: var(--color-accent-dark); }
+  .plan-price { white-space: nowrap; }
+  .recommended-badge { display: inline-block; background: var(--color-orange); color: #fff; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.4rem; }
+  .report-footer { border-top: 1px solid var(--color-border); padding-top: 1rem; margin-top: 2rem; font-size: 0.8rem; color: var(--color-muted); }
+  .print-hint { font-size: 0.8rem; color: var(--color-muted); margin-top: 0.4rem; }
+
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff; }
+    .page { max-width: none; margin: 0; padding: 0; }
+    .report { border: none; padding: 0; margin: 0; }
+  }
+</style>
 </head>
 <body>
 
 <div class="page" style="max-width:820px;">
-  <p><a href="/admin/isms-diagnostic.html">&larr; 一覧に戻る</a></p>
-  <h1>ISMS診断 回答詳細</h1>
+  <div class="no-print">
+    <p><a href="/admin/isms-diagnostic.html">&larr; 一覧に戻る</a></p>
+    <h1>ISMS診断 回答詳細（社内管理）</h1>
+  </div>
 
-  <div id="detail-error" class="error-message" style="display:none;"></div>
-  <div id="detail-loading" class="info-message">読み込み中...</div>
+  <div id="detail-error" class="error-message no-print" style="display:none;"></div>
+  <div id="detail-loading" class="info-message no-print">読み込み中...</div>
 
   <div id="detail-content" style="display:none;">
-    <div class="card">
-      <h2>ご連絡先</h2>
+    <div class="card no-print">
+      <h2>社内管理情報</h2>
       <table>
         <tbody>
-          <tr><th>会社名</th><td id="f-company"></td></tr>
-          <tr><th>担当者</th><td id="f-contact"></td></tr>
           <tr><th>メール</th><td id="f-email"></td></tr>
           <tr><th>電話番号</th><td id="f-phone"></td></tr>
-          <tr><th>送信日時</th><td id="f-submitted"></td></tr>
+          <tr><th>カテゴリ別スコア（社内参考）</th><td id="f-scores"></td></tr>
           <tr><th>通知メール</th><td id="f-notified"></td></tr>
         </tbody>
       </table>
-    </div>
-
-    <div class="card">
-      <h2>診断結果</h2>
-      <table>
-        <tbody id="f-recommendations"></tbody>
-      </table>
-    </div>
-
-    <div class="card">
-      <h2>対応状況</h2>
-      <div class="form-row" style="max-width:240px;">
+      <div class="form-row" style="max-width:240px; margin-top:1rem;">
+        <label for="status-select">対応状況</label>
         <select id="status-select">
           <option value="new">未対応</option>
           <option value="contacted">対応中</option>
@@ -48,15 +92,45 @@
         </select>
       </div>
       <button class="btn" id="save-status">保存する</button>
-      <div id="save-message" class="success-message" style="display:none;">保存しました。</div>
+      <div id="save-message" class="success-message" style="display:none;"></div>
+
+      <div style="margin-top:1.5rem;">
+        <button class="btn btn-secondary" id="print-btn">🖨 PDFとして保存 / 印刷する</button>
+        <p class="print-hint">印刷ダイアログの詳細設定で「ヘッダーとフッター」のチェックを外すと綺麗に出力されます。</p>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>回答内容（全問）</h2>
-      <table>
-        <thead><tr><th>質問</th><th>回答</th><th>配点</th></tr></thead>
-        <tbody id="f-answers"></tbody>
-      </table>
+    <!-- ここから顧客向けレポート（印刷対象） -->
+    <div class="report" id="report">
+      <div class="report-header">
+        <div class="brand">atLIB <span>InfraVision</span></div>
+        <div class="meta">
+          診断日: <span id="r-date"></span><br>
+          ISMS支援プラン診断結果
+        </div>
+      </div>
+      <h1>ISMS支援プラン診断結果</h1>
+      <p class="report-addressee"><span id="r-company"></span> 様　ご担当: <span id="r-contact"></span> 様</p>
+
+      <div class="report-section">
+        <h2>1. 現状認識</h2>
+        <div id="r-current-state"></div>
+      </div>
+
+      <div class="report-section">
+        <h2>2. 推奨される対策</h2>
+        <ul class="action-list" id="r-actions"></ul>
+      </div>
+
+      <div class="report-section">
+        <h2>3. 最適なプラン</h2>
+        <div id="r-plans"></div>
+      </div>
+
+      <div class="report-footer">
+        atLIB株式会社　〒104-0032 東京都中央区八丁堀4-12-7　TEL: 03-6661-1616　Mail: sales@atlib.jp<br>
+        本診断は目安であり、最終的なご提案内容は個別のご相談により確定します。
+      </div>
     </div>
   </div>
 </div>
@@ -73,6 +147,101 @@ function formatDate(iso) {
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatPrice(priceJpy) {
+  return priceJpy !== undefined ? `${priceJpy.toLocaleString('ja-JP')}円` : '';
+}
+
+function findQuestionOption(questionDefinitions, questionId, value) {
+  const q = questionDefinitions.find((q) => q.id === questionId);
+  if (!q || !q.options) return { question: q, option: null };
+  const option = q.options.find((o) => o.value === value);
+  return { question: q, option };
+}
+
+function renderCurrentStateAndActions(item) {
+  const stateContainer = document.getElementById('r-current-state');
+  const actionsList = document.getElementById('r-actions');
+  stateContainer.innerHTML = '';
+  actionsList.innerHTML = '';
+
+  const scoredCategories = item.categoryDefinitions.filter((c) => c.scored);
+  let hasAnyAction = false;
+
+  scoredCategories.forEach((category) => {
+    const answersInCategory = item.answers.filter((a) => a.categoryId === category.id);
+    if (answersInCategory.length === 0) return;
+
+    const group = document.createElement('div');
+    group.className = 'report-category-group';
+    const heading = document.createElement('h3');
+    heading.textContent = category.label;
+    group.appendChild(heading);
+
+    answersInCategory.forEach((answer) => {
+      const { option } = findQuestionOption(item.questionDefinitions, answer.questionId, answer.value);
+      const isIssue = !!(option && option.actionHint);
+
+      const row = document.createElement('div');
+      row.className = 'qa-row';
+      const flag = document.createElement('div');
+      flag.className = 'qa-flag';
+      flag.innerHTML = isIssue ? '<span class="flag-issue">課題</span>' : '<span class="flag-ok">対応済み</span>';
+      const text = document.createElement('div');
+      text.innerHTML = `<strong>${answer.questionPrompt}</strong><br>${answer.valueLabel}`;
+      row.appendChild(flag);
+      row.appendChild(text);
+      group.appendChild(row);
+
+      if (isIssue) {
+        hasAnyAction = true;
+        const li = document.createElement('li');
+        li.textContent = option.actionHint;
+        actionsList.appendChild(li);
+      }
+    });
+
+    stateContainer.appendChild(group);
+  });
+
+  if (!hasAnyAction) {
+    const li = document.createElement('li');
+    li.textContent = '特筆すべき課題はありませんでした。現状の体制で十分対応可能です。';
+    actionsList.appendChild(li);
+  }
+}
+
+function renderPlans(item) {
+  const container = document.getElementById('r-plans');
+  container.innerHTML = '';
+
+  const scoredCategories = item.categoryDefinitions.filter((c) => c.scored && c.thresholds);
+  scoredCategories.forEach((category) => {
+    const heading = document.createElement('h3');
+    heading.textContent = category.label;
+    heading.style.fontSize = '0.9rem';
+    heading.style.color = 'var(--color-muted)';
+    container.appendChild(heading);
+
+    const table = document.createElement('table');
+    table.className = 'plan-table';
+    const matchedPlanCode = (item.recommendations[category.id] || {}).planCode;
+
+    category.thresholds.forEach((threshold) => {
+      const tr = document.createElement('tr');
+      if (threshold.planCode === matchedPlanCode) tr.className = 'matched';
+      const recommendedBadge = threshold.recommended ? '<span class="recommended-badge">推奨</span>' : '';
+      const matchedBadge = threshold.planCode === matchedPlanCode ? ' ← 該当' : '';
+      tr.innerHTML = `
+        <td>${threshold.label}${recommendedBadge}${matchedBadge}</td>
+        <td class="plan-price">${formatPrice(threshold.priceJpy)}</td>
+      `;
+      table.appendChild(tr);
+    });
+
+    container.appendChild(table);
+  });
 }
 
 async function loadDetail() {
@@ -93,35 +262,22 @@ async function loadDetail() {
     if (!res.ok) throw new Error('failed to load');
     const item = await res.json();
 
-    document.getElementById('f-company').textContent = item.companyName;
-    document.getElementById('f-contact').textContent = item.contactName;
     document.getElementById('f-email').textContent = item.email;
     document.getElementById('f-phone').textContent = item.phone || '-';
-    document.getElementById('f-submitted').textContent = formatDate(item.submittedAt);
+    document.getElementById('f-scores').textContent = Object.entries(item.categoryScores)
+      .map(([catId, score]) => `${catId}: ${score}点`)
+      .join(' / ');
     document.getElementById('f-notified').textContent = item.notificationEmailSentAt
       ? `送信済（${formatDate(item.notificationEmailSentAt)}）`
       : '未送信';
-
-    const recBody = document.getElementById('f-recommendations');
-    recBody.innerHTML = '';
-    Object.entries(item.recommendations).forEach(([categoryId, rec]) => {
-      const score = item.categoryScores[categoryId];
-      const price = rec.priceJpy !== undefined ? `（${rec.priceJpy.toLocaleString('ja-JP')}円）` : '';
-      const mark = rec.recommended ? ' ★推奨' : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<th>カテゴリ${categoryId}</th><td>${score}点 → ${rec.label}${mark}${price}</td>`;
-      recBody.appendChild(tr);
-    });
-
-    const answersBody = document.getElementById('f-answers');
-    answersBody.innerHTML = '';
-    item.answers.forEach((a) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${a.questionPrompt}</td><td>${a.valueLabel}</td><td>${a.score !== undefined ? a.score + '点' : '-'}</td>`;
-      answersBody.appendChild(tr);
-    });
-
     document.getElementById('status-select').value = item.reviewStatus;
+
+    document.getElementById('r-date').textContent = formatDate(item.submittedAt);
+    document.getElementById('r-company').textContent = item.companyName;
+    document.getElementById('r-contact').textContent = item.contactName;
+
+    renderCurrentStateAndActions(item);
+    renderPlans(item);
 
     loadingEl.style.display = 'none';
     content.style.display = 'block';
@@ -153,6 +309,10 @@ document.getElementById('save-status').addEventListener('click', async () => {
     saveMessage.textContent = '保存に失敗しました。';
     saveMessage.style.display = 'block';
   }
+});
+
+document.getElementById('print-btn').addEventListener('click', () => {
+  window.print();
 });
 
 loadDetail();

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { IsmsDiagnosticRepo, ReviewStatus } from '../services/ismsDiagnosticRepo';
+import { CATEGORIES, QUESTIONS } from '../domain/ismsDiagnostic';
 
 const reviewStatusSchema = z.enum(['new', 'contacted', 'closed']);
 
@@ -38,7 +39,13 @@ export function createAdminIsmsDiagnosticRouter(repo: IsmsDiagnosticRepo): Route
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    res.json(item);
+    // 顧客向けレポート（3段階/2段階比較表・対策ヒント）の描画に使う。しきい値・文言の単一情報源は
+    // domain/ismsDiagnostic.tsのまま保ち、HTML側にハードコードしないための受け渡し。
+    res.json({
+      ...item,
+      categoryDefinitions: CATEGORIES,
+      questionDefinitions: QUESTIONS,
+    });
   });
 
   router.patch('/:id/status', async (req, res) => {

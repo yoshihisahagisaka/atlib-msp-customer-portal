@@ -19,6 +19,11 @@ export interface QuestionOption {
   label: string;
   /** 採点対象の質問（scored: true）のみ持つ。プロフィール質問は score を持たない。 */
   score?: number;
+  /**
+   * 顧客向けレポートの「対策」セクションに使う定性的な一言（v1ドラフト、営業観点でのレビュー・修正を想定）。
+   * 配点1・2（弱点）の選択肢のみ持つ。配点3（最上位）は課題なしのため持たない。
+   */
+  actionHint?: string;
 }
 
 export interface Question {
@@ -98,8 +103,18 @@ export const QUESTIONS: Question[] = [
     scored: true,
     options: [
       { value: 'x1-a', label: 'ISMS/SCS評価対応の専任、または主担当として動けるメンバーが社内にいる', score: 3 },
-      { value: 'x1-b', label: '他業務と兼任の担当者はいるが、知識や経験に不安がある', score: 2 },
-      { value: 'x1-c', label: '担当者を誰にするか決まっていない、またはITが苦手なメンバーしかいない', score: 1 },
+      {
+        value: 'x1-b',
+        label: '他業務と兼任の担当者はいるが、知識や経験に不安がある',
+        score: 2,
+        actionHint: 'PMO/事務局代行など、伴走支援によるプロジェクト推進体制の補強を推奨',
+      },
+      {
+        value: 'x1-c',
+        label: '担当者を誰にするか決まっていない、またはITが苦手なメンバーしかいない',
+        score: 1,
+        actionHint: '外部コンサルタントが実質的な推進役を担う「徹底伴走」レベルの支援が必要',
+      },
     ],
   },
   {
@@ -111,8 +126,18 @@ export const QUESTIONS: Question[] = [
     scored: true,
     options: [
       { value: 'x2-a', label: '担当者が週に10時間以上、このプロジェクトに時間を割くことができる', score: 3 },
-      { value: 'x2-b', label: '兼任のため、週に3〜5時間程度しか時間を確保できない', score: 2 },
-      { value: 'x2-c', label: '日々の通常業務（情シス・総務など）で手一杯で、時間はほとんど割けない', score: 1 },
+      {
+        value: 'x2-b',
+        label: '兼任のため、週に3〜5時間程度しか時間を確保できない',
+        score: 2,
+        actionHint: '作業の一部を外部委託し、担当者の負荷を軽減する体制が必要',
+      },
+      {
+        value: 'x2-c',
+        label: '日々の通常業務（情シス・総務など）で手一杯で、時間はほとんど割けない',
+        score: 1,
+        actionHint: '高頻度の伴走支援により、担当者の稼働を最小限に抑えた進行が必要',
+      },
     ],
   },
   {
@@ -124,8 +149,18 @@ export const QUESTIONS: Question[] = [
     scored: true,
     options: [
       { value: 'x3-a', label: '過去にPマークやISMSの取得・運用経験があり、セキュリティ規程のイメージが湧く', score: 3 },
-      { value: 'x3-b', label: '知識はないが、クラウドツール（SecureNavi）のガイドを読めば自力で理解できそう', score: 2 },
-      { value: 'x3-c', label: '専門用語が全く分からず、規程のチェックや読解を自社だけで行うのは不安', score: 1 },
+      {
+        value: 'x3-b',
+        label: '知識はないが、クラウドツール（SecureNavi）のガイドを読めば自力で理解できそう',
+        score: 2,
+        actionHint: '規程作成のテンプレート提供・レビュー支援があれば自走可能',
+      },
+      {
+        value: 'x3-c',
+        label: '専門用語が全く分からず、規程のチェックや読解を自社だけで行うのは不安',
+        score: 1,
+        actionHint: '規程の作成・チェックを外部が主体的に担う支援が必要',
+      },
     ],
   },
   {
@@ -137,8 +172,18 @@ export const QUESTIONS: Question[] = [
     scored: true,
     options: [
       { value: 'x4-a', label: '社内のプロジェクト管理能力が高く、自社主導で期限通りに進行できる', score: 3 },
-      { value: 'x4-b', label: '月1回程度の定期的な進捗チェック（お尻叩き）があれば、なんとか進められる', score: 2 },
-      { value: 'x4-c', label: '外部から高頻度でマイルストーンを管理・リードしてもらわないと、後回しになる', score: 1 },
+      {
+        value: 'x4-b',
+        label: '月1回程度の定期的な進捗チェック（お尻叩き）があれば、なんとか進められる',
+        score: 2,
+        actionHint: '定期的な進捗確認・リマインドの仕組みが有効',
+      },
+      {
+        value: 'x4-c',
+        label: '外部から高頻度でマイルストーンを管理・リードしてもらわないと、後回しになる',
+        score: 1,
+        actionHint: 'マイルストーン管理を外部が主導する体制が必要',
+      },
     ],
   },
   // --- カテゴリY（xlsx Q5-Q7、文言・配点はxlsxと同一） ---
@@ -151,8 +196,18 @@ export const QUESTIONS: Question[] = [
     scored: true,
     options: [
       { value: 'y1-a', label: '自社のルーターやUTM、Wi-Fi等の設定変更、アクセスログの確認を自社内で完結できる', score: 3 },
-      { value: 'y1-b', label: '基本的な設定はできるが、ISMS水準（境界防御やネットワーク分離）の変更は不安', score: 2 },
-      { value: 'y1-c', label: 'ネットワーク機器の設定はすべて外部ベンダー任せ、または社内にできる人がいない', score: 1 },
+      {
+        value: 'y1-b',
+        label: '基本的な設定はできるが、ISMS水準（境界防御やネットワーク分離）の変更は不安',
+        score: 2,
+        actionHint: '境界防御・ネットワーク分離など高度な設定部分のみ別途支援が有効',
+      },
+      {
+        value: 'y1-c',
+        label: 'ネットワーク機器の設定はすべて外部ベンダー任せ、または社内にできる人がいない',
+        score: 1,
+        actionHint: 'ネットワーク設定・運用を含めた別発注（ITインフラ最適化ソリューション）を推奨',
+      },
     ],
   },
   {
@@ -168,8 +223,18 @@ export const QUESTIONS: Question[] = [
         label: '主要なクラウド（SaaS）のアカウント一括管理（IdP）や、多要素認証（MFA）の強制設定を自社で実装・運用できる',
         score: 3,
       },
-      { value: 'y2-b', label: '各ツールの個別設定はできるが、組織全体の統合的なアクセス制御の設計は難しい', score: 2 },
-      { value: 'y2-c', label: '誰がどのツールのアカウントを持っているか、把握・制御できていない', score: 1 },
+      {
+        value: 'y2-b',
+        label: '各ツールの個別設定はできるが、組織全体の統合的なアクセス制御の設計は難しい',
+        score: 2,
+        actionHint: 'IdP導入など統合アクセス管理の設計支援が有効',
+      },
+      {
+        value: 'y2-c',
+        label: '誰がどのツールのアカウントを持っているか、把握・制御できていない',
+        score: 1,
+        actionHint: 'クラウドID管理の実装を含めた別発注を推奨',
+      },
     ],
   },
   {
@@ -185,8 +250,18 @@ export const QUESTIONS: Question[] = [
         label: '全社の端末（OSやセキュリティソフト）を一括管理するMDMの導入や、紛失時のリモートワイプ設定を自社で施工・運用できる',
         score: 3,
       },
-      { value: 'y3-b', label: 'セキュリティソフトの導入はしているが、紛失時の遠隔消去などの高度な制御は未対応', score: 2 },
-      { value: 'y3-c', label: '社員のPCやスマホの設定は個人の裁量に近く、会社として一括制御・施工する技術がない', score: 1 },
+      {
+        value: 'y3-b',
+        label: 'セキュリティソフトの導入はしているが、紛失時の遠隔消去などの高度な制御は未対応',
+        score: 2,
+        actionHint: 'MDM導入によるリモートワイプ等の高度な制御の追加を推奨',
+      },
+      {
+        value: 'y3-c',
+        label: '社員のPCやスマホの設定は個人の裁量に近く、会社として一括制御・施工する技術がない',
+        score: 1,
+        actionHint: 'MDM導入・運用を含めた別発注を推奨',
+      },
     ],
   },
   // --- プロフィール質問（非スコア、営業判断材料としてのボリューム増） ---
