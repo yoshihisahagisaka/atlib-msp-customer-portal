@@ -22,7 +22,7 @@
 <body>
 
 <nav class="lp-nav">
-  <div class="brand">atLIB <span>InfraVision</span></div>
+  <div class="brand">atLIB <span>ISMS支援プラン診断</span></div>
 </nav>
 
 <div class="section" style="max-width:680px;">
@@ -59,12 +59,15 @@
 
     <div id="diagnostic-error" class="error-message" style="display:none;"></div>
     <div id="diagnostic-success" class="success-message" style="display:none;">
+      ご協力ありがとうございました。<br>
       診断の回答を受け付けました。内容を確認のうえ、担当者よりご連絡いたします。
     </div>
     <button type="submit" class="btn" style="width:100%;" id="diagnostic-submit">診断を送信する</button>
   </form>
 
-  <p style="margin-top:2rem;"><a href="/home.html">トップページに戻る</a></p>
+  <div id="close-wrap" style="display:none; margin-top:2rem;">
+    <button type="button" class="btn btn-secondary" id="close-btn">閉じる</button>
+  </div>
 </div>
 
 <script>
@@ -178,6 +181,7 @@ document.getElementById('diagnostic-form').addEventListener('submit', async (e) 
       successEl.style.display = 'block';
       form.reset();
       form.style.display = 'none';
+      document.getElementById('close-wrap').style.display = 'block';
     } else {
       const data = await res.json().catch(() => ({}));
       errorEl.textContent = data.error || '送信に失敗しました。しばらくしてから再度お試しください。';
@@ -189,6 +193,10 @@ document.getElementById('diagnostic-form').addEventListener('submit', async (e) 
   } finally {
     submitBtn.disabled = false;
   }
+});
+
+document.getElementById('close-btn').addEventListener('click', () => {
+  window.close();
 });
 
 loadQuestions();
