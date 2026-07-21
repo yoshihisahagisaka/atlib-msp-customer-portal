@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "migrate": "ts-node migrations/runner.ts",
-    "onboard": "ts-node scripts/onboarding/create_customer.ts"
+    "migrate": "node --env-file=.env -r ts-node/register migrations/runner.ts",
+    "onboard": "node --env-file=.env -r ts-node/register scripts/onboarding/create_customer.ts"
   },
   "engines": {
     "node": ">=20"
