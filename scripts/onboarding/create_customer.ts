@@ -146,7 +146,7 @@ async function run(): Promise<void> {
   console.log('msp-frontend-server にSSHして、以下をそのまま実行してください:');
   console.log('');
   console.log('  cd /opt/atlib-msp-dev/zabbixserver/batch');
-  console.log(`  python setup_discovery.py --apply ${buildDiscoveryArgs(args)}`);
+  console.log(`  python3 setup_discovery.py --apply ${buildDiscoveryArgs(args)}`);
 
   await pool.end();
 }
