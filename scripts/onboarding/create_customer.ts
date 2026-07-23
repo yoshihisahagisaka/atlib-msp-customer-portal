@@ -12,10 +12,8 @@ import { ZabbixClient } from '../../src/services/zabbixClient';
  *
  * 使い方:
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com
- *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --plan "エントリープラン"
  *   npm run onboard -- --code atlib002 --name "サンプル株式会社様" --email admin@example.com --proxy-id 10123 --ip-range 192.168.1.1-254
  *
- * --plan は複数指定可（本体グループに加えてプラン別サブグループを追加作成する）。
  * --proxy-id は顧客拠点のSensor Edge（Zabbix Proxy）経由で監視する場合のみ指定する
  * （未指定の場合はZabbixサーバーが直接監視する）。
  * --ip-range は顧客のネットワークレンジ（手順0のヒアリングで判明していれば指定）。
@@ -34,7 +32,6 @@ interface Args {
   code: string;
   name: string;
   email: string;
-  plans: string[];
   proxyId?: string;
   ipRange?: string;
 }
@@ -44,27 +41,17 @@ function parseArgs(argv: string[]): Args {
     const idx = argv.indexOf(flag);
     return idx >= 0 ? argv[idx + 1] : undefined;
   };
-  const getAll = (flag: string): string[] => {
-    const result: string[] = [];
-    argv.forEach((arg, i) => {
-      if (arg === flag) {
-        const v = argv[i + 1];
-        if (v) result.push(v);
-      }
-    });
-    return result;
-  };
 
   const code = get('--code');
   const name = get('--name');
   const email = get('--email');
   if (!code || !name || !email) {
     throw new Error(
-      'Usage: --code <customer_code> --name <company_name> --email <admin_email> [--plan <plan_name>]... [--proxy-id <zabbix_proxy_id>] [--ip-range <customer_ip_range>]',
+      'Usage: --code <customer_code> --name <company_name> --email <admin_email> [--proxy-id <zabbix_proxy_id>] [--ip-range <customer_ip_range>]',
     );
   }
 
-  return { code, name, email, plans: getAll('--plan'), proxyId: get('--proxy-id'), ipRange: get('--ip-range') };
+  return { code, name, email, proxyId: get('--proxy-id'), ipRange: get('--ip-range') };
 }
 
 function generateTemporaryPassword(): string {
@@ -91,13 +78,6 @@ async function run(): Promise<void> {
   console.log(`[1/5] ホストグループ作成: MSP/${args.name}`);
   const baseGroupId = await zabbixClient.createHostGroup(`MSP/${args.name}`);
   const groupIds: Array<{ id: string; name: string }> = [{ id: baseGroupId, name: `MSP/${args.name}` }];
-
-  for (const plan of args.plans) {
-    const planGroupName = `MSP/${args.name} ${plan}`;
-    console.log(`       追加サブグループ作成: ${planGroupName}`);
-    const planGroupId = await zabbixClient.createHostGroup(planGroupName);
-    groupIds.push({ id: planGroupId, name: planGroupName });
-  }
 
   console.log(`[2/5] 通知用Zabbixユーザー作成: notify_${args.code}`);
   const zabbixUserId = await zabbixClient.createNotificationUser(
