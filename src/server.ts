@@ -17,7 +17,9 @@ import { createTopologyRouter } from './routes/topology';
 import { createInquiryRouter } from './routes/inquiry';
 import { createIsmsDiagnosticRouter } from './routes/ismsDiagnostic';
 import { createAdminIsmsDiagnosticRouter } from './routes/adminIsmsDiagnostic';
+import { createAdminOpsHistoryRouter } from './routes/adminOpsHistory';
 import { IsmsDiagnosticRepo } from './services/ismsDiagnosticRepo';
+import { OpsHistoryRepo } from './services/opsHistoryRepo';
 import { requireAdminAuth } from './middleware/adminAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 
@@ -31,6 +33,7 @@ async function main(): Promise<void> {
   const authService = new AuthService(pool, customerRepo, mailer, config);
   const zabbixClient = new ZabbixClient(config.zabbix);
   const ismsDiagnosticRepo = new IsmsDiagnosticRepo(pool);
+  const opsHistoryRepo = new OpsHistoryRepo(pool);
 
   const app = express();
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
@@ -65,6 +68,7 @@ async function main(): Promise<void> {
     requireAdminAuth(config.adminAuth),
   ];
   app.use('/api/admin/isms-diagnostic', ...adminAuthGate, createAdminIsmsDiagnosticRouter(ismsDiagnosticRepo));
+  app.use('/api/admin/ops-history', ...adminAuthGate, createAdminOpsHistoryRouter(opsHistoryRepo, customerRepo));
   // 静的HTML側もBasic Authで保護する。この行は下の一般static配信より前に置くこと
   // （逆順だと未認証で/admin/*.htmlが一般static経由で読めてしまう）。
   app.use('/admin', ...adminAuthGate, express.static(path.join(__dirname, '../public/admin')));

@@ -48,6 +48,14 @@ export class CustomerRepo {
     return rows[0] ? this.mapRow(rows[0]) : null;
   }
 
+  /** 社内管理画面のプルダウン等で使う軽量な稼働中顧客一覧。 */
+  async listActive(): Promise<{ customerCode: string; companyName: string }[]> {
+    const { rows } = await this.pool.query<{ customer_code: string; company_name: string }>(
+      `SELECT customer_code, company_name FROM customers WHERE status = 'active' ORDER BY company_name`,
+    );
+    return rows.map((r) => ({ customerCode: r.customer_code, companyName: r.company_name }));
+  }
+
   /** 顧客に紐づく全ホストグループIDを返す。1件のみの顧客も配列長1で返す（分岐不要にするため）。 */
   async resolveHostgroupIds(customerId: string): Promise<string[]> {
     const { rows } = await this.pool.query<{ zabbix_groupid: string }>(
