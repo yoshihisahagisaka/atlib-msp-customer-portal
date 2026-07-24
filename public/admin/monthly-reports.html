@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>月次レポート承認 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="page" style="max-width:1000px;">
+  <h1>月次レポート承認</h1>
+
+  <div class="card">
+    <div class="form-row" style="max-width:240px;">
+      <label for="status-filter">状態で絞り込み</label>
+      <select id="status-filter">
+        <option value="draft">承認待ち(draft)</option>
+        <option value="approved">承認済(未送信)</option>
+        <option value="sent">送信済</option>
+        <option value="failed">生成失敗</option>
+      </select>
+    </div>
+
+    <div id="list-error" class="error-message" style="display:none;"></div>
+    <div id="list-loading" class="info-message">読み込み中...</div>
+
+    <table id="list-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>顧客コード</th>
+          <th>対象期間</th>
+          <th>状態</th>
+          <th>生成日時</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="list-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const STATUS_LABELS = { draft: '承認待ち', approved: '承認済(未送信)', sent: '送信済', failed: '生成失敗' };
+const STATUS_BADGE_CLASS = { draft: 'badge-disabled', approved: 'badge-disabled', sent: 'badge-enabled', failed: 'badge-disabled' };
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadList() {
+  const loadingEl = document.getElementById('list-loading');
+  const errorEl = document.getElementById('list-error');
+  const table = document.getElementById('list-table');
+  const tbody = document.getElementById('list-body');
+  const status = document.getElementById('status-filter').value;
+
+  loadingEl.style.display = 'block';
+  errorEl.style.display = 'none';
+  table.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/admin/monthly-reports?status=' + encodeURIComponent(status));
+    if (!res.ok) throw new Error('failed to load');
+    const data = await res.json();
+
+    tbody.innerHTML = '';
+    data.items.forEach((item) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${item.customerCode}</td>
+        <td>${item.reportPeriod}</td>
+        <td><span class="badge ${STATUS_BADGE_CLASS[item.status] || 'badge-disabled'}">${STATUS_LABELS[item.status] || item.status}</span></td>
+        <td>${formatDate(item.generatedAt)}</td>
+        <td><a href="/admin/monthly-report-detail.html?id=${encodeURIComponent(item.id)}">詳細</a></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    loadingEl.style.display = 'none';
+    table.style.display = data.items.length > 0 ? 'table' : 'none';
+    if (data.items.length === 0) {
+      loadingEl.textContent = '該当するレポートはありません。';
+      loadingEl.style.display = 'block';
+    }
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '一覧の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+document.getElementById('status-filter').addEventListener('change', loadList);
+loadList();
+</script>
+</body>
+</html>

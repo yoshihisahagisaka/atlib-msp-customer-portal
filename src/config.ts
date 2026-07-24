@@ -39,6 +39,10 @@ export interface Config {
   };
   diagnosticNotifyEmail: string; // ISMS診断フォーム: 新規回答の通知先（カンマ区切りで複数可）
   portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
+  monthlyReport: {
+    storageBucket: string; // 月次レポートPPTXの保存先バケット
+    staffNotifyEmail: string; // バッチ完了時の「承認待ちがN件あります」通知先（カンマ区切りで複数可）
+  };
 }
 
 /**
@@ -122,5 +126,9 @@ export async function loadConfig(): Promise<Config> {
     // 新規env不要でportalBaseUrlを導出する（passwordResetUrlBaseは既にportalのオリジンを含んでいるため）。
     // 同じ導出パターンをscripts/onboarding/create_customer.tsのloginUrl組み立てでも使っている。
     portalBaseUrl: new URL(passwordResetUrlBase).origin,
+    monthlyReport: {
+      storageBucket: required('MONTHLY_REPORT_STORAGE_BUCKET', process.env.MONTHLY_REPORT_STORAGE_BUCKET),
+      staffNotifyEmail: required('MONTHLY_REPORT_STAFF_EMAIL', process.env.MONTHLY_REPORT_STAFF_EMAIL),
+    },
   };
 }

@@ -85,6 +85,22 @@ export class OpsHistoryRepo {
   }
 
   /**
+   * 対象月（periodYearMonthは 'YYYY-MM'）内の対応履歴を発生日時の昇順で全件取得する。
+   * 月次レポートのスライド7(運用対応履歴)に流し込む用途(件数上限を設けない)。
+   */
+  async listByCustomerAndPeriod(customerCode: string, periodYearMonth: string): Promise<OpsHistoryEntry[]> {
+    const { rows } = await this.pool.query<Row>(
+      `SELECT id, customer_code, occurred_at, category, description, operator, minutes_spent, plan_quota_consumed, created_at
+       FROM ops_history
+       WHERE customer_code = $1
+         AND date_trunc('month', occurred_at) = date_trunc('month', $2::date)
+       ORDER BY occurred_at ASC`,
+      [customerCode, `${periodYearMonth}-01`],
+    );
+    return rows.map(mapRow);
+  }
+
+  /**
    * 対象月（periodYearMonthは 'YYYY-MM'）内で plan_quota_consumed=true の対応件数を集計する。
    * リモート運用プランの「月4回まで」枠の消化状況確認に使う。
    */

@@ -1,5 +1,7 @@
 node_modules/
 dist/
+batch/node_modules/
+batch/dist/
 .env
 *.env
 !*.env.example

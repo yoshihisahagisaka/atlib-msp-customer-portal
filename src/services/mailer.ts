@@ -62,6 +62,50 @@ export class Mailer {
     });
   }
 
+  /** toはカンマ区切りで複数宛先可。生成済みPPTXをそのまま添付して送る。 */
+  async sendMonthlyReportEmail(
+    to: string,
+    info: { companyName: string; reportPeriod: string },
+    attachment: Buffer,
+  ): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: `【atLIB】月次インフラ健全性報告書(${info.reportPeriod}) - ${info.companyName} 様`,
+      text: [
+        `${info.companyName} 様`,
+        '',
+        `${info.reportPeriod}分の月次インフラ健全性報告書をお送りいたします。`,
+        '添付のファイルをご確認ください。',
+        '',
+        'ご不明な点がございましたら、お気軽にお問い合わせください。',
+      ].join('\n'),
+      attachments: [
+        {
+          filename: `atLIB_Monthly_Report_${info.companyName}_${info.reportPeriod}.pptx`,
+          content: attachment,
+        },
+      ],
+    });
+  }
+
+  /** toはカンマ区切りで複数宛先可。バッチ完了後、運用担当への承認待ち通知。 */
+  async sendMonthlyReportBatchSummary(to: string, draftCount: number, failedCount: number): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: `【atLIB】月次レポート自動生成完了(承認待ち${draftCount}件)`,
+      text: [
+        '月次レポートの自動生成バッチが完了しました。',
+        '',
+        `承認待ち: ${draftCount}件`,
+        `生成失敗: ${failedCount}件`,
+        '',
+        '管理画面から内容を確認し、承認・送信してください。',
+      ].join('\n'),
+    });
+  }
+
   /** toはカンマ区切りで複数宛先可（nodemailerがそのまま複数宛先として解釈する）。 */
   async sendDiagnosticSubmissionNotification(to: string, summary: DiagnosticNotificationSummary): Promise<void> {
     const scoreLines = Object.entries(summary.categoryScores).map(([categoryId, score]) => `  ${categoryId}: ${score}点`);

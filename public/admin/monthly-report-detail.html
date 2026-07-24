@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>月次レポート詳細 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="page" style="max-width:700px;">
+  <p><a href="/admin/monthly-reports.html">&larr; 一覧に戻る</a></p>
+  <h1>月次レポート詳細</h1>
+
+  <div id="detail-error" class="error-message" style="display:none;"></div>
+  <div id="detail-loading" class="info-message">読み込み中...</div>
+
+  <div id="detail-content" class="card" style="display:none;">
+    <table>
+      <tbody>
+        <tr><th>顧客コード</th><td id="f-customer-code"></td></tr>
+        <tr><th>対象期間</th><td id="f-period"></td></tr>
+        <tr><th>状態</th><td id="f-status"></td></tr>
+        <tr><th>生成日時</th><td id="f-generated-at"></td></tr>
+        <tr><th>承認者/日時</th><td id="f-approved"></td></tr>
+        <tr><th>送信日時</th><td id="f-sent-at"></td></tr>
+        <tr><th>エラー</th><td id="f-error"></td></tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:1rem;">
+      <a class="btn btn-secondary" id="download-link" href="#">📥 PPTXをダウンロード</a>
+    </div>
+
+    <div class="form-row" style="max-width:280px; margin-top:1.5rem;">
+      <label for="approved-by">承認者名(任意)</label>
+      <input type="text" id="approved-by">
+    </div>
+    <button class="btn" id="approve-btn">承認して送信</button>
+    <div id="approve-message" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+const STATUS_LABELS = { draft: '承認待ち', approved: '承認済(未送信)', sent: '送信済', failed: '生成失敗' };
+
+function getId() {
+  return new URLSearchParams(location.search).get('id');
+}
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadDetail() {
+  const id = getId();
+  const loadingEl = document.getElementById('detail-loading');
+  const errorEl = document.getElementById('detail-error');
+  const content = document.getElementById('detail-content');
+
+  if (!id) {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = 'idが指定されていません。';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/admin/monthly-reports/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('failed to load');
+    const item = await res.json();
+
+    document.getElementById('f-customer-code').textContent = item.customerCode;
+    document.getElementById('f-period').textContent = item.reportPeriod;
+    document.getElementById('f-status').textContent = STATUS_LABELS[item.status] || item.status;
+    document.getElementById('f-generated-at').textContent = formatDate(item.generatedAt);
+    document.getElementById('f-approved').textContent = item.approvedBy
+      ? `${item.approvedBy}(${formatDate(item.approvedAt)})`
+      : '-';
+    document.getElementById('f-sent-at').textContent = formatDate(item.sentAt);
+    document.getElementById('f-error').textContent = item.errorMessage || '-';
+
+    const downloadLink = document.getElementById('download-link');
+    if (item.filePath) {
+      downloadLink.href = '/api/admin/monthly-reports/' + encodeURIComponent(id) + '/download';
+    } else {
+      downloadLink.style.display = 'none';
+    }
+
+    document.getElementById('approve-btn').disabled = !item.filePath;
+
+    loadingEl.style.display = 'none';
+    content.style.display = 'block';
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '詳細の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+document.getElementById('approve-btn').addEventListener('click', async () => {
+  const id = getId();
+  const approvedBy = document.getElementById('approved-by').value || undefined;
+  const messageEl = document.getElementById('approve-message');
+  messageEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/admin/monthly-reports/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approvedBy }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.details || 'failed');
+    messageEl.className = 'success-message';
+    messageEl.textContent = '承認し、メールを送信しました。';
+    messageEl.style.display = 'block';
+    loadDetail();
+  } catch (e) {
+    messageEl.className = 'error-message';
+    messageEl.textContent = '承認は完了しましたが、メール送信に失敗しました: ' + (e && e.message ? e.message : '');
+    messageEl.style.display = 'block';
+    loadDetail();
+  }
+});
+
+loadDetail();
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+    "outDir": "batch/dist",
+    "rootDir": ".",
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "sourceMap": true
+  },
+  "include": [
+    "batch/**/*.ts",
+    "src/config.ts",
+    "src/db/pool.ts",
+    "src/lib/**/*.ts",
+    "src/services/customerRepo.ts",
+    "src/services/opsHistoryRepo.ts",
+    "src/services/reportSettingsRepo.ts",
+    "src/services/monthlyReportRepo.ts",
+    "src/services/reportStorage.ts",
+    "src/services/mailer.ts"
+  ],
+  "exclude": ["node_modules", "dist", "batch/dist", "batch/node_modules"]
+}

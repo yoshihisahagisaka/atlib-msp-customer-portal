@@ -56,6 +56,15 @@ export class CustomerRepo {
     return rows.map((r) => ({ customerCode: r.customer_code, companyName: r.company_name }));
   }
 
+  /** 月次レポート生成バッチ用。稼働中顧客をフルレコードで返す(zabbixUserId等が必要なため)。 */
+  async findAllActive(): Promise<Customer[]> {
+    const { rows } = await this.pool.query(
+      `SELECT id, customer_code, company_name, email, password_hash, zabbix_userid, zabbix_proxy_id, status
+       FROM customers WHERE status = 'active' ORDER BY company_name`,
+    );
+    return rows.map((r) => this.mapRow(r));
+  }
+
   /** 顧客に紐づく全ホストグループIDを返す。1件のみの顧客も配列長1で返す（分岐不要にするため）。 */
   async resolveHostgroupIds(customerId: string): Promise<string[]> {
     const { rows } = await this.pool.query<{ zabbix_groupid: string }>(

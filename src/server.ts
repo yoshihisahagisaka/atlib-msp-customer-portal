@@ -19,9 +19,12 @@ import { createIsmsDiagnosticRouter } from './routes/ismsDiagnostic';
 import { createAdminIsmsDiagnosticRouter } from './routes/adminIsmsDiagnostic';
 import { createAdminOpsHistoryRouter } from './routes/adminOpsHistory';
 import { createAdminReportSettingsRouter } from './routes/adminReportSettings';
+import { createAdminMonthlyReportsRouter } from './routes/adminMonthlyReports';
 import { IsmsDiagnosticRepo } from './services/ismsDiagnosticRepo';
 import { OpsHistoryRepo } from './services/opsHistoryRepo';
 import { ReportSettingsRepo } from './services/reportSettingsRepo';
+import { MonthlyReportRepo } from './services/monthlyReportRepo';
+import { ReportStorage } from './services/reportStorage';
 import { requireAdminAuth } from './middleware/adminAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 
@@ -37,6 +40,8 @@ async function main(): Promise<void> {
   const ismsDiagnosticRepo = new IsmsDiagnosticRepo(pool);
   const opsHistoryRepo = new OpsHistoryRepo(pool);
   const reportSettingsRepo = new ReportSettingsRepo(pool);
+  const monthlyReportRepo = new MonthlyReportRepo(pool);
+  const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
 
   const app = express();
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
@@ -73,6 +78,11 @@ async function main(): Promise<void> {
   app.use('/api/admin/isms-diagnostic', ...adminAuthGate, createAdminIsmsDiagnosticRouter(ismsDiagnosticRepo));
   app.use('/api/admin/ops-history', ...adminAuthGate, createAdminOpsHistoryRouter(opsHistoryRepo, customerRepo));
   app.use('/api/admin/report-settings', ...adminAuthGate, createAdminReportSettingsRouter(reportSettingsRepo));
+  app.use(
+    '/api/admin/monthly-reports',
+    ...adminAuthGate,
+    createAdminMonthlyReportsRouter(monthlyReportRepo, customerRepo, zabbixClient, config.zabbix, reportStorage, mailer),
+  );
   // 静的HTML側もBasic Authで保護する。この行は下の一般static配信より前に置くこと
   // （逆順だと未認証で/admin/*.htmlが一般static経由で読めてしまう）。
   app.use('/admin', ...adminAuthGate, express.static(path.join(__dirname, '../public/admin')));
