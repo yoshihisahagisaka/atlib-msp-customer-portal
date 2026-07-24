@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>月次レポート設定 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="page" style="max-width:700px;">
+  <h1>月次レポート設定(WANインターフェース)</h1>
+
+  <div class="card">
+    <div class="form-row">
+      <label for="customer-select">顧客</label>
+      <select id="customer-select">
+        <option value="">── 顧客を選択 ──</option>
+      </select>
+    </div>
+
+    <form id="settings-form">
+      <div class="form-row">
+        <label for="wan-if-in">WAN IN アイテムID(Zabbix)</label>
+        <input type="text" id="wan-if-in">
+      </div>
+      <div class="form-row">
+        <label for="wan-if-out">WAN OUT アイテムID(Zabbix)</label>
+        <input type="text" id="wan-if-out">
+      </div>
+      <div id="form-error" class="error-message" style="display:none;"></div>
+      <div id="form-info" class="info-message" style="display:none;"></div>
+      <button type="submit" class="btn">保存</button>
+    </form>
+  </div>
+</div>
+
+<script>
+function selectedCustomerCode() {
+  return document.getElementById('customer-select').value;
+}
+
+async function loadCustomers() {
+  const sel = document.getElementById('customer-select');
+  const res = await fetch('/api/admin/ops-history/customers');
+  if (!res.ok) throw new Error('failed to load customers');
+  const data = await res.json();
+  data.items.forEach((c) => {
+    const opt = document.createElement('option');
+    opt.value = c.customerCode;
+    opt.textContent = `${c.companyName}(${c.customerCode})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function loadSettings() {
+  const customerCode = selectedCustomerCode();
+  const wanIn = document.getElementById('wan-if-in');
+  const wanOut = document.getElementById('wan-if-out');
+  if (!customerCode) {
+    wanIn.value = '';
+    wanOut.value = '';
+    return;
+  }
+  const res = await fetch(`/api/admin/report-settings/${encodeURIComponent(customerCode)}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  wanIn.value = data.wanIfIn ?? '';
+  wanOut.value = data.wanIfOut ?? '';
+}
+
+async function onSubmit(ev) {
+  ev.preventDefault();
+  const errorEl = document.getElementById('form-error');
+  const infoEl = document.getElementById('form-info');
+  errorEl.style.display = 'none';
+  infoEl.style.display = 'none';
+
+  const customerCode = selectedCustomerCode();
+  if (!customerCode) {
+    errorEl.textContent = '顧客を選択してください。';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  const body = {
+    wanIfIn: document.getElementById('wan-if-in').value || undefined,
+    wanIfOut: document.getElementById('wan-if-out').value || undefined,
+  };
+
+  try {
+    const res = await fetch(`/api/admin/report-settings/${encodeURIComponent(customerCode)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('failed to save');
+    infoEl.textContent = '保存しました。';
+    infoEl.style.display = 'block';
+  } catch {
+    errorEl.textContent = '保存に失敗しました。入力内容を確認してもう一度お試しください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+document.getElementById('customer-select').addEventListener('change', loadSettings);
+document.getElementById('settings-form').addEventListener('submit', onSubmit);
+
+loadCustomers().catch(() => {
+  document.getElementById('form-error').textContent = '顧客一覧の取得に失敗しました。';
+  document.getElementById('form-error').style.display = 'block';
+});
+</script>
+</body>
+</html>
