@@ -1,0 +1,11 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - 'asia-northeast1-docker.pkg.dev/msp-zabbix/cloud-run-source-deploy/msp-monthly-report-batch'
+      - -f
+      - batch/Dockerfile
+      - .
+images:
+  - 'asia-northeast1-docker.pkg.dev/msp-zabbix/cloud-run-source-deploy/msp-monthly-report-batch'

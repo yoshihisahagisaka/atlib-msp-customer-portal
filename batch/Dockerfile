@@ -2,17 +2,19 @@
 # msp-customer-portal本体(Dockerfile、node:20-alpine)とは別イメージ
 # (AlpineはPuppeteerのChromiumバイナリと相性が悪いためDebian系を使う)。
 # ビルドコンテキストは msp-customer-portal/ ルート(src/を共有参照するため)。
+# ルートのpackage.json/node_modulesをそのまま使う(batch/はsrc/と兄弟ディレクトリのため、
+# batch単独のnode_modulesではsrc/側のimportを解決できない)。
 
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
-COPY batch/package*.json ./batch/
+COPY package.json package-lock.json* ./
 # ビルド専用ステージではブラウザ本体は不要(型チェック・トランスパイルのみ)なのでダウンロードを省略する
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN cd batch && npm ci
+RUN npm ci
 COPY tsconfig.batch.json ./
 COPY src ./src
 COPY batch ./batch
-RUN cd batch && npm run build
+RUN npm run build:batch
 
 FROM node:20-bookworm-slim
 WORKDIR /app
@@ -29,9 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV NODE_ENV=production
 
-COPY batch/package*.json ./batch/
-RUN cd batch && npm ci --omit=dev
-COPY --from=build /app/batch/dist ./batch/dist
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist-batch ./dist-batch
 
-WORKDIR /app/batch
-CMD ["node", "dist/batch/generate-monthly-reports.js"]
+CMD ["node", "dist-batch/batch/generate-monthly-reports.js"]

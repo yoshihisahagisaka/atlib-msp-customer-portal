@@ -9,7 +9,9 @@
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "migrate": "node --env-file=.env -r ts-node/register migrations/runner.ts",
-    "onboard": "node --env-file=.env -r ts-node/register scripts/onboarding/create_customer.ts"
+    "onboard": "node --env-file=.env -r ts-node/register scripts/onboarding/create_customer.ts",
+    "build:batch": "tsc -p tsconfig.batch.json",
+    "start:batch": "node dist-batch/batch/generate-monthly-reports.js"
   },
   "engines": {
     "node": ">=20"
@@ -20,11 +22,13 @@
     "bcrypt": "^5.1.1",
     "cookie-parser": "^1.4.6",
     "express": "^4.19.2",
+    "google-auth-library": "^9.14.1",
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^9.0.3",
     "pg": "^8.11.5",
     "pino": "^9.0.0",
     "pino-http": "^10.0.0",
+    "puppeteer": "^24.15.0",
     "undici": "^6.19.2",
     "zod": "^3.23.8"
   },

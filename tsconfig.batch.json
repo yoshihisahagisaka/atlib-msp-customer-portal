@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "lib": ["ES2022", "DOM"],
-    "outDir": "batch/dist",
+    "outDir": "dist-batch",
     "rootDir": ".",
     "strict": true,
     "noImplicitAny": true,
@@ -28,5 +28,5 @@
     "src/services/reportStorage.ts",
     "src/services/mailer.ts"
   ],
-  "exclude": ["node_modules", "dist", "batch/dist", "batch/node_modules"]
+  "exclude": ["node_modules", "dist", "dist-batch"]
 }
