@@ -77,7 +77,11 @@ async function main(): Promise<void> {
   ];
   app.use('/api/admin/isms-diagnostic', ...adminAuthGate, createAdminIsmsDiagnosticRouter(ismsDiagnosticRepo));
   app.use('/api/admin/ops-history', ...adminAuthGate, createAdminOpsHistoryRouter(opsHistoryRepo, customerRepo));
-  app.use('/api/admin/report-settings', ...adminAuthGate, createAdminReportSettingsRouter(reportSettingsRepo));
+  app.use(
+    '/api/admin/report-settings',
+    ...adminAuthGate,
+    createAdminReportSettingsRouter(reportSettingsRepo, customerRepo, zabbixClient),
+  );
   app.use(
     '/api/admin/monthly-reports',
     ...adminAuthGate,

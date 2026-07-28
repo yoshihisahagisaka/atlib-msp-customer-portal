@@ -602,6 +602,57 @@ export class ZabbixClient {
       uplinkPort: params.uplinkPort || null,
     });
   }
+
+  // ---- 月次レポート自動化: WANインターフェース候補（社内管理画面から呼ばれる） ----
+
+  /**
+   * 月次レポート設定画面(report-settings.html)のWAN IN/OUTプルダウン用に、
+   * 顧客のホストグループに属する機器のトラフィックアイテムを候補として返す。
+   * ロジックはzabbixserver/atlib_monthly_report.htmlの_populateWanSelector()と同一
+   * (role=routerタグを優先、キー先頭でIN/OUTを判定)にして、両ツールで選択肢が食い違わないようにする。
+   */
+  async getWanInterfaceCandidates(
+    groupIds: string[],
+  ): Promise<{ in: ZabbixWanInterfaceCandidate[]; out: ZabbixWanInterfaceCandidate[] }> {
+    const hosts = await this.call<Array<{ hostid: string; name: string; tags?: Array<{ tag: string; value: string }> }>>(
+      'host.get',
+      { groupids: groupIds, output: ['hostid', 'name'], selectTags: ['tag', 'value'] },
+    );
+    if (hosts.length === 0) return { in: [], out: [] };
+
+    const routerHosts = hosts.filter((h) => (h.tags ?? []).some((t) => t.tag === 'role' && t.value === 'router'));
+    const targetHosts = routerHosts.length > 0 ? routerHosts : hosts;
+    const hostNameById = new Map(targetHosts.map((h) => [h.hostid, h.name]));
+
+    const items = await this.call<Array<{ itemid: string; hostid: string; key_: string; name: string }>>('item.get', {
+      hostids: [...hostNameById.keys()],
+      output: ['itemid', 'hostid', 'key_', 'name'],
+    });
+
+    const getDispName = (item: { key_: string; name: string }): string => {
+      const nameMatch = item.name.match(/^interface\s+([^:]+)\s*:/i);
+      if (nameMatch?.[1]) return nameMatch[1].trim();
+      const bracketMatch = item.key_.match(/\[([^\],]+)/);
+      const bracket = bracketMatch?.[1]?.trim() ?? item.name;
+      const idxMatch = bracket.match(/(\d+)$/);
+      if (idxMatch) return `IF ${idxMatch[1]}`;
+      return bracket.replace(/^if(?:In|Out)/i, 'if');
+    };
+    const toCandidate = (item: { itemid: string; hostid: string; key_: string; name: string }): ZabbixWanInterfaceCandidate => ({
+      itemid: item.itemid,
+      label: `${hostNameById.get(item.hostid) ?? item.hostid} / ${getDispName(item)}`,
+    });
+
+    return {
+      in: items.filter((i) => /^net\.if\.in\[|^ifInOctets\[/i.test(i.key_)).map(toCandidate),
+      out: items.filter((i) => /^net\.if\.out\[|^ifOutOctets\[/i.test(i.key_)).map(toCandidate),
+    };
+  }
+}
+
+export interface ZabbixWanInterfaceCandidate {
+  itemid: string;
+  label: string; // "ホスト名 / インターフェース表示名"
 }
 
 export interface ZabbixTopologyHost {

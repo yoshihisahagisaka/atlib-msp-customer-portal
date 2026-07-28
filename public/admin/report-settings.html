@@ -20,14 +20,20 @@
       </select>
     </div>
 
+    <div id="candidates-info" class="info-message" style="display:none;"></div>
+
     <form id="settings-form">
       <div class="form-row">
-        <label for="wan-if-in">WAN IN アイテムID(Zabbix)</label>
-        <input type="text" id="wan-if-in">
+        <label for="wan-if-in">WAN IN(Zabbixアイテム)</label>
+        <select id="wan-if-in">
+          <option value="">── IN ──</option>
+        </select>
       </div>
       <div class="form-row">
-        <label for="wan-if-out">WAN OUT アイテムID(Zabbix)</label>
-        <input type="text" id="wan-if-out">
+        <label for="wan-if-out">WAN OUT(Zabbixアイテム)</label>
+        <select id="wan-if-out">
+          <option value="">── OUT ──</option>
+        </select>
       </div>
       <div id="form-error" class="error-message" style="display:none;"></div>
       <div id="form-info" class="info-message" style="display:none;"></div>
@@ -54,20 +60,53 @@ async function loadCustomers() {
   });
 }
 
+/** 候補一覧に現在値が無い場合(手入力の古い値等)、選択肢から消えて上書きされないよう先頭に追加しておく。 */
+function populateSelect(selectEl, placeholder, candidates, currentValue) {
+  selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+  let found = false;
+  candidates.forEach((c) => {
+    const opt = document.createElement('option');
+    opt.value = c.itemid;
+    opt.textContent = c.label;
+    if (c.itemid === currentValue) found = true;
+    selectEl.appendChild(opt);
+  });
+  if (currentValue && !found) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = `現在の設定値(候補になし): ${currentValue}`;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = currentValue || '';
+}
+
 async function loadSettings() {
   const customerCode = selectedCustomerCode();
   const wanIn = document.getElementById('wan-if-in');
   const wanOut = document.getElementById('wan-if-out');
+  const infoEl = document.getElementById('candidates-info');
+  infoEl.style.display = 'none';
+
   if (!customerCode) {
-    wanIn.value = '';
-    wanOut.value = '';
+    wanIn.innerHTML = '<option value="">── IN ──</option>';
+    wanOut.innerHTML = '<option value="">── OUT ──</option>';
     return;
   }
-  const res = await fetch(`/api/admin/report-settings/${encodeURIComponent(customerCode)}`);
-  if (!res.ok) return;
-  const data = await res.json();
-  wanIn.value = data.wanIfIn ?? '';
-  wanOut.value = data.wanIfOut ?? '';
+
+  const [settingsRes, candidatesRes] = await Promise.all([
+    fetch(`/api/admin/report-settings/${encodeURIComponent(customerCode)}`),
+    fetch(`/api/admin/report-settings/${encodeURIComponent(customerCode)}/wan-candidates`),
+  ]);
+  const settings = settingsRes.ok ? await settingsRes.json() : { wanIfIn: null, wanIfOut: null };
+  const candidates = candidatesRes.ok ? await candidatesRes.json() : { in: [], out: [] };
+
+  populateSelect(wanIn, '── IN ──', candidates.in, settings.wanIfIn);
+  populateSelect(wanOut, '── OUT ──', candidates.out, settings.wanIfOut);
+
+  if (candidates.in.length === 0 && candidates.out.length === 0) {
+    infoEl.textContent = 'Zabbix側でこの顧客のWANトラフィックアイテムが見つかりませんでした(ホストグループ未紐付け、またはルーター役割タグ未設定の可能性があります)。';
+    infoEl.style.display = 'block';
+  }
 }
 
 async function onSubmit(ev) {
