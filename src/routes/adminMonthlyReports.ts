@@ -66,6 +66,23 @@ export function createAdminMonthlyReportsRouter(
     res.send(buffer);
   });
 
+  // ブラウザ確認用のプレビューPDF(ダウンロードさせず<iframe>等でインライン表示させる想定)。
+  router.get('/:id/preview.pdf', async (req, res) => {
+    const report = await monthlyReportRepo.findById(req.params.id);
+    if (!report || !report.filePath) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    try {
+      const buffer = await reportStorage.downloadReportPdf(report.filePath);
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `inline; filename="${report.customerCode}_${report.reportPeriod}.pdf"`);
+      res.send(buffer);
+    } catch {
+      res.status(404).json({ error: 'PDF not found (古いレポートはPDF未生成の可能性があります)' });
+    }
+  });
+
   router.post('/:id/approve', async (req, res) => {
     const parsed = approveSchema.safeParse(req.body);
     if (!parsed.success) {

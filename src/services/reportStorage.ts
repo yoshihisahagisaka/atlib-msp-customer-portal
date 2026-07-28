@@ -1,24 +1,35 @@
 import { Storage } from '@google-cloud/storage';
 
 /**
- * 月次レポートPPTXの保存先(Cloud Storage)を一手に引き受けるクラス。
+ * 月次レポート(PPTX本体 + プレビュー用PDF)の保存先(Cloud Storage)を一手に引き受けるクラス。
  * バッチ(生成側)・ポータル(ダウンロード側)の両方から使われる共有コード。
+ * PDFはPPTXと同じ customer_code/report_period を共有し拡張子だけ異なるため、
+ * DBに別カラムは持たせず常にPPTXパスから導出する(pptxPathToPdfPath)。
  */
 export class ReportStorage {
   private readonly storage = new Storage();
 
   constructor(private readonly bucketName: string) {}
 
-  private objectPath(customerCode: string, reportPeriod: string): string {
-    return `${customerCode}/${reportPeriod}.pptx`;
+  private objectPath(customerCode: string, reportPeriod: string, ext: 'pptx' | 'pdf'): string {
+    return `${customerCode}/${reportPeriod}.${ext}`;
   }
 
   /** base64エンコードされたPPTXデータをアップロードし、gs://パスを返す。 */
   async uploadReport(customerCode: string, reportPeriod: string, base64Data: string): Promise<string> {
-    const objectPath = this.objectPath(customerCode, reportPeriod);
+    const objectPath = this.objectPath(customerCode, reportPeriod, 'pptx');
     const buffer = Buffer.from(base64Data, 'base64');
     await this.storage.bucket(this.bucketName).file(objectPath).save(buffer, {
       contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+    return `gs://${this.bucketName}/${objectPath}`;
+  }
+
+  /** プレビュー用PDF(Bufferそのまま)をアップロードし、gs://パスを返す。 */
+  async uploadReportPdf(customerCode: string, reportPeriod: string, pdfBuffer: Buffer): Promise<string> {
+    const objectPath = this.objectPath(customerCode, reportPeriod, 'pdf');
+    await this.storage.bucket(this.bucketName).file(objectPath).save(pdfBuffer, {
+      contentType: 'application/pdf',
     });
     return `gs://${this.bucketName}/${objectPath}`;
   }
@@ -28,5 +39,11 @@ export class ReportStorage {
     const objectPath = filePath.replace(`gs://${this.bucketName}/`, '');
     const [buffer] = await this.storage.bucket(this.bucketName).file(objectPath).download();
     return buffer;
+  }
+
+  /** PPTXのgs://パスから、同じ顧客/期間のプレビューPDFを取得する。 */
+  async downloadReportPdf(pptxFilePath: string): Promise<Buffer> {
+    const pdfPath = pptxFilePath.replace(/\.pptx$/, '.pdf');
+    return this.downloadReport(pdfPath);
   }
 }

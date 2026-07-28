@@ -129,12 +129,23 @@ async function main(): Promise<void> {
 
         await page.evaluate((entries) => (window as any).applyOpsHistoryEntries(entries), opsHistoryForPage);
 
+        // ブラウザ確認用のプレビューPDF。既存の@media print CSS(.admin-panel/#status-bar非表示、
+        // .slideごとにページ区切り)をそのまま使う。page.pdf()は印刷メディアでレンダリングされるため
+        // exportToPPTX()のようなDOM改変(contenteditable解除等)は不要。
+        const pdfBuffer = await page.pdf({
+          width: '10in',
+          height: '5.625in',
+          printBackground: true,
+          margin: { top: 0, bottom: 0, left: 0, right: 0 },
+        });
+
         const base64 = await page.evaluate(() => (window as any).exportToPPTX({ returnBase64: true }));
         if (typeof base64 !== 'string' || base64.length === 0) {
           throw new Error('PPTX生成結果が空でした');
         }
 
         const filePath = await reportStorage.uploadReport(customer.customerCode, period.label, base64);
+        await reportStorage.uploadReportPdf(customer.customerCode, period.label, Buffer.from(pdfBuffer));
         await monthlyReportRepo.upsertDraft(customer.customerCode, period.label, { filePath });
         draftCount += 1;
         console.log(`[${customer.customerCode}] 生成完了: ${filePath}`);

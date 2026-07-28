@@ -9,36 +9,46 @@
 </head>
 <body>
 
-<div class="page" style="max-width:700px;">
+<div class="page" style="max-width:1100px;">
   <p><a href="/admin/monthly-reports.html">&larr; 一覧に戻る</a></p>
   <h1>月次レポート詳細</h1>
 
   <div id="detail-error" class="error-message" style="display:none;"></div>
   <div id="detail-loading" class="info-message">読み込み中...</div>
 
-  <div id="detail-content" class="card" style="display:none;">
-    <table>
-      <tbody>
-        <tr><th>顧客コード</th><td id="f-customer-code"></td></tr>
-        <tr><th>対象期間</th><td id="f-period"></td></tr>
-        <tr><th>状態</th><td id="f-status"></td></tr>
-        <tr><th>生成日時</th><td id="f-generated-at"></td></tr>
-        <tr><th>承認者/日時</th><td id="f-approved"></td></tr>
-        <tr><th>送信日時</th><td id="f-sent-at"></td></tr>
-        <tr><th>エラー</th><td id="f-error"></td></tr>
-      </tbody>
-    </table>
+  <div id="detail-content" style="display:none;">
+    <div class="card">
+      <table>
+        <tbody>
+          <tr><th>顧客コード</th><td id="f-customer-code"></td></tr>
+          <tr><th>対象期間</th><td id="f-period"></td></tr>
+          <tr><th>状態</th><td id="f-status"></td></tr>
+          <tr><th>生成日時</th><td id="f-generated-at"></td></tr>
+          <tr><th>承認者/日時</th><td id="f-approved"></td></tr>
+          <tr><th>送信日時</th><td id="f-sent-at"></td></tr>
+          <tr><th>エラー</th><td id="f-error"></td></tr>
+        </tbody>
+      </table>
 
-    <div style="margin-top:1rem;">
-      <a class="btn btn-secondary" id="download-link" href="#">📥 PPTXをダウンロード</a>
+      <div style="margin-top:1rem;">
+        <a class="btn btn-secondary" id="download-link" href="#">📥 内容修正用にPPTXをダウンロード</a>
+      </div>
+
+      <div class="form-row" style="max-width:280px; margin-top:1.5rem;">
+        <label for="approved-by">承認者名(任意)</label>
+        <input type="text" id="approved-by">
+      </div>
+      <button class="btn" id="approve-btn">問題なし・承認して送信</button>
+      <div id="approve-message" style="display:none;"></div>
     </div>
 
-    <div class="form-row" style="max-width:280px; margin-top:1.5rem;">
-      <label for="approved-by">承認者名(任意)</label>
-      <input type="text" id="approved-by">
+    <div class="card">
+      <h2>内容プレビュー</h2>
+      <div id="pdf-missing" class="info-message" style="display:none;">
+        このレポートのプレビューPDFはまだありません(PDF生成対応前に作成されたレポートの可能性があります)。上の「PPTXをダウンロード」でご確認ください。
+      </div>
+      <iframe id="pdf-preview" style="width:100%; height:80vh; border:1px solid var(--color-border); border-radius:8px; display:none;"></iframe>
     </div>
-    <button class="btn" id="approve-btn">承認して送信</button>
-    <div id="approve-message" style="display:none;"></div>
   </div>
 </div>
 
@@ -85,10 +95,24 @@ async function loadDetail() {
     document.getElementById('f-error').textContent = item.errorMessage || '-';
 
     const downloadLink = document.getElementById('download-link');
+    const pdfFrame = document.getElementById('pdf-preview');
+    const pdfMissing = document.getElementById('pdf-missing');
     if (item.filePath) {
       downloadLink.href = '/api/admin/monthly-reports/' + encodeURIComponent(id) + '/download';
+      const previewUrl = '/api/admin/monthly-reports/' + encodeURIComponent(id) + '/preview.pdf';
+      const headRes = await fetch(previewUrl, { method: 'HEAD' });
+      if (headRes.ok) {
+        pdfFrame.src = previewUrl;
+        pdfFrame.style.display = 'block';
+        pdfMissing.style.display = 'none';
+      } else {
+        pdfFrame.style.display = 'none';
+        pdfMissing.style.display = 'block';
+      }
     } else {
       downloadLink.style.display = 'none';
+      pdfFrame.style.display = 'none';
+      pdfMissing.style.display = 'none';
     }
 
     document.getElementById('approve-btn').disabled = !item.filePath;
