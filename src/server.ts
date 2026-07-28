@@ -85,7 +85,15 @@ async function main(): Promise<void> {
   app.use(
     '/api/admin/monthly-reports',
     ...adminAuthGate,
-    createAdminMonthlyReportsRouter(monthlyReportRepo, customerRepo, zabbixClient, config.zabbix, reportStorage, mailer),
+    createAdminMonthlyReportsRouter(
+      monthlyReportRepo,
+      customerRepo,
+      zabbixClient,
+      config.zabbix,
+      reportStorage,
+      mailer,
+      config.monthlyReport.fromEmail,
+    ),
   );
   // 静的HTML側もBasic Authで保護する。この行は下の一般static配信より前に置くこと
   // （逆順だと未認証で/admin/*.htmlが一般static経由で読めてしまう）。

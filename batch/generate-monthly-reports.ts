@@ -165,7 +165,13 @@ async function main(): Promise<void> {
   console.log(`月次レポート生成バッチ完了: draft=${draftCount}, failed=${failedCount}`);
 
   if (draftCount + failedCount > 0) {
-    await mailer.sendMonthlyReportBatchSummary(config.monthlyReport.staffNotifyEmail, draftCount, failedCount);
+    await mailer.sendMonthlyReportBatchSummary(
+      config.monthlyReport.staffNotifyEmail,
+      config.monthlyReport.fromEmail,
+      draftCount,
+      failedCount,
+      `${config.portalBaseUrl}/admin/monthly-reports.html`,
+    );
   }
 
   await pool.end();

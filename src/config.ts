@@ -42,6 +42,7 @@ export interface Config {
   monthlyReport: {
     storageBucket: string; // 月次レポートPPTXの保存先バケット
     staffNotifyEmail: string; // バッチ完了時の「承認待ちがN件あります」通知先（カンマ区切りで複数可）
+    fromEmail: string; // 月次レポート関連メール(顧客送付・バッチ完了通知)専用の送信元アドレス
   };
 }
 
@@ -129,6 +130,7 @@ export async function loadConfig(): Promise<Config> {
     monthlyReport: {
       storageBucket: required('MONTHLY_REPORT_STORAGE_BUCKET', process.env.MONTHLY_REPORT_STORAGE_BUCKET),
       staffNotifyEmail: required('MONTHLY_REPORT_STAFF_EMAIL', process.env.MONTHLY_REPORT_STAFF_EMAIL),
+      fromEmail: required('MONTHLY_REPORT_FROM_EMAIL', process.env.MONTHLY_REPORT_FROM_EMAIL),
     },
   };
 }

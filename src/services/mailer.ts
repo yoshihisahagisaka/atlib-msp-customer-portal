@@ -62,14 +62,18 @@ export class Mailer {
     });
   }
 
-  /** toはカンマ区切りで複数宛先可。生成済みPPTXをそのまま添付して送る。 */
+  /**
+   * toはカンマ区切りで複数宛先可。生成済みPPTXをそのまま添付して送る。
+   * fromは通常のSMTP_FROM(個人メールボックス)とは別に、月次レポート専用の送信元(noreply@atlib.jp等)を渡す想定。
+   */
   async sendMonthlyReportEmail(
     to: string,
+    from: string,
     info: { companyName: string; reportPeriod: string },
     attachment: Buffer,
   ): Promise<void> {
     await this.transporter.sendMail({
-      from: this.config.from,
+      from,
       to,
       subject: `【atLIB】月次インフラ健全性報告書(${info.reportPeriod}) - ${info.companyName} 様`,
       text: [
@@ -89,10 +93,16 @@ export class Mailer {
     });
   }
 
-  /** toはカンマ区切りで複数宛先可。バッチ完了後、運用担当への承認待ち通知。 */
-  async sendMonthlyReportBatchSummary(to: string, draftCount: number, failedCount: number): Promise<void> {
+  /** toはカンマ区切りで複数宛先可。バッチ完了後、運用担当への承認待ち通知。fromはsendMonthlyReportEmailと同じ専用送信元。 */
+  async sendMonthlyReportBatchSummary(
+    to: string,
+    from: string,
+    draftCount: number,
+    failedCount: number,
+    adminUrl: string,
+  ): Promise<void> {
     await this.transporter.sendMail({
-      from: this.config.from,
+      from,
       to,
       subject: `【atLIB】月次レポート自動生成完了(承認待ち${draftCount}件)`,
       text: [
@@ -101,7 +111,9 @@ export class Mailer {
         `承認待ち: ${draftCount}件`,
         `生成失敗: ${failedCount}件`,
         '',
-        '管理画面から内容を確認し、承認・送信してください。',
+        `管理画面: ${adminUrl}`,
+        '',
+        '上記から内容を確認し、承認・送信してください。',
       ].join('\n'),
     });
   }

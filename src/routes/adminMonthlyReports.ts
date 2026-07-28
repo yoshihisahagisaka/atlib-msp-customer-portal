@@ -27,6 +27,7 @@ export function createAdminMonthlyReportsRouter(
   zabbixConfig: Config['zabbix'],
   reportStorage: ReportStorage,
   mailer: Mailer,
+  monthlyReportFromEmail: string,
 ): Router {
   const router = Router();
 
@@ -110,7 +111,12 @@ export function createAdminMonthlyReportsRouter(
       const to = (Array.isArray(emailMedia.sendto) ? emailMedia.sendto : [emailMedia.sendto]).join(',');
 
       const buffer = await reportStorage.downloadReport(report.filePath);
-      await mailer.sendMonthlyReportEmail(to, { companyName: customer.companyName, reportPeriod: report.reportPeriod }, buffer);
+      await mailer.sendMonthlyReportEmail(
+        to,
+        monthlyReportFromEmail,
+        { companyName: customer.companyName, reportPeriod: report.reportPeriod },
+        buffer,
+      );
       await monthlyReportRepo.markSent(report.id);
       res.json({ status: 'sent' });
     } catch (e) {
