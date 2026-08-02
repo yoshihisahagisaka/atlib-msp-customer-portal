@@ -38,6 +38,7 @@ export interface Config {
     password: string;
   };
   diagnosticNotifyEmail: string; // ISMS診断フォーム: 新規回答の通知先（カンマ区切りで複数可）
+  customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可。営業リードのためISMS診断とは別宛先にできるようにする）
   portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
   monthlyReport: {
     storageBucket: string; // 月次レポートPPTXの保存先バケット
@@ -124,6 +125,10 @@ export async function loadConfig(): Promise<Config> {
       password: adminAuthPassword,
     },
     diagnosticNotifyEmail: required('DIAGNOSTIC_NOTIFY_EMAIL', process.env.DIAGNOSTIC_NOTIFY_EMAIL),
+    customerApplicationNotifyEmail: required(
+      'CUSTOMER_APPLICATION_NOTIFY_EMAIL',
+      process.env.CUSTOMER_APPLICATION_NOTIFY_EMAIL,
+    ),
     // 新規env不要でportalBaseUrlを導出する（passwordResetUrlBaseは既にportalのオリジンを含んでいるため）。
     // 同じ導出パターンをscripts/onboarding/create_customer.tsのloginUrl組み立てでも使っている。
     portalBaseUrl: new URL(passwordResetUrlBase).origin,

@@ -14,6 +14,18 @@ export interface DiagnosticNotificationSummary {
   detailUrl: string;
 }
 
+export interface CustomerApplicationSummary {
+  id: string;
+  companyName: string;
+  contactName: string;
+  email: string;
+  phone?: string;
+  interestedPlan?: string;
+  message?: string;
+  submittedAt: Date;
+  detailUrl: string;
+}
+
 export class Mailer {
   private readonly transporter: Transporter;
 
@@ -148,6 +160,30 @@ export class Mailer {
         '',
         '推奨プラン・判定:',
         ...recommendationLines,
+        '',
+        `詳細を管理画面で確認: ${summary.detailUrl}`,
+      ]
+        .filter((line): line is string => line !== null)
+        .join('\n'),
+    });
+  }
+
+  /** toはカンマ区切りで複数宛先可（nodemailerがそのまま複数宛先として解釈する）。 */
+  async sendCustomerApplicationNotification(to: string, summary: CustomerApplicationSummary): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: `【新規申込み】${summary.companyName} 様`,
+      text: [
+        `${summary.companyName} 様より、サービス申込みフォームへの送信がありました。`,
+        '',
+        `会社名: ${summary.companyName}`,
+        `担当者: ${summary.contactName}`,
+        `メール: ${summary.email}`,
+        summary.phone ? `電話番号: ${summary.phone}` : null,
+        summary.interestedPlan ? `興味のあるプラン: ${summary.interestedPlan}` : null,
+        summary.message ? `ご要望・備考: ${summary.message}` : null,
+        `送信日時: ${summary.submittedAt.toLocaleString('ja-JP')}`,
         '',
         `詳細を管理画面で確認: ${summary.detailUrl}`,
       ]

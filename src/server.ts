@@ -17,10 +17,13 @@ import { createTopologyRouter } from './routes/topology';
 import { createInquiryRouter } from './routes/inquiry';
 import { createIsmsDiagnosticRouter } from './routes/ismsDiagnostic';
 import { createAdminIsmsDiagnosticRouter } from './routes/adminIsmsDiagnostic';
+import { createCustomerApplicationRouter } from './routes/customerApplication';
+import { createAdminCustomerApplicationsRouter } from './routes/adminCustomerApplications';
 import { createAdminOpsHistoryRouter } from './routes/adminOpsHistory';
 import { createAdminReportSettingsRouter } from './routes/adminReportSettings';
 import { createAdminMonthlyReportsRouter } from './routes/adminMonthlyReports';
 import { IsmsDiagnosticRepo } from './services/ismsDiagnosticRepo';
+import { CustomerApplicationRepo } from './services/customerApplicationRepo';
 import { OpsHistoryRepo } from './services/opsHistoryRepo';
 import { ReportSettingsRepo } from './services/reportSettingsRepo';
 import { MonthlyReportRepo } from './services/monthlyReportRepo';
@@ -38,6 +41,7 @@ async function main(): Promise<void> {
   const authService = new AuthService(pool, customerRepo, mailer, config);
   const zabbixClient = new ZabbixClient(config.zabbix);
   const ismsDiagnosticRepo = new IsmsDiagnosticRepo(pool);
+  const customerApplicationRepo = new CustomerApplicationRepo(pool);
   const opsHistoryRepo = new OpsHistoryRepo(pool);
   const reportSettingsRepo = new ReportSettingsRepo(pool);
   const monthlyReportRepo = new MonthlyReportRepo(pool);
@@ -69,6 +73,15 @@ async function main(): Promise<void> {
     '/api/isms-diagnostic',
     createIsmsDiagnosticRouter(ismsDiagnosticRepo, mailer, config.diagnosticNotifyEmail, config.portalBaseUrl),
   );
+  app.use(
+    '/api/customer-application',
+    createCustomerApplicationRouter(
+      customerApplicationRepo,
+      mailer,
+      config.customerApplicationNotifyEmail,
+      config.portalBaseUrl,
+    ),
+  );
 
   // 管理画面（Basic Auth保護）。ブルートフォース対策として同じIPレート制限を認証チェックの前段にも適用する。
   const adminAuthGate = [
@@ -76,6 +89,11 @@ async function main(): Promise<void> {
     requireAdminAuth(config.adminAuth),
   ];
   app.use('/api/admin/isms-diagnostic', ...adminAuthGate, createAdminIsmsDiagnosticRouter(ismsDiagnosticRepo));
+  app.use(
+    '/api/admin/customer-applications',
+    ...adminAuthGate,
+    createAdminCustomerApplicationsRouter(customerApplicationRepo),
+  );
   app.use('/api/admin/ops-history', ...adminAuthGate, createAdminOpsHistoryRouter(opsHistoryRepo, customerRepo));
   app.use(
     '/api/admin/report-settings',

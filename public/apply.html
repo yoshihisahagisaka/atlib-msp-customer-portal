@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>お申込み | atLIB InfraVision</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/lp.css">
+</head>
+<body>
+
+<nav class="lp-nav">
+  <div class="brand">atLIB <span>InfraVision</span></div>
+</nav>
+
+<div class="section" style="max-width:680px;">
+  <h1 class="section-title" style="text-align:left;">サービスお申込み</h1>
+  <p class="info-message" id="intro-message">
+    InfraVision（インフラ監視サービス）のお申込みフォームです。送信後、担当者よりヒアリングの日程調整のご連絡をいたします
+    （この場でご契約が確定するものではありません）。
+  </p>
+
+  <form id="application-form">
+    <div class="card">
+      <h2>ご連絡先</h2>
+      <div class="form-row">
+        <label for="company-name">会社名</label>
+        <input type="text" id="company-name" required autocomplete="organization">
+      </div>
+      <div class="form-row">
+        <label for="contact-name">ご担当者名</label>
+        <input type="text" id="contact-name" required autocomplete="name">
+      </div>
+      <div class="form-row">
+        <label for="email">メールアドレス</label>
+        <input type="email" id="email" required autocomplete="email">
+      </div>
+      <div class="form-row">
+        <label for="phone">電話番号（任意）</label>
+        <input type="text" id="phone" autocomplete="tel">
+      </div>
+      <div class="form-row">
+        <label for="interested-plan">ご興味のあるプラン（任意）</label>
+        <input type="text" id="interested-plan" placeholder="例: エントリープラン">
+      </div>
+      <div class="form-row">
+        <label for="message">ご要望・備考（任意）</label>
+        <textarea id="message" rows="4" maxlength="2000"></textarea>
+      </div>
+    </div>
+
+    <div id="application-error" class="error-message" style="display:none;"></div>
+    <div id="application-success" class="success-message" style="display:none;">
+      お申込みありがとうございました。<br>
+      内容を確認のうえ、担当者よりヒアリングの日程調整についてご連絡いたします。
+    </div>
+    <button type="submit" class="btn" style="width:100%;" id="application-submit">送信する</button>
+  </form>
+
+  <div id="close-wrap" style="display:none; margin-top:2rem;">
+    <button type="button" class="btn btn-secondary" id="close-btn">閉じる</button>
+  </div>
+</div>
+
+<script>
+document.getElementById('application-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('application-error');
+  const successEl = document.getElementById('application-success');
+  const form = document.getElementById('application-form');
+  const submitBtn = document.getElementById('application-submit');
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+  submitBtn.disabled = true;
+
+  const payload = {
+    companyName: document.getElementById('company-name').value,
+    contactName: document.getElementById('contact-name').value,
+    email: document.getElementById('email').value,
+    phone: document.getElementById('phone').value || undefined,
+    interestedPlan: document.getElementById('interested-plan').value || undefined,
+    message: document.getElementById('message').value || undefined,
+  };
+
+  try {
+    const res = await fetch('/api/customer-application', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 204) {
+      document.getElementById('intro-message').style.display = 'none';
+      successEl.style.display = 'block';
+      form.reset();
+      form.style.display = 'none';
+      document.getElementById('close-wrap').style.display = 'block';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errorEl.textContent = data.error || '送信に失敗しました。しばらくしてから再度お試しください。';
+      errorEl.style.display = 'block';
+    }
+  } catch {
+    errorEl.textContent = '通信エラーが発生しました。しばらくしてから再度お試しください。';
+    errorEl.style.display = 'block';
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+document.getElementById('close-btn').addEventListener('click', () => {
+  window.close();
+});
+</script>
+</body>
+</html>
