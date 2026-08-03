@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createIpRateLimiter } from '../middleware/rateLimit';
 import type { CustomerApplicationRepo } from '../services/customerApplicationRepo';
 import type { Mailer } from '../services/mailer';
+import { sendSlackNotification } from '../services/slackNotifier';
 
 const applicationSchema = z.object({
   companyName: z.string().min(1).max(200),
@@ -21,6 +22,7 @@ export function createCustomerApplicationRouter(
   mailer: Mailer,
   notifyEmail: string,
   portalBaseUrl: string,
+  slackWebhookUrl: string | undefined,
 ): Router {
   const router = Router();
 
@@ -51,6 +53,8 @@ export function createCustomerApplicationRouter(
       return;
     }
 
+    const detailUrl = `${portalBaseUrl}/admin/customer-applications-detail.html?id=${id}`;
+
     // メール通知はbest-effort。失敗してもDB行・クライアントへのレスポンスには影響させない
     // （申込みを失わないことを優先する。失敗時はnotification_email_sent_atがNULLのままadmin一覧に残るのが最終防波堤）。
     try {
@@ -63,13 +67,26 @@ export function createCustomerApplicationRouter(
         interestedPlan,
         message,
         submittedAt: new Date(),
-        detailUrl: `${portalBaseUrl}/admin/customer-applications-detail.html?id=${id}`,
+        detailUrl,
       });
       await repo.markNotificationSent(id);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('customer application notification email failed:', err);
     }
+
+    // Slack通知はメールとは独立したbest-effortチャンネル。メールが失敗していても送る。
+    await sendSlackNotification(
+      slackWebhookUrl,
+      [
+        `*【新規申込み】${companyName} 様*`,
+        `担当者: ${contactName} / メール: ${email}${phone ? ` / 電話番号: ${phone}` : ''}`,
+        interestedPlan ? `興味のあるプラン: ${interestedPlan}` : null,
+        `詳細を管理画面で確認: ${detailUrl}`,
+      ]
+        .filter((line): line is string => line !== null)
+        .join('\n'),
+    );
 
     res.status(204).end();
   });

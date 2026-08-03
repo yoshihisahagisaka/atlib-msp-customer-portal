@@ -45,6 +45,14 @@ export interface Config {
     staffNotifyEmail: string; // バッチ完了時の「承認待ちがN件あります」通知先（カンマ区切りで複数可）
     fromEmail: string; // 月次レポート関連メール(顧客送付・バッチ完了通知)専用の送信元アドレス
   };
+  slack: {
+    // Slack Incoming Webhook URL。任意項目(undefinedなら送信をスキップするだけでメール通知には影響しない)。
+    // 実際にどのチャンネルに束ねるかはユーザーがSlack側で発行したURLをどのキーに設定するかで決まる
+    // (コード側はチャンネルの概念を持たない)。
+    webhookDiagnostic?: string;
+    webhookCustomerApplication?: string;
+    webhookMonthlyReport?: string;
+  };
 }
 
 /**
@@ -136,6 +144,11 @@ export async function loadConfig(): Promise<Config> {
       storageBucket: required('MONTHLY_REPORT_STORAGE_BUCKET', process.env.MONTHLY_REPORT_STORAGE_BUCKET),
       staffNotifyEmail: required('MONTHLY_REPORT_STAFF_EMAIL', process.env.MONTHLY_REPORT_STAFF_EMAIL),
       fromEmail: required('MONTHLY_REPORT_FROM_EMAIL', process.env.MONTHLY_REPORT_FROM_EMAIL),
+    },
+    slack: {
+      webhookDiagnostic: process.env.SLACK_WEBHOOK_DIAGNOSTIC || undefined,
+      webhookCustomerApplication: process.env.SLACK_WEBHOOK_CUSTOMER_APPLICATION || undefined,
+      webhookMonthlyReport: process.env.SLACK_WEBHOOK_MONTHLY_REPORT || undefined,
     },
   };
 }

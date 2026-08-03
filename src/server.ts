@@ -71,7 +71,13 @@ async function main(): Promise<void> {
   app.use('/api/inquiry', createInquiryRouter());
   app.use(
     '/api/isms-diagnostic',
-    createIsmsDiagnosticRouter(ismsDiagnosticRepo, mailer, config.diagnosticNotifyEmail, config.portalBaseUrl),
+    createIsmsDiagnosticRouter(
+      ismsDiagnosticRepo,
+      mailer,
+      config.diagnosticNotifyEmail,
+      config.portalBaseUrl,
+      config.slack.webhookDiagnostic,
+    ),
   );
   app.use(
     '/api/customer-application',
@@ -80,6 +86,7 @@ async function main(): Promise<void> {
       mailer,
       config.customerApplicationNotifyEmail,
       config.portalBaseUrl,
+      config.slack.webhookCustomerApplication,
     ),
   );
 

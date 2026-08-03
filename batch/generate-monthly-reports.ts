@@ -8,6 +8,7 @@ import { ReportSettingsRepo } from '../src/services/reportSettingsRepo';
 import { MonthlyReportRepo } from '../src/services/monthlyReportRepo';
 import { ReportStorage } from '../src/services/reportStorage';
 import { Mailer } from '../src/services/mailer';
+import { sendSlackNotification } from '../src/services/slackNotifier';
 
 const REPORT_URL = 'https://topology.zabbix.atlib.jp/atlib_monthly_report.html';
 
@@ -165,12 +166,22 @@ async function main(): Promise<void> {
   console.log(`月次レポート生成バッチ完了: draft=${draftCount}, failed=${failedCount}`);
 
   if (draftCount + failedCount > 0) {
+    const adminUrl = `${config.portalBaseUrl}/admin/monthly-reports.html`;
     await mailer.sendMonthlyReportBatchSummary(
       config.monthlyReport.staffNotifyEmail,
       config.monthlyReport.fromEmail,
       draftCount,
       failedCount,
-      `${config.portalBaseUrl}/admin/monthly-reports.html`,
+      adminUrl,
+    );
+    // Slack通知はメールとは独立したbest-effortチャンネル。
+    await sendSlackNotification(
+      config.slack.webhookMonthlyReport,
+      [
+        '*【atLIB】月次レポート自動生成完了*',
+        `承認待ち: ${draftCount}件 / 生成失敗: ${failedCount}件`,
+        `管理画面: ${adminUrl}`,
+      ].join('\n'),
     );
   }
 
