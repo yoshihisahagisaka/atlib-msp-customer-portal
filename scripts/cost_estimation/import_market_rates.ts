@@ -68,7 +68,15 @@ function parseRow(fields: string[], lineNo: number): MarketRateInput {
   if (fields.length !== EXPECTED_HEADER.length) {
     throw new Error(`${lineNo}行目: 列数が想定と異なります（${EXPECTED_HEADER.length}列必要、実際は${fields.length}列）`);
   }
-  const [category, itemName, unit, priceLowRaw, priceHighRaw, priceRecommendedRaw, sourceNoteRaw] = fields;
+  // fields.lengthは直前のチェックで7であることを確認済みだが、tsconfigのnoUncheckedIndexedAccess
+  // により配列添字アクセスの型はstring|undefinedになるため、?? ''で明示的に解消する。
+  const category = fields[0] ?? '';
+  const itemName = fields[1] ?? '';
+  const unit = fields[2] ?? '';
+  const priceLowRaw = fields[3] ?? '';
+  const priceHighRaw = fields[4] ?? '';
+  const priceRecommendedRaw = fields[5] ?? '';
+  const sourceNoteRaw = fields[6] ?? '';
 
   if (!VALID_CATEGORIES.includes(category as EstimateCategory)) {
     throw new Error(`${lineNo}行目: category が不正です（値: "${category}"、有効値: ${VALID_CATEGORIES.join('/')}）`);
@@ -109,7 +117,7 @@ function parseCsvFile(filePath: string): MarketRateInput[] {
     throw new Error('CSVファイルが空です');
   }
 
-  const header = parseCsvLine(lines[0]).map((h) => h.trim());
+  const header = parseCsvLine(lines[0] ?? '').map((h) => h.trim());
   if (header.length !== EXPECTED_HEADER.length || header.some((h, i) => h !== EXPECTED_HEADER[i])) {
     throw new Error(
       `1行目: ヘッダ列が想定と異なります。期待: ${EXPECTED_HEADER.join(',')} / 実際: ${header.join(',')}`,
@@ -119,8 +127,9 @@ function parseCsvFile(filePath: string): MarketRateInput[] {
   const rows: MarketRateInput[] = [];
   for (let i = 1; i < lines.length; i += 1) {
     const lineNo = i + 1;
-    if (lines[i].trim() === '') continue;
-    rows.push(parseRow(parseCsvLine(lines[i]), lineNo));
+    const line = lines[i] ?? '';
+    if (line.trim() === '') continue;
+    rows.push(parseRow(parseCsvLine(line), lineNo));
   }
   return rows;
 }
