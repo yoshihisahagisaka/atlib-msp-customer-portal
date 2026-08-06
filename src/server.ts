@@ -108,8 +108,11 @@ async function main(): Promise<void> {
   );
 
   // 管理画面（Basic Auth保護）。ブルートフォース対策として同じIPレート制限を認証チェックの前段にも適用する。
+  // maxRequestsは元30だったが、原価見積ツール追加によりページ遷移1回で複数API呼び出しが発生するようになり、
+  // 通常のスタッフ利用でも上限に達してしまっていたため300に緩和（実パスワードはSecret Manager管理の
+  // ランダム値であり、300回/15分でもブルートフォース耐性は実質的に保たれる）。
   const adminAuthGate = [
-    createIpRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 30 }),
+    createIpRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 300 }),
     requireAdminAuth(config.adminAuth),
   ];
   app.use('/api/admin/isms-diagnostic', ...adminAuthGate, createAdminIsmsDiagnosticRouter(ismsDiagnosticRepo));
