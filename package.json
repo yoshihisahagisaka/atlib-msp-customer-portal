@@ -10,6 +10,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "migrate": "node --env-file=.env -r ts-node/register migrations/runner.ts",
     "onboard": "node --env-file=.env -r ts-node/register scripts/onboarding/create_customer.ts",
+    "import:market-rates": "node --env-file=.env -r ts-node/register scripts/cost_estimation/import_market_rates.ts",
     "build:batch": "tsc -p tsconfig.batch.json",
     "start:batch": "node dist-batch/batch/generate-monthly-reports.js"
   },
@@ -17,6 +18,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@google-cloud/secret-manager": "^5.6.0",
     "@google-cloud/storage": "^7.14.0",
     "bcrypt": "^5.1.1",

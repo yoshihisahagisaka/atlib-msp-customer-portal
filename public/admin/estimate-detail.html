@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>見積詳細 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .no-print { }
+  .li-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  .li-table th, .li-table td { border: 1px solid var(--color-border); padding: 0.4rem; font-size: 0.85rem; vertical-align: top; }
+  .li-table input, .li-table select { width: 100%; box-sizing: border-box; font-size: 0.85rem; }
+  .li-table .amount-cell { white-space: nowrap; text-align: right; font-weight: 700; }
+  .li-row-below_low { background: #fde8e6; }
+  .li-row-below_recommended { background: #fff3dc; }
+  .rate-hint { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.2rem; }
+  .rate-hint.warn { color: var(--color-danger); font-weight: 700; }
+  .precondition-list { list-style: none; margin: 0.5rem 0; padding: 0; }
+  .precondition-list li { padding: 0.2rem 0; }
+  .chip-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
+  .chip { background: #eef1f6; border-radius: 999px; padding: 0.2rem 0.7rem; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+  .chip button { border: none; background: none; cursor: pointer; color: var(--color-muted); font-weight: 700; }
+  .totals-table { width: 100%; max-width: 420px; border-collapse: collapse; margin-top: 0.5rem; }
+  .totals-table th, .totals-table td { padding: 0.3rem 0.6rem; text-align: right; font-size: 0.9rem; }
+  .totals-table th { text-align: left; color: var(--color-muted); font-weight: 400; }
+  .totals-table tr.grand-total th, .totals-table tr.grand-total td { font-size: 1.1rem; font-weight: 700; border-top: 2px solid var(--color-primary); }
+
+  .report {
+    background: #fff;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+  }
+  .report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid var(--color-primary);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .report-header .brand { font-weight: 700; color: var(--color-primary); font-size: 1.1rem; }
+  .report-header .brand span { color: var(--color-orange); }
+  .report-header .meta { text-align: right; font-size: 0.85rem; color: var(--color-muted); }
+  .report h1 { font-size: 1.3rem; margin: 0 0 0.3rem; }
+  .report-addressee { margin-bottom: 1.5rem; font-size: 0.95rem; }
+  .report-section { margin-bottom: 2rem; }
+  .report-section h2 {
+    font-size: 1.05rem;
+    color: var(--color-primary);
+    border-left: 4px solid var(--color-accent);
+    padding-left: 0.6rem;
+    margin-bottom: 1rem;
+  }
+  .report-table { width: 100%; border-collapse: collapse; }
+  .report-table th, .report-table td { border: 1px solid var(--color-border); padding: 0.5rem 0.7rem; font-size: 0.9rem; text-align: left; }
+  .report-table td.num { text-align: right; white-space: nowrap; }
+  .report-footer { border-top: 1px solid var(--color-border); padding-top: 1rem; margin-top: 2rem; font-size: 0.8rem; color: var(--color-muted); }
+  .print-hint { font-size: 0.8rem; color: var(--color-muted); margin-top: 0.4rem; }
+
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff; }
+    .page { max-width: none; margin: 0; padding: 0; }
+    .report { border: none; padding: 0; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page" style="max-width:1100px;">
+  <div class="no-print">
+    <p><a href="/admin/estimates.html">&larr; 見積一覧に戻る</a></p>
+    <h1 id="page-title">新規見積作成</h1>
+
+    <div id="load-error" class="error-message" style="display:none;"></div>
+
+    <div class="card">
+      <h2>基本情報</h2>
+      <div class="form-row">
+        <label for="f-title">タイトル</label>
+        <input type="text" id="f-title" maxlength="300" required placeholder="例: ○○株式会社様 社内ネットワーク更改">
+      </div>
+      <div class="form-row">
+        <label for="f-customer-name">顧客名（自由記述）</label>
+        <input type="text" id="f-customer-name" maxlength="300">
+      </div>
+      <div class="form-row">
+        <label for="f-category">案件区分</label>
+        <select id="f-category">
+          <option value="network">ネットワーク構築</option>
+          <option value="server">サーバー構築</option>
+          <option value="kitting">PCキッティング</option>
+          <option value="dev">システム開発</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="f-status">ステータス</label>
+        <select id="f-status">
+          <option value="draft">下書き</option>
+          <option value="confirmed">確定</option>
+          <option value="archived">アーカイブ</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="f-default-risk">既定リスク係数（変動費に乗じる倍率）</label>
+        <input type="number" id="f-default-risk" value="1.15" min="0.01" step="0.01">
+      </div>
+      <div class="form-row">
+        <label for="f-created-by">作成者（任意）</label>
+        <input type="text" id="f-created-by" maxlength="100">
+      </div>
+      <div class="form-row">
+        <label for="f-notes">備考</label>
+        <textarea id="f-notes" rows="2"></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>見積明細</h2>
+      <p class="rate-hint">相場を選択すると下限・推奨・上限が表示されます。単価が相場下限を下回る行は警告色で表示されます。</p>
+      <table class="li-table">
+        <thead>
+          <tr>
+            <th style="width:8%;">費目</th>
+            <th style="width:18%;">品目名</th>
+            <th style="width:8%;">単位</th>
+            <th style="width:8%;">数量</th>
+            <th style="width:10%;">単価（円）</th>
+            <th style="width:16%;">相場参照</th>
+            <th style="width:9%;">リスク係数<br>(変動費のみ)</th>
+            <th style="width:10%;">金額（円）</th>
+            <th style="width:9%;">備考</th>
+            <th style="width:4%;"></th>
+          </tr>
+        </thead>
+        <tbody id="li-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-secondary" id="add-row-btn">＋ 行を追加</button>
+
+      <table class="totals-table">
+        <tr><th>固定費 計</th><td id="t-fixed">¥0</td></tr>
+        <tr><th>変動費（調整前）計</th><td id="t-variable-raw">¥0</td></tr>
+        <tr><th>変動費（リスク調整後）計</th><td id="t-variable-adjusted">¥0</td></tr>
+        <tr class="grand-total"><th>見積総額</th><td id="t-grand">¥0</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>前提条件</h2>
+      <div id="precondition-checkboxes"></div>
+      <div class="chip-list" id="adhoc-chip-list"></div>
+      <div class="form-row" style="max-width:500px;">
+        <label for="adhoc-input">その場入力で追加</label>
+        <div style="display:flex; gap:0.5rem;">
+          <input type="text" id="adhoc-input" maxlength="300" style="flex:1;">
+          <button type="button" class="btn btn-secondary" id="adhoc-add-btn">追加</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="ai-assist-panel">
+      <h2>AI提案</h2>
+      <p class="rate-hint">
+        案件の要件・参考資料（PDF、任意）をもとに、AIが相場マスタに基づいた費用項目・前提条件のたたき台を提案します。
+        提案はあくまで下書きです。内容を確認のうえ、必要な項目だけ選んで反映してください。
+      </p>
+      <div class="form-row">
+        <label for="ai-requirements">案件の要件・前提</label>
+        <textarea id="ai-requirements" rows="4" maxlength="20000" placeholder="例: 30名規模のオフィス移転に伴うネットワーク再構築。UTM1台、L2スイッチ2台、無線AP3台を想定。"></textarea>
+      </div>
+      <div class="form-row">
+        <label for="ai-reference-doc">参考資料（PDF、任意、15MBまで）</label>
+        <input type="file" id="ai-reference-doc" accept="application/pdf">
+        <div id="ai-doc-error" class="error-message" style="display:none;"></div>
+      </div>
+      <button type="button" class="btn" id="ai-propose-btn">AIに提案してもらう</button>
+      <div id="ai-error" class="error-message" style="display:none; margin-top:0.8rem;"></div>
+      <div id="ai-result" style="display:none; margin-top:1rem;">
+        <p id="ai-summary" style="font-style:italic;"></p>
+        <h3 style="font-size:0.95rem;">提案された費用項目</h3>
+        <table class="li-table" id="ai-line-items-table">
+          <thead>
+            <tr>
+              <th style="width:4%;"></th>
+              <th style="width:16%;">品目名</th>
+              <th style="width:8%;">費目</th>
+              <th style="width:8%;">単位</th>
+              <th style="width:8%;">数量</th>
+              <th style="width:10%;">単価目安（円）</th>
+              <th style="width:46%;">根拠</th>
+            </tr>
+          </thead>
+          <tbody id="ai-line-items-body"></tbody>
+        </table>
+        <h3 style="font-size:0.95rem;">提案された前提条件</h3>
+        <ul class="precondition-list" id="ai-preconditions-list"></ul>
+        <button type="button" class="btn btn-secondary" id="ai-apply-btn">選択した項目を追加</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <button class="btn" id="save-btn">保存する</button>
+      <div id="save-message" style="display:none;"></div>
+      <div style="margin-top:1.5rem;" id="print-section" style="display:none;">
+        <button class="btn btn-secondary" id="print-btn">🖨 PDFとして保存 / 印刷する</button>
+        <p class="print-hint">保存後に印刷用サマリーが表示されます。印刷ダイアログの詳細設定で「ヘッダーとフッター」のチェックを外すと綺麗に出力されます。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ここから印刷用サマリー（保存済みの場合のみ表示） -->
+  <div class="report" id="report" style="display:none;">
+    <div class="report-header">
+      <div class="brand">atLIB <span>InfraVision</span></div>
+      <div class="meta">見積作成日: <span id="r-date"></span></div>
+    </div>
+    <h1 id="r-title"></h1>
+    <p class="report-addressee"><span id="r-customer"></span> 様</p>
+
+    <div class="report-section">
+      <h2>1. 見積明細</h2>
+      <table class="report-table">
+        <thead>
+          <tr><th>品目</th><th>費目</th><th>数量</th><th>単位</th><th class="num">単価</th><th class="num">金額</th></tr>
+        </thead>
+        <tbody id="r-line-items"></tbody>
+      </table>
+    </div>
+
+    <div class="report-section">
+      <h2>2. 費用集計</h2>
+      <table class="totals-table">
+        <tr><th>固定費 計</th><td id="r-fixed">¥0</td></tr>
+        <tr><th>変動費（リスク調整後）計</th><td id="r-variable-adjusted">¥0</td></tr>
+        <tr class="grand-total"><th>見積総額</th><td id="r-grand">¥0</td></tr>
+      </table>
+    </div>
+
+    <div class="report-section">
+      <h2>3. 前提条件</h2>
+      <ul class="precondition-list" id="r-preconditions"></ul>
+    </div>
+
+    <div class="report-footer">
+      atLIB株式会社　〒104-0032 東京都中央区八丁堀4-12-7　TEL: 03-6661-1616　Mail: sales@atlib.jp<br>
+      本見積は現時点の想定に基づく目安であり、詳細ヒアリングの結果により変動する場合があります。
+    </div>
+  </div>
+</div>
+
+<script>
+const CATEGORY_LABELS = { network: 'ネットワーク構築', server: 'サーバー構築', kitting: 'PCキッティング', dev: 'システム開発', other: 'その他' };
+const COST_TYPE_LABELS = { fixed: '固定費', variable: '変動費' };
+
+let estimateId = new URLSearchParams(location.search).get('id');
+let marketRatesForCategory = [];
+let preconditionsForCategory = [];
+let lineItems = []; // { key, itemName, costType, unit, quantity, unitCost, riskCoefficientOverride, marketRateId, memo }
+let selectedMasterIds = new Set(); // preconditionId のうち選択中のもの
+let adHocPreconditions = []; // { key, label }
+let orphanPreconditions = []; // 保存済みだがマスタから外れた/該当しない選択済み前提条件 { key, preconditionId, label }
+let nextKey = 1;
+
+function formatYen(n) {
+  return '¥' + Math.round(n).toLocaleString('ja-JP');
+}
+
+function formatDate(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+}
+
+function computeAdjustedAmount(item, defaultRisk) {
+  const base = item.quantity * item.unitCost;
+  if (item.costType === 'fixed') return base;
+  const coefficient = item.riskCoefficientOverride || defaultRisk;
+  return base * coefficient;
+}
+
+function evaluateFlag(unitCost, marketRate) {
+  if (!marketRate) return 'no_reference';
+  if (unitCost < marketRate.priceLow) return 'below_low';
+  if (unitCost > marketRate.priceHigh) return 'above_high';
+  if (marketRate.priceRecommended !== null && unitCost < marketRate.priceRecommended) return 'below_recommended';
+  return 'ok';
+}
+
+function getDefaultRisk() {
+  return Number(document.getElementById('f-default-risk').value) || 1.15;
+}
+
+function addLineItemRow(initial) {
+  lineItems.push(Object.assign({
+    key: nextKey++,
+    itemName: '',
+    costType: 'variable',
+    unit: '',
+    quantity: 1,
+    unitCost: 0,
+    riskCoefficientOverride: null,
+    marketRateId: null,
+    memo: '',
+  }, initial || {}));
+  renderLineItems();
+}
+
+function renderLineItems() {
+  const tbody = document.getElementById('li-body');
+  tbody.innerHTML = '';
+  const defaultRisk = getDefaultRisk();
+
+  lineItems.forEach((item) => {
+    const marketRate = marketRatesForCategory.find((mr) => mr.id === item.marketRateId) || null;
+    const flag = evaluateFlag(item.unitCost, marketRate);
+    const amount = computeAdjustedAmount(item, defaultRisk);
+
+    const tr = document.createElement('tr');
+    if (flag === 'below_low') tr.className = 'li-row-below_low';
+    else if (flag === 'below_recommended') tr.className = 'li-row-below_recommended';
+
+    const rateOptions = ['<option value="">(相場を選択)</option>']
+      .concat(marketRatesForCategory.map((mr) => `<option value="${mr.id}"${mr.id === item.marketRateId ? ' selected' : ''}>${mr.itemName}（${mr.unit}）</option>`))
+      .join('');
+
+    let rateHint = '';
+    if (marketRate) {
+      rateHint = `<div class="rate-hint${flag === 'below_low' ? ' warn' : ''}">下限${formatYen(marketRate.priceLow)} / 推奨${marketRate.priceRecommended !== null ? formatYen(marketRate.priceRecommended) : '-'} / 上限${formatYen(marketRate.priceHigh)}${flag === 'below_low' ? '　⚠ 相場下限を下回っています' : ''}</div>`;
+    }
+
+    tr.innerHTML = `
+      <td>
+        <select data-field="costType" data-key="${item.key}">
+          <option value="fixed"${item.costType === 'fixed' ? ' selected' : ''}>固定費</option>
+          <option value="variable"${item.costType === 'variable' ? ' selected' : ''}>変動費</option>
+        </select>
+      </td>
+      <td><input type="text" data-field="itemName" data-key="${item.key}" value="${escapeAttr(item.itemName)}" maxlength="300"></td>
+      <td><input type="text" data-field="unit" data-key="${item.key}" value="${escapeAttr(item.unit || '')}" maxlength="50"></td>
+      <td><input type="number" data-field="quantity" data-key="${item.key}" value="${item.quantity}" min="0" step="0.01"></td>
+      <td><input type="number" data-field="unitCost" data-key="${item.key}" value="${item.unitCost}" min="0" step="1"></td>
+      <td>
+        <select data-field="marketRateId" data-key="${item.key}">${rateOptions}</select>
+        ${rateHint}
+      </td>
+      <td><input type="number" data-field="riskCoefficientOverride" data-key="${item.key}" value="${item.riskCoefficientOverride ?? ''}" min="0.01" step="0.01" placeholder="既定:${defaultRisk}"${item.costType === 'fixed' ? ' disabled' : ''}></td>
+      <td class="amount-cell">${formatYen(amount)}</td>
+      <td><input type="text" data-field="memo" data-key="${item.key}" value="${escapeAttr(item.memo || '')}" maxlength="500"></td>
+      <td><button type="button" class="btn btn-small btn-danger" data-remove-key="${item.key}">削除</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  updateTotals();
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function updateTotals() {
+  const defaultRisk = getDefaultRisk();
+  let fixedTotal = 0;
+  let variableRawTotal = 0;
+  let variableAdjustedTotal = 0;
+  lineItems.forEach((item) => {
+    const base = item.quantity * item.unitCost;
+    if (item.costType === 'fixed') {
+      fixedTotal += base;
+    } else {
+      variableRawTotal += base;
+      variableAdjustedTotal += computeAdjustedAmount(item, defaultRisk);
+    }
+  });
+  const grandTotal = fixedTotal + variableAdjustedTotal;
+  document.getElementById('t-fixed').textContent = formatYen(fixedTotal);
+  document.getElementById('t-variable-raw').textContent = formatYen(variableRawTotal);
+  document.getElementById('t-variable-adjusted').textContent = formatYen(variableAdjustedTotal);
+  document.getElementById('t-grand').textContent = formatYen(grandTotal);
+  return { fixedTotal, variableRawTotal, variableAdjustedTotal, grandTotal };
+}
+
+document.getElementById('li-body').addEventListener('input', (e) => {
+  const el = e.target;
+  const key = Number(el.dataset.key);
+  const field = el.dataset.field;
+  if (!field) return;
+  const item = lineItems.find((i) => i.key === key);
+  if (!item) return;
+
+  if (field === 'quantity' || field === 'unitCost') {
+    item[field] = Number(el.value) || 0;
+    updateTotals();
+    // 単価変更時に相場との差分表示を更新するため行全体を再描画
+    if (field === 'unitCost') renderLineItems();
+  } else if (field === 'riskCoefficientOverride') {
+    item.riskCoefficientOverride = el.value === '' ? null : Number(el.value);
+    updateTotals();
+  } else {
+    item[field] = el.value;
+  }
+});
+
+document.getElementById('li-body').addEventListener('change', (e) => {
+  const el = e.target;
+  const key = Number(el.dataset.key);
+  const field = el.dataset.field;
+  const item = lineItems.find((i) => i.key === key);
+  if (!item) return;
+
+  if (field === 'costType') {
+    item.costType = el.value;
+    if (item.costType === 'fixed') item.riskCoefficientOverride = null;
+    renderLineItems();
+  } else if (field === 'marketRateId') {
+    item.marketRateId = el.value || null;
+    renderLineItems();
+  }
+});
+
+document.getElementById('li-body').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-remove-key]');
+  if (!btn) return;
+  const key = Number(btn.dataset.removeKey);
+  lineItems = lineItems.filter((i) => i.key !== key);
+  renderLineItems();
+});
+
+document.getElementById('add-row-btn').addEventListener('click', () => addLineItemRow());
+document.getElementById('f-default-risk').addEventListener('input', renderLineItems);
+
+function renderPreconditions() {
+  const container = document.getElementById('precondition-checkboxes');
+  container.innerHTML = '';
+  if (preconditionsForCategory.length === 0) {
+    container.innerHTML = '<p class="info-message">このカテゴリに登録された前提条件マスタはありません。</p>';
+  } else {
+    const ul = document.createElement('ul');
+    ul.className = 'precondition-list';
+    preconditionsForCategory.forEach((pc) => {
+      const li = document.createElement('li');
+      const checked = selectedMasterIds.has(pc.id);
+      li.innerHTML = `<label><input type="checkbox" data-master-id="${pc.id}"${checked ? ' checked' : ''}> ${pc.label}</label>`;
+      ul.appendChild(li);
+    });
+    container.appendChild(ul);
+  }
+
+  const chipList = document.getElementById('adhoc-chip-list');
+  chipList.innerHTML = '';
+  adHocPreconditions.forEach((entry) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${escapeAttr(entry.label)} <button type="button" data-remove-adhoc-key="${entry.key}">&times;</button>`;
+    chipList.appendChild(chip);
+  });
+  orphanPreconditions.forEach((entry) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.title = 'マスタ側では現在無効化/削除されている前提条件です';
+    chip.innerHTML = `${escapeAttr(entry.label)}（マスタ外） <button type="button" data-remove-orphan-key="${entry.key}">&times;</button>`;
+    chipList.appendChild(chip);
+  });
+}
+
+document.getElementById('precondition-checkboxes').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-master-id]');
+  if (!cb) return;
+  if (cb.checked) selectedMasterIds.add(cb.dataset.masterId);
+  else selectedMasterIds.delete(cb.dataset.masterId);
+});
+
+document.getElementById('adhoc-chip-list').addEventListener('click', (e) => {
+  const removeAdhocBtn = e.target.closest('button[data-remove-adhoc-key]');
+  if (removeAdhocBtn) {
+    const key = Number(removeAdhocBtn.dataset.removeAdhocKey);
+    adHocPreconditions = adHocPreconditions.filter((p) => p.key !== key);
+    renderPreconditions();
+    return;
+  }
+  const removeOrphanBtn = e.target.closest('button[data-remove-orphan-key]');
+  if (removeOrphanBtn) {
+    const key = Number(removeOrphanBtn.dataset.removeOrphanKey);
+    orphanPreconditions = orphanPreconditions.filter((p) => p.key !== key);
+    renderPreconditions();
+  }
+});
+
+document.getElementById('adhoc-add-btn').addEventListener('click', () => {
+  const input = document.getElementById('adhoc-input');
+  const label = input.value.trim();
+  if (!label) return;
+  adHocPreconditions.push({ key: nextKey++, label });
+  input.value = '';
+  renderPreconditions();
+});
+
+async function loadCategoryReferenceData() {
+  const category = document.getElementById('f-category').value;
+  const [ratesRes, preconditionsRes] = await Promise.all([
+    fetch('/api/admin/market-rates?category=' + encodeURIComponent(category)),
+    fetch('/api/admin/estimate-preconditions?category=' + encodeURIComponent(category)),
+  ]);
+  marketRatesForCategory = ratesRes.ok ? (await ratesRes.json()).items : [];
+  preconditionsForCategory = preconditionsRes.ok ? (await preconditionsRes.json()).items : [];
+  renderLineItems();
+  renderPreconditions();
+}
+
+document.getElementById('f-category').addEventListener('change', () => {
+  // カテゴリ変更時、選択済みの相場参照・前提条件は別カテゴリのものになるためクリアする
+  lineItems.forEach((item) => { item.marketRateId = null; });
+  selectedMasterIds = new Set();
+  loadCategoryReferenceData();
+});
+
+async function loadEstimate() {
+  if (!estimateId) {
+    await loadCategoryReferenceData();
+    addLineItemRow();
+    return;
+  }
+
+  document.getElementById('page-title').textContent = '見積編集';
+  try {
+    const res = await fetch('/api/admin/estimates/' + encodeURIComponent(estimateId));
+    if (!res.ok) throw new Error('failed to load');
+    const item = await res.json();
+
+    document.getElementById('f-title').value = item.title;
+    document.getElementById('f-customer-name').value = item.customerName || '';
+    document.getElementById('f-category').value = item.category;
+    document.getElementById('f-status').value = item.status;
+    document.getElementById('f-default-risk').value = item.defaultRiskCoefficient;
+    document.getElementById('f-created-by').value = item.createdBy || '';
+    document.getElementById('f-notes').value = item.notes || '';
+
+    lineItems = item.lineItems.map((li) => ({
+      key: nextKey++,
+      itemName: li.itemName,
+      costType: li.costType,
+      unit: li.unit || '',
+      quantity: li.quantity,
+      unitCost: li.unitCost,
+      riskCoefficientOverride: li.riskCoefficientOverride,
+      marketRateId: li.marketRateId,
+      memo: li.memo || '',
+    }));
+
+    await loadCategoryReferenceData();
+
+    selectedMasterIds = new Set();
+    adHocPreconditions = [];
+    orphanPreconditions = [];
+    item.selectedPreconditions.forEach((sp) => {
+      if (!sp.isAdHoc && sp.preconditionId && preconditionsForCategory.some((pc) => pc.id === sp.preconditionId)) {
+        selectedMasterIds.add(sp.preconditionId);
+      } else if (!sp.isAdHoc && sp.preconditionId) {
+        orphanPreconditions.push({ key: nextKey++, preconditionId: sp.preconditionId, label: sp.label });
+      } else {
+        adHocPreconditions.push({ key: nextKey++, label: sp.label });
+      }
+    });
+    renderPreconditions();
+
+    renderPrintView(item);
+    document.getElementById('report').style.display = 'block';
+    document.getElementById('print-section').style.display = 'block';
+  } catch {
+    document.getElementById('load-error').textContent = '見積の取得に失敗しました。ページを再読み込みしてください。';
+    document.getElementById('load-error').style.display = 'block';
+  }
+}
+
+function buildSavePayload() {
+  const selectedPreconditions = [];
+  let sortOrder = 0;
+  preconditionsForCategory.forEach((pc) => {
+    if (selectedMasterIds.has(pc.id)) {
+      selectedPreconditions.push({ preconditionId: pc.id, label: pc.label, isAdHoc: false, sortOrder: sortOrder++ });
+    }
+  });
+  orphanPreconditions.forEach((entry) => {
+    selectedPreconditions.push({ preconditionId: entry.preconditionId, label: entry.label, isAdHoc: false, sortOrder: sortOrder++ });
+  });
+  adHocPreconditions.forEach((entry) => {
+    selectedPreconditions.push({ preconditionId: null, label: entry.label, isAdHoc: true, sortOrder: sortOrder++ });
+  });
+
+  return {
+    title: document.getElementById('f-title').value,
+    customerName: document.getElementById('f-customer-name').value || null,
+    category: document.getElementById('f-category').value,
+    defaultRiskCoefficient: getDefaultRisk(),
+    notes: document.getElementById('f-notes').value || null,
+    createdBy: document.getElementById('f-created-by').value || null,
+    lineItems: lineItems.map((item, idx) => ({
+      itemName: item.itemName,
+      costType: item.costType,
+      unit: item.unit || null,
+      quantity: item.quantity,
+      unitCost: item.unitCost,
+      riskCoefficientOverride: item.costType === 'variable' ? item.riskCoefficientOverride : null,
+      marketRateId: item.marketRateId,
+      sortOrder: idx,
+      memo: item.memo || null,
+    })),
+    selectedPreconditions,
+  };
+}
+
+document.getElementById('save-btn').addEventListener('click', async () => {
+  const saveMessage = document.getElementById('save-message');
+  saveMessage.style.display = 'none';
+  const payload = buildSavePayload();
+
+  if (!payload.title.trim()) {
+    saveMessage.className = 'error-message';
+    saveMessage.textContent = 'タイトルを入力してください。';
+    saveMessage.style.display = 'block';
+    return;
+  }
+
+  try {
+    let res;
+    if (estimateId) {
+      res = await fetch('/api/admin/estimates/' + encodeURIComponent(estimateId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      res = await fetch('/api/admin/estimates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+    if (!res.ok) throw new Error('failed to save');
+
+    if (!estimateId) {
+      const created = await res.json();
+      estimateId = created.id;
+      history.replaceState(null, '', '/admin/estimate-detail.html?id=' + encodeURIComponent(estimateId));
+    }
+
+    // ステータスは別エンドポイント（一覧の行内変更と共通のPATCH）で保存する
+    await fetch('/api/admin/estimates/' + encodeURIComponent(estimateId) + '/status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: document.getElementById('f-status').value }),
+    });
+
+    saveMessage.className = 'success-message';
+    saveMessage.textContent = '保存しました。';
+    saveMessage.style.display = 'block';
+    document.getElementById('page-title').textContent = '見積編集';
+
+    await loadEstimate();
+  } catch {
+    saveMessage.className = 'error-message';
+    saveMessage.textContent = '保存に失敗しました。';
+    saveMessage.style.display = 'block';
+  }
+});
+
+function renderPrintView(item) {
+  document.getElementById('r-date').textContent = formatDate(item.updatedAt);
+  document.getElementById('r-title').textContent = item.title;
+  document.getElementById('r-customer').textContent = item.customerName || 'お客様';
+
+  const tbody = document.getElementById('r-line-items');
+  tbody.innerHTML = '';
+  item.lineItems.forEach((li) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${li.itemName}</td>
+      <td>${COST_TYPE_LABELS[li.costType]}</td>
+      <td>${li.quantity}</td>
+      <td>${li.unit || '-'}</td>
+      <td class="num">${formatYen(li.unitCost)}</td>
+      <td class="num">${formatYen(li.adjustedAmount)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('r-fixed').textContent = formatYen(item.totals.fixedTotal);
+  document.getElementById('r-variable-adjusted').textContent = formatYen(item.totals.variableAdjustedTotal);
+  document.getElementById('r-grand').textContent = formatYen(item.totals.grandTotal);
+
+  const preconditionsList = document.getElementById('r-preconditions');
+  preconditionsList.innerHTML = '';
+  if (item.selectedPreconditions.length === 0) {
+    preconditionsList.innerHTML = '<li>特になし</li>';
+  } else {
+    item.selectedPreconditions.forEach((sp) => {
+      const li = document.createElement('li');
+      li.textContent = sp.label;
+      preconditionsList.appendChild(li);
+    });
+  }
+}
+
+document.getElementById('print-btn').addEventListener('click', () => {
+  window.print();
+});
+
+// --- AI提案パネル ---
+const COST_TYPE_LABELS_AI = { fixed: '固定費', variable: '変動費' };
+let aiReferenceDocBase64 = null;
+let aiProposal = null;
+
+document.getElementById('ai-reference-doc').addEventListener('change', (e) => {
+  const errorEl = document.getElementById('ai-doc-error');
+  errorEl.style.display = 'none';
+  aiReferenceDocBase64 = null;
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (file.size > 15 * 1024 * 1024) {
+    errorEl.textContent = 'ファイルサイズが15MBを超えています。';
+    errorEl.style.display = 'block';
+    e.target.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    // "data:application/pdf;base64,xxxx" の先頭部分を除いてbase64本体だけ保持する
+    aiReferenceDocBase64 = String(reader.result).split(',')[1] || null;
+  };
+  reader.onerror = () => {
+    errorEl.textContent = 'ファイルの読み込みに失敗しました。';
+    errorEl.style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('ai-propose-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('ai-propose-btn');
+  const errorEl = document.getElementById('ai-error');
+  const resultEl = document.getElementById('ai-result');
+  errorEl.style.display = 'none';
+  resultEl.style.display = 'none';
+
+  const requirementsText = document.getElementById('ai-requirements').value.trim();
+  if (!requirementsText) {
+    errorEl.textContent = '案件の要件・前提を入力してください。';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '生成中...（最大60秒程度かかる場合があります）';
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 65000);
+
+  try {
+    const res = await fetch('/api/admin/estimates/ai-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: document.getElementById('f-category').value,
+        requirementsText,
+        referenceDocumentBase64: aiReferenceDocBase64 || undefined,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'AI提案を取得できませんでした。');
+    }
+    aiProposal = await res.json();
+    renderAiResult(aiProposal);
+    resultEl.style.display = 'block';
+  } catch (err) {
+    errorEl.textContent = (err && err.name === 'AbortError')
+      ? 'AI提案の取得がタイムアウトしました。手動で見積を作成してください。'
+      : (err.message || 'AI提案を取得できませんでした。手動で見積を作成してください。');
+    errorEl.style.display = 'block';
+  } finally {
+    clearTimeout(timeoutId);
+    btn.disabled = false;
+    btn.textContent = 'AIに提案してもらう';
+  }
+});
+
+function renderAiResult(proposal) {
+  document.getElementById('ai-summary').textContent = proposal.summary || '';
+
+  const lineItemsBody = document.getElementById('ai-line-items-body');
+  lineItemsBody.innerHTML = '';
+  proposal.proposedLineItems.forEach((item, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" data-ai-line-item-idx="${idx}" checked></td>
+      <td>${escapeAttr(item.itemName)}</td>
+      <td>${COST_TYPE_LABELS_AI[item.costType] || item.costType}</td>
+      <td>${escapeAttr(item.unit || '')}</td>
+      <td>${item.quantity}</td>
+      <td>${formatYen(item.unitCost)}</td>
+      <td style="font-size:0.8rem; color:var(--color-muted);">${escapeAttr(item.rationale || '')}</td>
+    `;
+    lineItemsBody.appendChild(tr);
+  });
+
+  const preconditionsList = document.getElementById('ai-preconditions-list');
+  preconditionsList.innerHTML = '';
+  proposal.preconditionSuggestions.forEach((sp, idx) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<label><input type="checkbox" data-ai-precondition-idx="${idx}" checked> ${escapeAttr(sp.label)}${sp.draftText ? ' — ' + escapeAttr(sp.draftText) : ''}</label>`;
+    preconditionsList.appendChild(li);
+  });
+}
+
+document.getElementById('ai-apply-btn').addEventListener('click', () => {
+  if (!aiProposal) return;
+
+  const checkedLineItemIdxs = Array.from(document.querySelectorAll('input[data-ai-line-item-idx]:checked')).map((el) => Number(el.dataset.aiLineItemIdx));
+  checkedLineItemIdxs.forEach((idx) => {
+    const item = aiProposal.proposedLineItems[idx];
+    if (!item) return;
+    addLineItemRow({
+      itemName: item.itemName,
+      costType: item.costType,
+      unit: item.unit || '',
+      quantity: item.quantity,
+      unitCost: item.unitCost,
+      marketRateId: item.marketRateId && marketRatesForCategory.some((mr) => mr.id === item.marketRateId) ? item.marketRateId : null,
+      memo: item.rationale ? 'AI提案: ' + item.rationale : '',
+    });
+  });
+
+  const checkedPreconditionIdxs = Array.from(document.querySelectorAll('input[data-ai-precondition-idx]:checked')).map((el) => Number(el.dataset.aiPreconditionIdx));
+  checkedPreconditionIdxs.forEach((idx) => {
+    const sp = aiProposal.preconditionSuggestions[idx];
+    if (!sp) return;
+    if (!sp.isAdHoc && sp.preconditionId && preconditionsForCategory.some((pc) => pc.id === sp.preconditionId)) {
+      selectedMasterIds.add(sp.preconditionId);
+    } else {
+      adHocPreconditions.push({ key: nextKey++, label: sp.draftText || sp.label });
+    }
+  });
+  renderPreconditions();
+
+  document.getElementById('save-message').style.display = 'none';
+});
+
+loadEstimate();
+</script>
+</body>
+</html>

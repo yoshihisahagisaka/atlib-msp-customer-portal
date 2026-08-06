@@ -53,6 +53,12 @@ export interface Config {
     webhookCustomerApplication?: string;
     webhookMonthlyReport?: string;
   };
+  aiAssist: {
+    // 原価見積ツールのAI提案機能用。任意項目(undefinedならaiAssistServiceが503を返すだけで他機能には影響しない)。
+    // slack.webhook*と同じ扱い(必須シークレットのresolveSecretは使わない)。本番はSecret Manager
+    // (portal-anthropic-api-key)をCloud Runの--set-secretsで環境変数に注入する運用とする。
+    anthropicApiKey?: string;
+  };
 }
 
 /**
@@ -149,6 +155,9 @@ export async function loadConfig(): Promise<Config> {
       webhookDiagnostic: process.env.SLACK_WEBHOOK_DIAGNOSTIC || undefined,
       webhookCustomerApplication: process.env.SLACK_WEBHOOK_CUSTOMER_APPLICATION || undefined,
       webhookMonthlyReport: process.env.SLACK_WEBHOOK_MONTHLY_REPORT || undefined,
+    },
+    aiAssist: {
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
     },
   };
 }

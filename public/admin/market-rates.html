@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>相場マスタ | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="page" style="max-width:1100px;">
+  <h1>相場マスタ</h1>
+  <p><a href="/admin/estimates.html">← 見積一覧に戻る</a></p>
+
+  <div class="card">
+    <h2>新規登録</h2>
+    <form id="create-form">
+      <div class="form-row">
+        <label for="c-category">カテゴリ</label>
+        <select id="c-category" required>
+          <option value="network">ネットワーク構築</option>
+          <option value="server">サーバー構築</option>
+          <option value="kitting">PCキッティング</option>
+          <option value="dev">システム開発</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="c-item-name">品目名</label>
+        <input type="text" id="c-item-name" required maxlength="200">
+      </div>
+      <div class="form-row">
+        <label for="c-unit">単位</label>
+        <input type="text" id="c-unit" required maxlength="50" placeholder="例: 台, 式, 人日">
+      </div>
+      <div class="form-row">
+        <label for="c-price-low">相場下限（円）</label>
+        <input type="number" id="c-price-low" required min="0" step="1">
+      </div>
+      <div class="form-row">
+        <label for="c-price-high">相場上限（円）</label>
+        <input type="number" id="c-price-high" required min="0" step="1">
+      </div>
+      <div class="form-row">
+        <label for="c-price-recommended">推奨価格（円、任意）</label>
+        <input type="number" id="c-price-recommended" min="0" step="1">
+      </div>
+      <div class="form-row">
+        <label for="c-source-note">出典・備考</label>
+        <input type="text" id="c-source-note" maxlength="500">
+      </div>
+      <div id="create-error" class="error-message" style="display:none;"></div>
+      <button type="submit" class="btn">登録する</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="form-row" style="max-width:240px;">
+      <label for="category-filter">カテゴリで絞り込み</label>
+      <select id="category-filter">
+        <option value="">すべて</option>
+        <option value="network">ネットワーク構築</option>
+        <option value="server">サーバー構築</option>
+        <option value="kitting">PCキッティング</option>
+        <option value="dev">システム開発</option>
+        <option value="other">その他</option>
+      </select>
+    </div>
+
+    <div id="list-error" class="error-message" style="display:none;"></div>
+    <div id="list-loading" class="info-message">読み込み中...</div>
+
+    <table id="list-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>カテゴリ</th>
+          <th>品目名</th>
+          <th>単位</th>
+          <th>下限</th>
+          <th>推奨</th>
+          <th>上限</th>
+          <th>出典・備考</th>
+          <th>状態</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="list-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const CATEGORY_LABELS = { network: 'ネットワーク構築', server: 'サーバー構築', kitting: 'PCキッティング', dev: 'システム開発', other: 'その他' };
+
+function formatYen(n) {
+  return n === null || n === undefined ? '-' : '¥' + Number(n).toLocaleString('ja-JP');
+}
+
+async function loadList() {
+  const loadingEl = document.getElementById('list-loading');
+  const errorEl = document.getElementById('list-error');
+  const table = document.getElementById('list-table');
+  const tbody = document.getElementById('list-body');
+  const category = document.getElementById('category-filter').value;
+
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = '読み込み中...';
+  errorEl.style.display = 'none';
+  table.style.display = 'none';
+
+  try {
+    const params = new URLSearchParams({ includeInactive: 'true' });
+    if (category) params.set('category', category);
+    const res = await fetch('/api/admin/market-rates?' + params.toString());
+    if (!res.ok) throw new Error('failed to load');
+    const data = await res.json();
+
+    tbody.innerHTML = '';
+    data.items.forEach((item) => {
+      const tr = document.createElement('tr');
+      if (!item.isActive) tr.style.opacity = '0.5';
+      tr.innerHTML = `
+        <td>${CATEGORY_LABELS[item.category] || item.category}</td>
+        <td>${item.itemName}</td>
+        <td>${item.unit}</td>
+        <td>${formatYen(item.priceLow)}</td>
+        <td>${formatYen(item.priceRecommended)}</td>
+        <td>${formatYen(item.priceHigh)}</td>
+        <td>${item.sourceNote || '-'}</td>
+        <td>${item.isActive ? '<span class="badge badge-enabled">有効</span>' : '<span class="badge badge-disabled">無効</span>'}</td>
+        <td><button type="button" class="btn btn-small btn-secondary" data-toggle-id="${item.id}" data-toggle-active="${item.isActive}">${item.isActive ? '無効化' : '有効化'}</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    loadingEl.style.display = 'none';
+    table.style.display = data.items.length > 0 ? 'table' : 'none';
+    if (data.items.length === 0) {
+      loadingEl.textContent = '登録されている相場データはありません。';
+      loadingEl.style.display = 'block';
+    }
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '一覧の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+document.getElementById('category-filter').addEventListener('change', loadList);
+
+document.getElementById('list-body').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-toggle-id]');
+  if (!btn) return;
+  const id = btn.dataset.toggleId;
+  const currentlyActive = btn.dataset.toggleActive === 'true';
+
+  const res = await fetch('/api/admin/market-rates/' + encodeURIComponent(id));
+  if (!res.ok) return;
+  const item = await res.json();
+
+  await fetch('/api/admin/market-rates/' + encodeURIComponent(id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      category: item.category,
+      itemName: item.itemName,
+      unit: item.unit,
+      priceLow: item.priceLow,
+      priceHigh: item.priceHigh,
+      priceRecommended: item.priceRecommended,
+      sourceNote: item.sourceNote,
+      isActive: !currentlyActive,
+    }),
+  });
+  loadList();
+});
+
+document.getElementById('create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('create-error');
+  errorEl.style.display = 'none';
+
+  const priceRecommendedRaw = document.getElementById('c-price-recommended').value;
+  const body = {
+    category: document.getElementById('c-category').value,
+    itemName: document.getElementById('c-item-name').value,
+    unit: document.getElementById('c-unit').value,
+    priceLow: Number(document.getElementById('c-price-low').value),
+    priceHigh: Number(document.getElementById('c-price-high').value),
+    priceRecommended: priceRecommendedRaw === '' ? null : Number(priceRecommendedRaw),
+    sourceNote: document.getElementById('c-source-note').value || null,
+  };
+
+  try {
+    const res = await fetch('/api/admin/market-rates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '登録に失敗しました');
+    }
+    e.target.reset();
+    document.getElementById('c-category').value = 'network';
+    loadList();
+  } catch (err) {
+    errorEl.textContent = err.message || '登録に失敗しました';
+    errorEl.style.display = 'block';
+  }
+});
+
+loadList();
+</script>
+</body>
+</html>
