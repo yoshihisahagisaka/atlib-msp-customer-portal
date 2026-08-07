@@ -16,6 +16,9 @@ import type { EstimateCategory } from '../../src/domain/costEstimation';
  *   category,item_name,unit,price_low,price_high,price_recommended,source_note
  *   - category は network/server/kitting/dev/other のいずれか
  *   - price_recommended, source_note は空欄可
+ *   - 外部市場調査ベースライン（market_baseline_*・market_research_source・adjustment_coefficient）は
+ *     CSV一括取込の対象外（手動入力方針のため）。取り込んだ行は常にnullで、必要な行は管理画面の
+ *     編集フォームから個別に補記する。
  *
  * (category, item_name, unit) の組でON CONFLICT DO UPDATEするため、再実行しても安全。
  * 不正な行が1件でもあれば、実データ投入前に行番号付きエラーで中断する（部分投入しない）。
@@ -107,6 +110,11 @@ function parseRow(fields: string[], lineNo: number): MarketRateInput {
     priceHigh,
     priceRecommended,
     sourceNote: sourceNoteRaw.trim() === '' ? null : sourceNoteRaw.trim(),
+    marketBaselineLow: null,
+    marketBaselineHigh: null,
+    marketBaselineRecommended: null,
+    marketResearchSource: null,
+    adjustmentCoefficient: null,
   };
 }
 

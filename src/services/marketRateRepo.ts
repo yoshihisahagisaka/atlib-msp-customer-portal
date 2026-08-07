@@ -10,6 +10,11 @@ export interface MarketRate {
   priceHigh: number;
   priceRecommended: number | null;
   sourceNote: string | null;
+  marketBaselineLow: number | null;
+  marketBaselineHigh: number | null;
+  marketBaselineRecommended: number | null;
+  marketResearchSource: string | null;
+  adjustmentCoefficient: number | null;
   isActive: boolean;
   updatedAt: string;
 }
@@ -22,6 +27,11 @@ export interface MarketRateInput {
   priceHigh: number;
   priceRecommended: number | null;
   sourceNote: string | null;
+  marketBaselineLow: number | null;
+  marketBaselineHigh: number | null;
+  marketBaselineRecommended: number | null;
+  marketResearchSource: string | null;
+  adjustmentCoefficient: number | null;
 }
 
 interface Row {
@@ -33,6 +43,11 @@ interface Row {
   price_high: string;
   price_recommended: string | null;
   source_note: string | null;
+  market_baseline_low: string | null;
+  market_baseline_high: string | null;
+  market_baseline_recommended: string | null;
+  market_research_source: string | null;
+  adjustment_coefficient: string | null;
   is_active: boolean;
   updated_at: string;
 }
@@ -54,7 +69,9 @@ export class MarketRateRepo {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const { rows } = await this.pool.query<Row>(
-      `SELECT id, category, item_name, unit, price_low, price_high, price_recommended, source_note, is_active, updated_at
+      `SELECT id, category, item_name, unit, price_low, price_high, price_recommended, source_note,
+              market_baseline_low, market_baseline_high, market_baseline_recommended,
+              market_research_source, adjustment_coefficient, is_active, updated_at
        FROM market_rates
        ${where}
        ORDER BY category, item_name`,
@@ -65,7 +82,9 @@ export class MarketRateRepo {
 
   async findById(id: string): Promise<MarketRate | null> {
     const { rows } = await this.pool.query<Row>(
-      `SELECT id, category, item_name, unit, price_low, price_high, price_recommended, source_note, is_active, updated_at
+      `SELECT id, category, item_name, unit, price_low, price_high, price_recommended, source_note,
+              market_baseline_low, market_baseline_high, market_baseline_recommended,
+              market_research_source, adjustment_coefficient, is_active, updated_at
        FROM market_rates WHERE id = $1`,
       [id],
     );
@@ -75,10 +94,27 @@ export class MarketRateRepo {
 
   async create(input: MarketRateInput): Promise<string> {
     const { rows } = await this.pool.query<{ id: string }>(
-      `INSERT INTO market_rates (category, item_name, unit, price_low, price_high, price_recommended, source_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO market_rates (
+         category, item_name, unit, price_low, price_high, price_recommended, source_note,
+         market_baseline_low, market_baseline_high, market_baseline_recommended,
+         market_research_source, adjustment_coefficient
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
-      [input.category, input.itemName, input.unit, input.priceLow, input.priceHigh, input.priceRecommended, input.sourceNote],
+      [
+        input.category,
+        input.itemName,
+        input.unit,
+        input.priceLow,
+        input.priceHigh,
+        input.priceRecommended,
+        input.sourceNote,
+        input.marketBaselineLow,
+        input.marketBaselineHigh,
+        input.marketBaselineRecommended,
+        input.marketResearchSource,
+        input.adjustmentCoefficient,
+      ],
     );
     const id = rows[0]?.id;
     if (!id) throw new Error('MarketRateRepo.create: insert returned no id');
@@ -90,8 +126,11 @@ export class MarketRateRepo {
     const { rowCount } = await this.pool.query(
       `UPDATE market_rates
        SET category = $1, item_name = $2, unit = $3, price_low = $4, price_high = $5,
-           price_recommended = $6, source_note = $7, is_active = $8, updated_at = now()
-       WHERE id = $9`,
+           price_recommended = $6, source_note = $7,
+           market_baseline_low = $8, market_baseline_high = $9, market_baseline_recommended = $10,
+           market_research_source = $11, adjustment_coefficient = $12,
+           is_active = $13, updated_at = now()
+       WHERE id = $14`,
       [
         input.category,
         input.itemName,
@@ -100,6 +139,11 @@ export class MarketRateRepo {
         input.priceHigh,
         input.priceRecommended,
         input.sourceNote,
+        input.marketBaselineLow,
+        input.marketBaselineHigh,
+        input.marketBaselineRecommended,
+        input.marketResearchSource,
+        input.adjustmentCoefficient,
         input.isActive,
         id,
       ],
@@ -107,11 +151,20 @@ export class MarketRateRepo {
     return (rowCount ?? 0) > 0;
   }
 
-  /** CSV再取込（import_market_rates.ts）専用。(category, item_name, unit)で再実行安全にupsertする。 */
+  /**
+   * CSV再取込（import_market_rates.ts）専用。(category, item_name, unit)で再実行安全にupsertする。
+   * market_baseline_*・market_research_source・adjustment_coefficientはON CONFLICT時にあえて更新しない
+   * （CSVはこれらを常にnullで持ってくるため、更新対象に含めると管理画面で手入力したベースラインを
+   * 再取込のたびに消してしまう「footgun」になる。新規INSERT時のみnullで入る）。
+   */
   async upsertFromImport(input: MarketRateInput): Promise<{ id: string; created: boolean }> {
     const { rows } = await this.pool.query<{ id: string; created: boolean }>(
-      `INSERT INTO market_rates (category, item_name, unit, price_low, price_high, price_recommended, source_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO market_rates (
+         category, item_name, unit, price_low, price_high, price_recommended, source_note,
+         market_baseline_low, market_baseline_high, market_baseline_recommended,
+         market_research_source, adjustment_coefficient
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (category, item_name, unit) DO UPDATE
          SET price_low = EXCLUDED.price_low,
              price_high = EXCLUDED.price_high,
@@ -120,7 +173,20 @@ export class MarketRateRepo {
              is_active = true,
              updated_at = now()
        RETURNING id, (xmax = 0) AS created`,
-      [input.category, input.itemName, input.unit, input.priceLow, input.priceHigh, input.priceRecommended, input.sourceNote],
+      [
+        input.category,
+        input.itemName,
+        input.unit,
+        input.priceLow,
+        input.priceHigh,
+        input.priceRecommended,
+        input.sourceNote,
+        input.marketBaselineLow,
+        input.marketBaselineHigh,
+        input.marketBaselineRecommended,
+        input.marketResearchSource,
+        input.adjustmentCoefficient,
+      ],
     );
     const row = rows[0];
     if (!row) throw new Error('MarketRateRepo.upsertFromImport: insert returned no row');
@@ -138,6 +204,12 @@ function mapRow(row: Row): MarketRate {
     priceHigh: Number(row.price_high),
     priceRecommended: row.price_recommended !== null ? Number(row.price_recommended) : null,
     sourceNote: row.source_note,
+    marketBaselineLow: row.market_baseline_low !== null ? Number(row.market_baseline_low) : null,
+    marketBaselineHigh: row.market_baseline_high !== null ? Number(row.market_baseline_high) : null,
+    marketBaselineRecommended:
+      row.market_baseline_recommended !== null ? Number(row.market_baseline_recommended) : null,
+    marketResearchSource: row.market_research_source,
+    adjustmentCoefficient: row.adjustment_coefficient !== null ? Number(row.adjustment_coefficient) : null,
     isActive: row.is_active,
     updatedAt: row.updated_at,
   };
