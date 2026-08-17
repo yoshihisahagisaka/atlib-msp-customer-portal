@@ -3,6 +3,7 @@ import { loadConfig } from '../../src/config';
 import { createPool } from '../../src/db/pool';
 import { MarketRateRepo, type MarketRateInput } from '../../src/services/marketRateRepo';
 import type { EstimateCategory } from '../../src/domain/costEstimation';
+import { parseCsvLine, parseNumber, splitCsvLines } from './csvUtil';
 
 /**
  * 相場マスタ（market_rates）のCSV一括取込スクリプト。
@@ -26,46 +27,6 @@ import type { EstimateCategory } from '../../src/domain/costEstimation';
 
 const EXPECTED_HEADER = ['category', 'item_name', 'unit', 'price_low', 'price_high', 'price_recommended', 'source_note'];
 const VALID_CATEGORIES: EstimateCategory[] = ['network', 'server', 'kitting', 'dev', 'other'];
-
-/** 手書きの最小限のRFC4180風パーサー。ダブルクォート囲み・""によるエスケープに対応。 */
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          current += '"';
-          i += 1;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        current += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ',') {
-      fields.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  fields.push(current);
-  return fields;
-}
-
-function parseNumber(raw: string, lineNo: number, fieldName: string): number {
-  const n = Number(raw);
-  if (raw.trim() === '' || Number.isNaN(n)) {
-    throw new Error(`${lineNo}行目: ${fieldName} が数値として不正です（値: "${raw}"）`);
-  }
-  return n;
-}
 
 function parseRow(fields: string[], lineNo: number): MarketRateInput {
   if (fields.length !== EXPECTED_HEADER.length) {
@@ -120,7 +81,7 @@ function parseRow(fields: string[], lineNo: number): MarketRateInput {
 
 function parseCsvFile(filePath: string): MarketRateInput[] {
   const raw = fs.readFileSync(filePath, 'utf8');
-  const lines = raw.split(/\r\n|\n/).filter((line, idx, arr) => !(idx === arr.length - 1 && line === ''));
+  const lines = splitCsvLines(raw);
   if (lines.length === 0) {
     throw new Error('CSVファイルが空です');
   }

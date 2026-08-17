@@ -152,6 +152,39 @@ export class MarketRateRepo {
   }
 
   /**
+   * 外部調査ベースラインの取込（import_market_baseline.ts）専用。既存の(category, item_name, unit)
+   * に一致する行のmarket_baseline_low/high/recommended・market_research_sourceのみ更新する。
+   * price_*・adjustment_coefficient・is_activeには触れない。一致する行が無ければfalseを返す
+   * （呼び出し側でスキップ扱いにする＝新規行のINSERTはしない）。
+   */
+  async updateBaselineByKey(
+    key: { category: EstimateCategory; itemName: string; unit: string },
+    baseline: {
+      marketBaselineLow: number | null;
+      marketBaselineHigh: number | null;
+      marketBaselineRecommended: number | null;
+      marketResearchSource: string | null;
+    },
+  ): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE market_rates
+       SET market_baseline_low = $1, market_baseline_high = $2, market_baseline_recommended = $3,
+           market_research_source = $4, updated_at = now()
+       WHERE category = $5 AND item_name = $6 AND unit = $7`,
+      [
+        baseline.marketBaselineLow,
+        baseline.marketBaselineHigh,
+        baseline.marketBaselineRecommended,
+        baseline.marketResearchSource,
+        key.category,
+        key.itemName,
+        key.unit,
+      ],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
    * CSV再取込（import_market_rates.ts）専用。(category, item_name, unit)で再実行安全にupsertする。
    * market_baseline_*・market_research_source・adjustment_coefficientはON CONFLICT時にあえて更新しない
    * （CSVはこれらを常にnullで持ってくるため、更新対象に含めると管理画面で手入力したベースラインを
