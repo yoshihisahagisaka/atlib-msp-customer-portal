@@ -14,7 +14,7 @@ const applicationSchema = z.object({
   message: z.string().max(2000).optional(),
 });
 
-// 5回/時間/IP。ismsDiagnostic.tsと同じ厳しめの設定（正規利用者が短時間に何度も送信することは想定しにくい）。
+// 5回/時間/IP。フォーム自体が長く、正規利用者が短時間に何度も送信することは想定しにくいため厳しめに設定。
 const submitRateLimiter = createIpRateLimiter({ windowMs: 60 * 60 * 1000, maxRequests: 5 });
 
 export function createCustomerApplicationRouter(

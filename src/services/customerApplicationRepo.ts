@@ -41,7 +41,7 @@ interface Row {
   submitted_at: string;
 }
 
-/** customer_applications への問い合わせを一手に引き受けるリポジトリ。ismsDiagnosticRepo.tsと同じ構造。 */
+/** customer_applications への問い合わせを一手に引き受けるリポジトリ。opsHistoryRepo.tsと同じ構造。 */
 export class CustomerApplicationRepo {
   constructor(private readonly pool: Pool) {}
 

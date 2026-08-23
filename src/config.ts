@@ -37,8 +37,7 @@ export interface Config {
     user: string;
     password: string;
   };
-  diagnosticNotifyEmail: string; // ISMS診断フォーム: 新規回答の通知先（カンマ区切りで複数可）
-  customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可。営業リードのためISMS診断とは別宛先にできるようにする）
+  customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可）
   portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
   monthlyReport: {
     storageBucket: string; // 月次レポートPPTXの保存先バケット
@@ -49,15 +48,8 @@ export interface Config {
     // Slack Incoming Webhook URL。任意項目(undefinedなら送信をスキップするだけでメール通知には影響しない)。
     // 実際にどのチャンネルに束ねるかはユーザーがSlack側で発行したURLをどのキーに設定するかで決まる
     // (コード側はチャンネルの概念を持たない)。
-    webhookDiagnostic?: string;
     webhookCustomerApplication?: string;
     webhookMonthlyReport?: string;
-  };
-  aiAssist: {
-    // 原価見積ツールのAI提案機能用。任意項目(undefinedならaiAssistServiceが503を返すだけで他機能には影響しない)。
-    // slack.webhook*と同じ扱い(必須シークレットのresolveSecretは使わない)。本番はSecret Manager
-    // (portal-anthropic-api-key)をCloud Runの--set-secretsで環境変数に注入する運用とする。
-    anthropicApiKey?: string;
   };
 }
 
@@ -138,7 +130,6 @@ export async function loadConfig(): Promise<Config> {
       user: adminAuthUser,
       password: adminAuthPassword,
     },
-    diagnosticNotifyEmail: required('DIAGNOSTIC_NOTIFY_EMAIL', process.env.DIAGNOSTIC_NOTIFY_EMAIL),
     customerApplicationNotifyEmail: required(
       'CUSTOMER_APPLICATION_NOTIFY_EMAIL',
       process.env.CUSTOMER_APPLICATION_NOTIFY_EMAIL,
@@ -152,12 +143,8 @@ export async function loadConfig(): Promise<Config> {
       fromEmail: required('MONTHLY_REPORT_FROM_EMAIL', process.env.MONTHLY_REPORT_FROM_EMAIL),
     },
     slack: {
-      webhookDiagnostic: process.env.SLACK_WEBHOOK_DIAGNOSTIC || undefined,
       webhookCustomerApplication: process.env.SLACK_WEBHOOK_CUSTOMER_APPLICATION || undefined,
       webhookMonthlyReport: process.env.SLACK_WEBHOOK_MONTHLY_REPORT || undefined,
-    },
-    aiAssist: {
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
     },
   };
 }

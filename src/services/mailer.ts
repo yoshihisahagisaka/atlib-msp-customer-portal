@@ -1,18 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import type { Config } from '../config';
-import type { CategoryRecommendation } from '../domain/ismsDiagnostic';
-
-export interface DiagnosticNotificationSummary {
-  id: string;
-  companyName: string;
-  contactName: string;
-  email: string;
-  phone?: string;
-  submittedAt: Date;
-  categoryScores: Record<string, number>;
-  recommendations: Record<string, CategoryRecommendation>;
-  detailUrl: string;
-}
 
 export interface CustomerApplicationSummary {
   id: string;
@@ -127,44 +114,6 @@ export class Mailer {
         '',
         '上記から内容を確認し、承認・送信してください。',
       ].join('\n'),
-    });
-  }
-
-  /** toはカンマ区切りで複数宛先可（nodemailerがそのまま複数宛先として解釈する）。 */
-  async sendDiagnosticSubmissionNotification(to: string, summary: DiagnosticNotificationSummary): Promise<void> {
-    const scoreLines = Object.entries(summary.categoryScores).map(([categoryId, score]) => `  ${categoryId}: ${score}点`);
-    const recommendationLines = Object.entries(summary.recommendations).map(([categoryId, rec]) => {
-      const price =
-        rec.priceJpy !== undefined
-          ? `（パッケージ${rec.packagePriceJpy?.toLocaleString('ja-JP')}円 / 実質負担${rec.priceJpy.toLocaleString('ja-JP')}円）`
-          : '';
-      const recommendedMark = rec.recommended ? ' ★推奨' : '';
-      return `  ${categoryId}: ${rec.label}${recommendedMark}${price}`;
-    });
-
-    await this.transporter.sendMail({
-      from: this.config.from,
-      to,
-      subject: `【ISMS診断】新規回答: ${summary.companyName} 様`,
-      text: [
-        `${summary.companyName} 様より、ISMS支援プラン診断フォームへの回答がありました。`,
-        '',
-        `会社名: ${summary.companyName}`,
-        `担当者: ${summary.contactName}`,
-        `メール: ${summary.email}`,
-        summary.phone ? `電話番号: ${summary.phone}` : null,
-        `送信日時: ${summary.submittedAt.toLocaleString('ja-JP')}`,
-        '',
-        'カテゴリ別スコア:',
-        ...scoreLines,
-        '',
-        '推奨プラン・判定:',
-        ...recommendationLines,
-        '',
-        `詳細を管理画面で確認: ${summary.detailUrl}`,
-      ]
-        .filter((line): line is string => line !== null)
-        .join('\n'),
     });
   }
 
