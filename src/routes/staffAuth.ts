@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { Request } from 'express';
 import { Router } from 'express';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import type { Config } from '../config';
@@ -7,7 +8,7 @@ import type { StaffAuthService } from '../services/staffAuthService';
 import { clearStaffSessionCookie, setStaffSessionCookie } from '../middleware/staffAuth';
 
 const STATE_COOKIE_NAME = 'staff_oauth_state';
-const DEFAULT_RETURN_TO = '/admin/';
+const DEFAULT_RETURN_TO = '/admin/customer-applications.html';
 const ALLOWED_HOSTED_DOMAIN = 'atlib.jp';
 
 /**
@@ -29,9 +30,17 @@ export function createStaffAuthRouter(
   isProduction: boolean,
 ): Router {
   const router = Router();
-  const { googleClientId, googleClientSecret, redirectUri } = config.staffAuth;
+  const { googleClientId, googleClientSecret } = config.staffAuth;
 
-  const createOAuthClient = (): OAuth2Client =>
+  // portal.atlib.jp(カスタムドメイン)と*.run.app(デフォルトURL)の両方からアクセスされうるため、
+  // redirect_uriは固定値ではなくリクエストごとのHostから動的に組み立てる。固定値だと、例えば
+  // portal.atlib.jpで/auth/loginを開始してもコールバックは常に固定ドメイン(例: *.run.app)に
+  // 戻ってしまい、state Cookieが別ドメインに置かれたことになって検証できなくなる
+  // (2026-08-25、実機検証で発覚)。このためGoogle Cloud Console側でも両方のドメインの
+  // /auth/callbackを承認済みリダイレクトURIとして登録しておく必要がある。
+  const resolveRedirectUri = (req: Request): string => `${req.protocol}://${req.get('host')}/auth/callback`;
+
+  const createOAuthClient = (redirectUri: string): OAuth2Client =>
     new OAuth2Client({ clientId: googleClientId, clientSecret: googleClientSecret, redirectUri });
 
   router.get('/login', async (req, res) => {
@@ -42,7 +51,7 @@ export function createStaffAuthRouter(
         ? returnToParam
         : DEFAULT_RETURN_TO;
 
-    const oauth2Client = createOAuthClient();
+    const oauth2Client = createOAuthClient(resolveRedirectUri(req));
     const nonce = crypto.randomBytes(16).toString('hex');
     const { codeVerifier, codeChallenge } = await oauth2Client.generateCodeVerifierAsync();
 
@@ -88,7 +97,7 @@ export function createStaffAuthRouter(
       return;
     }
 
-    const oauth2Client = createOAuthClient();
+    const oauth2Client = createOAuthClient(resolveRedirectUri(req));
     let idToken: string | null | undefined;
     try {
       const { tokens } = await oauth2Client.getToken({ code, codeVerifier: statePayload.codeVerifier });
@@ -137,7 +146,7 @@ export function createStaffAuthRouter(
 
   router.get('/logout', (_req, res) => {
     clearStaffSessionCookie(res);
-    res.redirect('/admin/');
+    res.redirect(DEFAULT_RETURN_TO);
   });
 
   return router;

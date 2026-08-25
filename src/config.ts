@@ -36,7 +36,6 @@ export interface Config {
   staffAuth: {
     googleClientId: string;
     googleClientSecret: string;
-    redirectUri: string;
     jwtSecret: string;
   };
   customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可）
@@ -141,7 +140,6 @@ export async function loadConfig(): Promise<Config> {
     staffAuth: {
       googleClientId: required('GOOGLE_OAUTH_CLIENT_ID', process.env.GOOGLE_OAUTH_CLIENT_ID),
       googleClientSecret: googleOauthClientSecret,
-      redirectUri: required('GOOGLE_OAUTH_REDIRECT_URI', process.env.GOOGLE_OAUTH_REDIRECT_URI),
       jwtSecret: staffJwtSecret,
     },
     customerApplicationNotifyEmail: required(
