@@ -2,26 +2,34 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import type { Config } from '../config';
-import { resolveStaffRole } from '../domain/staffRoles';
+import { resolveStaffRole, type StaffRoleDeps } from '../domain/staffRoles';
 import type { StaffAuthService } from '../services/staffAuthService';
 import { clearStaffSessionCookie, setStaffSessionCookie } from '../middleware/staffAuth';
 
 const STATE_COOKIE_NAME = 'staff_oauth_state';
 const DEFAULT_RETURN_TO = '/admin/';
+const ALLOWED_HOSTED_DOMAIN = 'atlib.jp';
 
 /**
  * Google Workspaceアカウントによる社内スタッフ用ログイン（Authorization Code + PKCE）。
  * ppap-file-transferのSSO検証スパイクと同じ認可方式だが、Google単体・社内2ロールのみのため
  * jose+HMAC Cookieの自前OIDCクライアントは移植せず、既存依存のgoogle-auth-library(OAuth2Client)と
  * 顧客用と同じJWT+HttpOnly Cookieパターン(StaffAuthService)を使う。
+ *
+ * ログインできるのはatlib.jpドメインのGoogle Workspaceアカウントのみ(hdクレームで検証)。
+ * この制限はmsp-zabbixプロジェクトのOAuth同意画面(GoogleAuth Platform)ではなくアプリ側で行う。
+ * 同意画面はプロジェクト全体で共有される1つの設定のため「内部限定」にすると、同じプロジェクトを
+ * 使うppap-file-transferのsso-verify-service(外部アカウントでのSSO検証が必須)まで巻き添えで
+ * 制限してしまう事故が2026-08-25に発覚したため、同意画面は「外部公開」のまま維持する。
  */
 export function createStaffAuthRouter(
   staffAuthService: StaffAuthService,
+  staffRoleDeps: StaffRoleDeps,
   config: Pick<Config, 'staffAuth'>,
   isProduction: boolean,
 ): Router {
   const router = Router();
-  const { googleClientId, googleClientSecret, redirectUri, adminEmails, generalEmails } = config.staffAuth;
+  const { googleClientId, googleClientSecret, redirectUri } = config.staffAuth;
 
   const createOAuthClient = (): OAuth2Client =>
     new OAuth2Client({ clientId: googleClientId, clientSecret: googleClientSecret, redirectUri });
@@ -97,11 +105,13 @@ export function createStaffAuthRouter(
     }
 
     let email: string | undefined;
+    let hostedDomain: string | undefined;
     try {
       const ticket = await oauth2Client.verifyIdToken({ idToken, audience: googleClientId });
       const payload = ticket.getPayload();
       if (payload?.email && payload.email_verified) {
         email = payload.email;
+        hostedDomain = payload.hd;
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -111,12 +121,14 @@ export function createStaffAuthRouter(
       res.status(400).send(errorPage('Googleログインに失敗しました。もう一度お試しください。'));
       return;
     }
-
-    const role = resolveStaffRole(email, adminEmails, generalEmails);
-    if (!role) {
-      res.status(403).send(errorPage(`このアカウント（${escapeHtml(email)}）には管理画面へのアクセス権限がありません。`));
+    // hd: 'atlib.jp'以外(未Workspace管理の個人アカウント、他ドメイン等)は拒否。
+    // OAuth同意画面のUser Typeを「外部」にしているため(sso-verify-service事情)、Google側では絞られない。
+    if (hostedDomain !== ALLOWED_HOSTED_DOMAIN) {
+      res.status(403).send(errorPage(`このアカウント（${escapeHtml(email)}）はatlib.jpのGoogle Workspaceアカウントではないため、管理画面へアクセスできません。`));
       return;
     }
+
+    const role = await resolveStaffRole(email, staffRoleDeps);
 
     const sessionToken = staffAuthService.issueSessionToken({ email, role });
     setStaffSessionCookie(res, sessionToken, isProduction);

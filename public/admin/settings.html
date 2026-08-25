@@ -18,6 +18,38 @@
   <div id="list-error" class="error-message" style="display:none;"></div>
   <div id="list-loading" class="info-message">読み込み中...</div>
   <div id="settings-list" style="display:none;"></div>
+
+  <div class="card">
+    <h2>管理者アクセス</h2>
+    <p class="info-message">
+      atlib.jpのGoogle Workspaceアカウントは誰でも一般権限でログインできます。ここに登録した個人メールアドレス、
+      またはGoogleグループ（グループのメンバー全員が対象）は管理者権限になります。
+    </p>
+    <div id="principals-error" class="error-message" style="display:none;"></div>
+    <div id="principals-loading" class="info-message">読み込み中...</div>
+    <table id="principals-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>種別</th>
+          <th>メールアドレス</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="principals-body"></tbody>
+    </table>
+
+    <form id="principal-form" style="margin-top:1rem;">
+      <div class="radio-group form-row">
+        <label><input type="radio" name="principal-type" value="email" checked> 個人メール</label>
+        <label><input type="radio" name="principal-type" value="group"> Googleグループ</label>
+      </div>
+      <div class="form-row">
+        <input type="email" id="principal-value" required placeholder="例: yoshihisa.hagisaka@atlib.jp または director@atlib.jp">
+      </div>
+      <div id="principal-form-error" class="error-message" style="display:none;"></div>
+      <button type="submit" class="btn btn-small">追加</button>
+    </form>
+  </div>
 </div>
 
 <script>
@@ -97,7 +129,85 @@ async function saveSetting(card) {
   }
 }
 
+async function loadPrincipals() {
+  const errorEl = document.getElementById('principals-error');
+  const loadingEl = document.getElementById('principals-loading');
+  const table = document.getElementById('principals-table');
+  const tbody = document.getElementById('principals-body');
+  errorEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/admin/admin-principals', { credentials: 'include' });
+    if (!res.ok) throw new Error('failed to load');
+    const data = await res.json();
+
+    tbody.innerHTML = data.items.map((p) => `
+      <tr>
+        <td>${p.principalType === 'group' ? '<span class="badge badge-enabled">グループ</span>' : '<span class="badge badge-disabled">個人</span>'}</td>
+        <td>${escapeAttr(p.value)}</td>
+        <td><button type="button" class="btn btn-small btn-danger principal-remove" data-id="${p.id}">削除</button></td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('.principal-remove').forEach((btn) => {
+      btn.addEventListener('click', () => removePrincipal(btn.dataset.id));
+    });
+
+    loadingEl.style.display = 'none';
+    table.style.display = 'table';
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '管理者一覧の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+async function removePrincipal(id) {
+  if (!confirm('このプリンシパルを削除しますか？')) return;
+  try {
+    const res = await fetch(`/api/admin/admin-principals/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '削除に失敗しました');
+    }
+    await loadPrincipals();
+  } catch (err) {
+    alert(err.message || '削除に失敗しました');
+  }
+}
+
+document.getElementById('principal-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const errorEl = document.getElementById('principal-form-error');
+  errorEl.style.display = 'none';
+
+  const type = document.querySelector('input[name="principal-type"]:checked').value;
+  const value = document.getElementById('principal-value').value;
+
+  try {
+    const res = await fetch('/api/admin/admin-principals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ type, value }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '追加に失敗しました');
+    }
+    document.getElementById('principal-form').reset();
+    await loadPrincipals();
+  } catch (err) {
+    errorEl.textContent = err.message || '追加に失敗しました';
+    errorEl.style.display = 'block';
+  }
+});
+
 loadSettings();
+loadPrincipals();
 </script>
 <script src="/admin/js/adminNav.js"></script>
 <script>initAdminNav('settings');</script>

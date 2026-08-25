@@ -21,11 +21,14 @@ import { createAdminOpsHistoryRouter } from './routes/adminOpsHistory';
 import { createAdminReportSettingsRouter } from './routes/adminReportSettings';
 import { createAdminMonthlyReportsRouter } from './routes/adminMonthlyReports';
 import { createAdminOnboardingRouter } from './routes/adminOnboarding';
+import { createAdminPrincipalsRouter } from './routes/adminPrincipals';
 import { createAdminSettingsRouter } from './routes/adminSettings';
 import { createPublicSettingsRouter } from './routes/publicSettings';
 import { createStaffAuthRouter } from './routes/staffAuth';
 import { createStaffSessionRouter } from './routes/staffSession';
+import { AdminPrincipalsRepo } from './services/adminPrincipalsRepo';
 import { CustomerApplicationRepo } from './services/customerApplicationRepo';
+import { isGroupMember } from './services/groupMembershipService';
 import { OpsHistoryRepo } from './services/opsHistoryRepo';
 import { ReportSettingsRepo } from './services/reportSettingsRepo';
 import { MonthlyReportRepo } from './services/monthlyReportRepo';
@@ -34,6 +37,7 @@ import { SettingsRepo } from './services/settingsRepo';
 import { StaffAuthService } from './services/staffAuthService';
 import { requireStaffAuth, requireAdminRole } from './middleware/staffAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
+import type { StaffRoleDeps } from './domain/staffRoles';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -51,6 +55,13 @@ async function main(): Promise<void> {
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
   const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
+  const adminPrincipalsRepo = new AdminPrincipalsRepo(pool);
+  const staffRoleDeps: StaffRoleDeps = {
+    listAdminPrincipals: () => adminPrincipalsRepo.listAdminPrincipals(),
+    resolveAndCacheGroupResourceName: (id, groupEmail) =>
+      adminPrincipalsRepo.resolveAndCacheGroupResourceName(id, groupEmail),
+    isGroupMember,
+  };
 
   const app = express();
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
@@ -85,7 +96,10 @@ async function main(): Promise<void> {
   app.use('/api/settings', createPublicSettingsRouter(settingsRepo, config.bookingUrl));
 
   // Google Workspaceログイン（無認証でアクセスできる必要がある）
-  app.use('/auth', createStaffAuthRouter(staffAuthService, config, config.nodeEnv === 'production'));
+  app.use(
+    '/auth',
+    createStaffAuthRouter(staffAuthService, staffRoleDeps, config, config.nodeEnv === 'production'),
+  );
   app.use('/api/staff/session', createStaffSessionRouter(staffAuthService));
 
   // 管理画面（Google Workspace認証保護）。ブルートフォース対策として同じIPレート制限を認証チェックの前段にも適用する。
@@ -102,6 +116,7 @@ async function main(): Promise<void> {
     customer_application_notify_email: config.customerApplicationNotifyEmail,
     slack_webhook_customer_application: config.slack.webhookCustomerApplication ?? '',
   }));
+  app.use('/api/admin/admin-principals', ...adminOnlyGate, createAdminPrincipalsRouter(adminPrincipalsRepo));
   app.use(
     '/api/admin/customer-applications',
     ...adminAuthGate,

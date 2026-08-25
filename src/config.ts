@@ -38,8 +38,6 @@ export interface Config {
     googleClientSecret: string;
     redirectUri: string;
     jwtSecret: string;
-    adminEmails: string[];
-    generalEmails: string[];
   };
   customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可）
   portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
@@ -79,14 +77,6 @@ async function resolveSecret(
 ): Promise<string> {
   if (envValue) return envValue;
   return getSecret(projectId, secretId);
-}
-
-function parseEmailList(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter((e) => e.length > 0);
 }
 
 export async function loadConfig(): Promise<Config> {
@@ -153,8 +143,6 @@ export async function loadConfig(): Promise<Config> {
       googleClientSecret: googleOauthClientSecret,
       redirectUri: required('GOOGLE_OAUTH_REDIRECT_URI', process.env.GOOGLE_OAUTH_REDIRECT_URI),
       jwtSecret: staffJwtSecret,
-      adminEmails: parseEmailList(process.env.STAFF_ADMIN_EMAILS),
-      generalEmails: parseEmailList(process.env.STAFF_GENERAL_EMAILS),
     },
     customerApplicationNotifyEmail: required(
       'CUSTOMER_APPLICATION_NOTIFY_EMAIL',
