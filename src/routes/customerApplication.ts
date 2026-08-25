@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createIpRateLimiter } from '../middleware/rateLimit';
 import type { CustomerApplicationRepo } from '../services/customerApplicationRepo';
 import type { Mailer } from '../services/mailer';
+import type { SettingsRepo } from '../services/settingsRepo';
 import { sendSlackNotification } from '../services/slackNotifier';
 
 const applicationSchema = z.object({
@@ -17,12 +18,18 @@ const applicationSchema = z.object({
 // 5回/時間/IP。フォーム自体が長く、正規利用者が短時間に何度も送信することは想定しにくいため厳しめに設定。
 const submitRateLimiter = createIpRateLimiter({ windowMs: 60 * 60 * 1000, maxRequests: 5 });
 
+export interface CustomerApplicationDefaults {
+  notifyEmail: string;
+  bookingUrl: string;
+  slackWebhookUrl: string | undefined;
+}
+
 export function createCustomerApplicationRouter(
   repo: CustomerApplicationRepo,
   mailer: Mailer,
-  notifyEmail: string,
+  settingsRepo: SettingsRepo,
   portalBaseUrl: string,
-  slackWebhookUrl: string | undefined,
+  defaults: CustomerApplicationDefaults,
 ): Router {
   const router = Router();
 
@@ -34,6 +41,18 @@ export function createCustomerApplicationRouter(
     }
 
     const { companyName, contactName, email, phone, interestedPlan, message } = parsed.data;
+
+    // 管理画面(settings.html)からの上書きをDBから解決し、未設定(行が無い)ならenvデフォルトにフォールバックする。
+    // slackWebhookのみ空文字が「意図的な未設定」を意味する（domain/portalSettings.tsのallowEmpty参照）ため、
+    // 空文字はundefinedとして扱う。
+    const [storedNotifyEmail, storedBookingUrl, storedSlackWebhook] = await Promise.all([
+      settingsRepo.get('customer_application_notify_email'),
+      settingsRepo.get('booking_url'),
+      settingsRepo.get('slack_webhook_customer_application'),
+    ]);
+    const notifyEmail = storedNotifyEmail ?? defaults.notifyEmail;
+    const bookingUrl = storedBookingUrl ?? defaults.bookingUrl;
+    const slackWebhookUrl = storedSlackWebhook === null ? defaults.slackWebhookUrl : storedSlackWebhook || undefined;
 
     let id: string;
     try {
@@ -73,6 +92,14 @@ export function createCustomerApplicationRouter(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('customer application notification email failed:', err);
+    }
+
+    // 顧客本人への自動返信もbest-effort。担当者からの連絡を待たずに日程調整できるよう予約リンクを案内する。
+    try {
+      await mailer.sendCustomerApplicationConfirmation(email, companyName, bookingUrl);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('customer application confirmation email failed:', err);
     }
 
     // Slack通知はメールとは独立したbest-effortチャンネル。メールが失敗していても送る。

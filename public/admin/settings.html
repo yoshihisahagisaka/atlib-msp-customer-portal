@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>設定 | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<nav class="app-nav" id="admin-nav"></nav>
+
+<div class="page" style="max-width:700px;">
+  <h1>設定</h1>
+  <p class="info-message">ここで変更した値はすぐに反映されます（アプリの再デプロイは不要）。空欄のまま保存すると、環境変数のデフォルト値に戻ります。</p>
+
+  <div id="list-error" class="error-message" style="display:none;"></div>
+  <div id="list-loading" class="info-message">読み込み中...</div>
+  <div id="settings-list" style="display:none;"></div>
+</div>
+
+<script>
+async function loadSettings() {
+  const errorEl = document.getElementById('list-error');
+  const loadingEl = document.getElementById('list-loading');
+  const listEl = document.getElementById('settings-list');
+  errorEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/admin/settings', { credentials: 'include' });
+    if (!res.ok) throw new Error('failed to load');
+    const data = await res.json();
+
+    listEl.innerHTML = data.items.map((item) => `
+      <div class="card" data-key="${item.key}">
+        <h2>${item.label}</h2>
+        <p class="info-message">${item.helpText}</p>
+        <div class="form-row">
+          <input type="text" class="setting-value" value="${escapeAttr(item.value)}">
+        </div>
+        <div class="setting-error error-message" style="display:none;"></div>
+        <div class="setting-success success-message" style="display:none;"></div>
+        <button type="button" class="btn btn-small setting-save">保存</button>
+        <span class="info-message setting-default" style="display:${item.isDefault ? 'inline' : 'none'};margin-left:0.5rem;">（現在: 環境変数のデフォルト値）</span>
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.setting-save').forEach((btn) => {
+      btn.addEventListener('click', () => saveSetting(btn.closest('.card')));
+    });
+
+    loadingEl.style.display = 'none';
+    listEl.style.display = 'block';
+  } catch {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = '設定の取得に失敗しました。ページを再読み込みしてください。';
+    errorEl.style.display = 'block';
+  }
+}
+
+function escapeAttr(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function saveSetting(card) {
+  const key = card.dataset.key;
+  const input = card.querySelector('.setting-value');
+  const errorEl = card.querySelector('.setting-error');
+  const successEl = card.querySelector('.setting-success');
+  const defaultEl = card.querySelector('.setting-default');
+  const btn = card.querySelector('.setting-save');
+
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/admin/settings/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ value: input.value }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '保存に失敗しました');
+    }
+    successEl.textContent = '保存しました。';
+    successEl.style.display = 'block';
+    defaultEl.style.display = 'none';
+  } catch (err) {
+    errorEl.textContent = err.message || '保存に失敗しました';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+loadSettings();
+</script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('settings');</script>
+</body>
+</html>

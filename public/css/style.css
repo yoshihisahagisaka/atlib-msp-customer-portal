@@ -76,6 +76,23 @@ body {
   border-color: var(--color-accent);
 }
 
+/* 管理画面ナビ(adminNav.js)のログアウトは<a>実装（/auth/logoutへの通常遷移のため）。button.logoutと同じ見た目にする */
+.app-nav a.logout {
+  background: none;
+  border: 1px solid #4b5563;
+  color: #d1d5db;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.app-nav a.logout:hover {
+  background: var(--color-primary-dark);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 .page {
   max-width: 960px;
   margin: 2rem auto;

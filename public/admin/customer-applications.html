@@ -9,6 +9,8 @@
 </head>
 <body>
 
+<nav class="app-nav" id="admin-nav"></nav>
+
 <div class="page" style="max-width:1100px;">
   <h1>申込み一覧</h1>
 
@@ -103,5 +105,7 @@ async function loadList() {
 document.getElementById('status-filter').addEventListener('change', loadList);
 loadList();
 </script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('customer-applications');</script>
 </body>
 </html>

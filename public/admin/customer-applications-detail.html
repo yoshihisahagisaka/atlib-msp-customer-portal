@@ -9,6 +9,8 @@
 </head>
 <body>
 
+<nav class="app-nav" id="admin-nav"></nav>
+
 <div class="page" style="max-width:720px;">
   <p><a href="/admin/customer-applications.html">&larr; 一覧に戻る</a></p>
   <h1>申込み詳細</h1>
@@ -125,5 +127,7 @@ document.getElementById('save-status').addEventListener('click', async () => {
 
 loadDetail();
 </script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('customer-applications');</script>
 </body>
 </html>

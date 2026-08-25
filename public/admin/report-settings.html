@@ -9,6 +9,8 @@
 </head>
 <body>
 
+<nav class="app-nav" id="admin-nav"></nav>
+
 <div class="page" style="max-width:700px;">
   <h1>月次レポート設定(WANインターフェース)</h1>
 
@@ -151,5 +153,7 @@ loadCustomers().catch(() => {
   document.getElementById('form-error').style.display = 'block';
 });
 </script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('report-settings');</script>
 </body>
 </html>

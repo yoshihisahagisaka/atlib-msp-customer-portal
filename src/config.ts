@@ -33,12 +33,17 @@ export interface Config {
     from: string;
   };
   passwordResetUrlBase: string;
-  adminAuth: {
-    user: string;
-    password: string;
+  staffAuth: {
+    googleClientId: string;
+    googleClientSecret: string;
+    redirectUri: string;
+    jwtSecret: string;
+    adminEmails: string[];
+    generalEmails: string[];
   };
   customerApplicationNotifyEmail: string; // 顧客申込みフォーム: 新規申込みの通知先（カンマ区切りで複数可）
   portalBaseUrl: string; // 例: https://portal.atlib.jp（通知メール内の管理画面リンク生成用。passwordResetUrlBaseから導出）
+  bookingUrl: string; // ヒアリング日程調整用の予約ページURL（TimeRex等）。顧客申込み確認メール・apply.htmlの完了画面で案内する
   monthlyReport: {
     storageBucket: string; // 月次レポートPPTXの保存先バケット
     staffNotifyEmail: string; // バッチ完了時の「承認待ちがN件あります」通知先（カンマ区切りで複数可）
@@ -50,6 +55,15 @@ export interface Config {
     // (コード側はチャンネルの概念を持たない)。
     webhookCustomerApplication?: string;
     webhookMonthlyReport?: string;
+  };
+  cloudRunJob: {
+    // オンボーディング時のZabbixディスカバリ設定Job（msp-discovery-setup）呼び出し用。
+    // discoverySetupJobNameは任意項目(undefinedならadminOnboardingがJob起動をスキップするだけで
+    // オンボーディング自体は成功する。Job未デプロイの段階でもポータル本体を先にデプロイできる、
+    // 段階的ロールアウトのため)。
+    projectId: string;
+    region: string;
+    discoverySetupJobName?: string;
   };
 }
 
@@ -67,6 +81,14 @@ async function resolveSecret(
   return getSecret(projectId, secretId);
 }
 
+function parseEmailList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0);
+}
+
 export async function loadConfig(): Promise<Config> {
   const gcpProjectId = process.env.GCP_PROJECT_ID ?? 'msp-zabbix';
 
@@ -79,12 +101,12 @@ export async function loadConfig(): Promise<Config> {
     'portal-zabbix-password',
   );
   const smtpPassword = await resolveSecret(gcpProjectId, process.env.SMTP_PASSWORD, 'portal-smtp-password');
-  const adminAuthUser = await resolveSecret(gcpProjectId, process.env.ADMIN_BASIC_AUTH_USER, 'portal-admin-user');
-  const adminAuthPassword = await resolveSecret(
+  const googleOauthClientSecret = await resolveSecret(
     gcpProjectId,
-    process.env.ADMIN_BASIC_AUTH_PASSWORD,
-    'portal-admin-password',
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    'portal-google-oauth-client-secret',
   );
+  const staffJwtSecret = await resolveSecret(gcpProjectId, process.env.STAFF_JWT_SECRET, 'portal-staff-jwt-secret');
 
   const required = (name: string, value: string | undefined): string => {
     if (!value) throw new Error(`Missing required config value: ${name}`);
@@ -126,14 +148,19 @@ export async function loadConfig(): Promise<Config> {
       from: required('SMTP_FROM', process.env.SMTP_FROM),
     },
     passwordResetUrlBase,
-    adminAuth: {
-      user: adminAuthUser,
-      password: adminAuthPassword,
+    staffAuth: {
+      googleClientId: required('GOOGLE_OAUTH_CLIENT_ID', process.env.GOOGLE_OAUTH_CLIENT_ID),
+      googleClientSecret: googleOauthClientSecret,
+      redirectUri: required('GOOGLE_OAUTH_REDIRECT_URI', process.env.GOOGLE_OAUTH_REDIRECT_URI),
+      jwtSecret: staffJwtSecret,
+      adminEmails: parseEmailList(process.env.STAFF_ADMIN_EMAILS),
+      generalEmails: parseEmailList(process.env.STAFF_GENERAL_EMAILS),
     },
     customerApplicationNotifyEmail: required(
       'CUSTOMER_APPLICATION_NOTIFY_EMAIL',
       process.env.CUSTOMER_APPLICATION_NOTIFY_EMAIL,
     ),
+    bookingUrl: required('BOOKING_URL', process.env.BOOKING_URL),
     // 新規env不要でportalBaseUrlを導出する（passwordResetUrlBaseは既にportalのオリジンを含んでいるため）。
     // 同じ導出パターンをscripts/onboarding/create_customer.tsのloginUrl組み立てでも使っている。
     portalBaseUrl: new URL(passwordResetUrlBase).origin,
@@ -145,6 +172,11 @@ export async function loadConfig(): Promise<Config> {
     slack: {
       webhookCustomerApplication: process.env.SLACK_WEBHOOK_CUSTOMER_APPLICATION || undefined,
       webhookMonthlyReport: process.env.SLACK_WEBHOOK_MONTHLY_REPORT || undefined,
+    },
+    cloudRunJob: {
+      projectId: gcpProjectId,
+      region: process.env.DISCOVERY_JOB_REGION ?? 'asia-northeast1',
+      discoverySetupJobName: process.env.DISCOVERY_SETUP_JOB_NAME || undefined,
     },
   };
 }

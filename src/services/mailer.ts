@@ -140,4 +140,23 @@ export class Mailer {
         .join('\n'),
     });
   }
+
+  /** 申込み送信直後、顧客本人へ即時送信する自動返信。担当者からの連絡を待たずに日程調整できるよう予約リンクを案内する。 */
+  async sendCustomerApplicationConfirmation(to: string, companyName: string, bookingUrl: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: 'atLIB InfraVision お申込みありがとうございます',
+      text: [
+        `${companyName} 様`,
+        '',
+        'この度はatLIB InfraVisionへお申込みいただき、誠にありがとうございます。',
+        '担当者よりご連絡する前に、以下のリンクからヒアリングのご都合の良い日時をご予約いただけます。',
+        '',
+        bookingUrl,
+        '',
+        '内容を確認のうえ、担当者より改めてご連絡いたします。',
+      ].join('\n'),
+    });
+  }
 }

@@ -19,7 +19,7 @@ const approveSchema = z.object({
   approvedBy: z.string().min(1).optional(),
 });
 
-/** requireAdminAuthの配下でマウントされる前提(server.ts側で適用)。 */
+/** requireStaffAuthの配下でマウントされる前提(server.ts側で適用)。 */
 export function createAdminMonthlyReportsRouter(
   monthlyReportRepo: MonthlyReportRepo,
   customerRepo: CustomerRepo,

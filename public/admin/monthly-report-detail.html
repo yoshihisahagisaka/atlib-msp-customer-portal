@@ -9,6 +9,8 @@
 </head>
 <body>
 
+<nav class="app-nav" id="admin-nav"></nav>
+
 <div class="page" style="max-width:1100px;">
   <p><a href="/admin/monthly-reports.html">&larr; 一覧に戻る</a></p>
   <h1>月次レポート詳細</h1>
@@ -154,5 +156,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
 loadDetail();
 </script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('monthly-reports');</script>
 </body>
 </html>

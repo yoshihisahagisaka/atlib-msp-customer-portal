@@ -9,7 +9,7 @@ const upsertSchema = z.object({
   wanIfOut: z.string().min(1).optional(),
 });
 
-/** requireAdminAuthの配下でマウントされる前提(server.ts側で適用)。 */
+/** requireStaffAuthの配下でマウントされる前提(server.ts側で適用)。 */
 export function createAdminReportSettingsRouter(
   reportSettingsRepo: ReportSettingsRepo,
   customerRepo: CustomerRepo,

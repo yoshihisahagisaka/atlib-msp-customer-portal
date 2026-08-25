@@ -24,7 +24,7 @@ const quotaQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/, 'period must be YYYY-MM'),
 });
 
-/** requireAdminAuthの配下でマウントされる前提（server.ts側で適用）。 */
+/** requireStaffAuthの配下でマウントされる前提（server.ts側で適用）。 */
 export function createAdminOpsHistoryRouter(opsHistoryRepo: OpsHistoryRepo, customerRepo: CustomerRepo): Router {
   const router = Router();
 

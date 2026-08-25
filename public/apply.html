@@ -53,7 +53,9 @@
     <div id="application-error" class="error-message" style="display:none;"></div>
     <div id="application-success" class="success-message" style="display:none;">
       お申込みありがとうございました。<br>
-      内容を確認のうえ、担当者よりヒアリングの日程調整についてご連絡いたします。
+      内容を確認のうえ、担当者よりヒアリングの日程調整についてご連絡いたします。<br><br>
+      お急ぎの場合は、以下からご都合の良い日時を直接ご予約いただけます。<br>
+      <a class="btn-cta btn-cta-small" id="booking-link" href="https://timerex.net/s/yoshihisa.hagisaka_e611/5d525699" target="_blank" rel="noopener">ヒアリング日程を予約する</a>
     </div>
     <button type="submit" class="btn" style="width:100%;" id="application-submit">送信する</button>
   </form>
@@ -111,6 +113,16 @@ document.getElementById('application-form').addEventListener('submit', async (e)
 document.getElementById('close-btn').addEventListener('click', () => {
   window.close();
 });
+
+// 管理画面(settings.html)で変更された予約リンクを反映する。取得失敗時はHTML埋め込みのデフォルト値のまま。
+fetch('/api/settings/booking-url')
+  .then((res) => (res.ok ? res.json() : null))
+  .then((data) => {
+    if (data && data.bookingUrl) {
+      document.getElementById('booking-link').href = data.bookingUrl;
+    }
+  })
+  .catch(() => {});
 </script>
 </body>
 </html>

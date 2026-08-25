@@ -9,6 +9,8 @@
 </head>
 <body>
 
+<nav class="app-nav" id="admin-nav"></nav>
+
 <div class="page" style="max-width:1000px;">
   <h1>月次レポート承認</h1>
 
@@ -97,5 +99,7 @@ async function loadList() {
 document.getElementById('status-filter').addEventListener('change', loadList);
 loadList();
 </script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('monthly-reports');</script>
 </body>
 </html>

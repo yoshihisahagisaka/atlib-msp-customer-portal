@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>顧客オンボーディング | atLIB Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<nav class="app-nav" id="admin-nav"></nav>
+
+<div class="page" style="max-width:680px;">
+  <h1>顧客オンボーディング</h1>
+  <p class="info-message">
+    ホストグループ作成・通知用Zabbixユーザー作成・アクション作成・DB登録・歓迎メール送信までを1回で実行する。
+    Proxy IDとIPレンジを両方入力すると、Zabbixディスカバリ設定（ルール・アクション3件）も自動で投入される
+    （Cloud Run Job「msp-discovery-setup」を起動。IPレンジ未入力の場合は投入されず、後で手動実行が必要）。
+  </p>
+
+  <form id="onboarding-form">
+    <div class="card">
+      <div class="form-row">
+        <label for="customer-code">顧客コード</label>
+        <input type="text" id="customer-code" required placeholder="例: atlib002">
+      </div>
+      <div class="form-row">
+        <label for="company-name">会社名</label>
+        <input type="text" id="company-name" required placeholder="例: サンプル株式会社様">
+      </div>
+      <div class="form-row">
+        <label for="email">担当者メールアドレス</label>
+        <input type="email" id="email" required>
+      </div>
+      <div class="form-row">
+        <label for="proxy-id">Zabbix Proxy ID（任意。Sensor Edge経由で監視する場合のみ）</label>
+        <input type="text" id="proxy-id">
+      </div>
+      <div class="form-row">
+        <label for="ip-range">顧客のIPレンジ（任意。例: 192.168.1.1-254）</label>
+        <input type="text" id="ip-range">
+      </div>
+    </div>
+
+    <div id="onboarding-error" class="error-message" style="display:none;"></div>
+    <div id="onboarding-result" class="success-message" style="display:none;"></div>
+    <button type="submit" class="btn" style="width:100%;" id="onboarding-submit">オンボーディングを実行する</button>
+  </form>
+</div>
+
+<script>
+document.getElementById('onboarding-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('onboarding-error');
+  const resultEl = document.getElementById('onboarding-result');
+  const submitBtn = document.getElementById('onboarding-submit');
+  errorEl.style.display = 'none';
+  resultEl.style.display = 'none';
+  submitBtn.disabled = true;
+
+  const payload = {
+    customerCode: document.getElementById('customer-code').value,
+    companyName: document.getElementById('company-name').value,
+    email: document.getElementById('email').value,
+    proxyId: document.getElementById('proxy-id').value || undefined,
+    ipRange: document.getElementById('ip-range').value || undefined,
+  };
+
+  try {
+    const res = await fetch('/api/admin/onboarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 201) {
+      const lines = [
+        'オンボーディングが完了しました。',
+        `customer_id: ${data.customerId}`,
+        `zabbix_userid: ${data.zabbixUserId}`,
+        `zabbix_actionid: ${data.zabbixActionId}`,
+        `hostgroup: ${data.hostGroupName}`,
+      ];
+      if (data.discoveryJobTriggered) {
+        lines.push('ディスカバリ設定ジョブを起動しました。数分後にZabbix管理画面で反映を確認してください。');
+      } else if (data.discoveryJobError) {
+        lines.push(data.discoveryJobError);
+      } else {
+        lines.push('IPレンジ未入力のため、ディスカバリ設定は投入していません。必要な場合は手動でsetup_discovery.pyを実行してください。');
+      }
+      resultEl.innerHTML = lines.join('<br>');
+      resultEl.style.display = 'block';
+      document.getElementById('onboarding-form').reset();
+    } else {
+      errorEl.textContent = data.error || 'オンボーディングに失敗しました。';
+      errorEl.style.display = 'block';
+    }
+  } catch {
+    errorEl.textContent = '通信エラーが発生しました。しばらくしてから再度お試しください。';
+    errorEl.style.display = 'block';
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+<script src="/admin/js/adminNav.js"></script>
+<script>initAdminNav('onboard-customer');</script>
+</body>
+</html>

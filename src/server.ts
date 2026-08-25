@@ -20,12 +20,19 @@ import { createAdminCustomerApplicationsRouter } from './routes/adminCustomerApp
 import { createAdminOpsHistoryRouter } from './routes/adminOpsHistory';
 import { createAdminReportSettingsRouter } from './routes/adminReportSettings';
 import { createAdminMonthlyReportsRouter } from './routes/adminMonthlyReports';
+import { createAdminOnboardingRouter } from './routes/adminOnboarding';
+import { createAdminSettingsRouter } from './routes/adminSettings';
+import { createPublicSettingsRouter } from './routes/publicSettings';
+import { createStaffAuthRouter } from './routes/staffAuth';
+import { createStaffSessionRouter } from './routes/staffSession';
 import { CustomerApplicationRepo } from './services/customerApplicationRepo';
 import { OpsHistoryRepo } from './services/opsHistoryRepo';
 import { ReportSettingsRepo } from './services/reportSettingsRepo';
 import { MonthlyReportRepo } from './services/monthlyReportRepo';
 import { ReportStorage } from './services/reportStorage';
-import { requireAdminAuth } from './middleware/adminAuth';
+import { SettingsRepo } from './services/settingsRepo';
+import { StaffAuthService } from './services/staffAuthService';
+import { requireStaffAuth, requireAdminRole } from './middleware/staffAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 
 async function main(): Promise<void> {
@@ -42,6 +49,8 @@ async function main(): Promise<void> {
   const reportSettingsRepo = new ReportSettingsRepo(pool);
   const monthlyReportRepo = new MonthlyReportRepo(pool);
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
+  const settingsRepo = new SettingsRepo(pool);
+  const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
 
   const app = express();
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
@@ -67,23 +76,32 @@ async function main(): Promise<void> {
   app.use('/api/inquiry', createInquiryRouter());
   app.use(
     '/api/customer-application',
-    createCustomerApplicationRouter(
-      customerApplicationRepo,
-      mailer,
-      config.customerApplicationNotifyEmail,
-      config.portalBaseUrl,
-      config.slack.webhookCustomerApplication,
-    ),
+    createCustomerApplicationRouter(customerApplicationRepo, mailer, settingsRepo, config.portalBaseUrl, {
+      notifyEmail: config.customerApplicationNotifyEmail,
+      bookingUrl: config.bookingUrl,
+      slackWebhookUrl: config.slack.webhookCustomerApplication,
+    }),
   );
+  app.use('/api/settings', createPublicSettingsRouter(settingsRepo, config.bookingUrl));
 
-  // 管理画面（Basic Auth保護）。ブルートフォース対策として同じIPレート制限を認証チェックの前段にも適用する。
+  // Google Workspaceログイン（無認証でアクセスできる必要がある）
+  app.use('/auth', createStaffAuthRouter(staffAuthService, config, config.nodeEnv === 'production'));
+  app.use('/api/staff/session', createStaffSessionRouter(staffAuthService));
+
+  // 管理画面（Google Workspace認証保護）。ブルートフォース対策として同じIPレート制限を認証チェックの前段にも適用する。
   // maxRequestsは元30だったが、ページ遷移1回で複数API呼び出しが発生する画面が増え、通常のスタッフ利用でも
-  // 上限に達してしまっていたため300に緩和（実パスワードはSecret Manager管理のランダム値であり、
-  // 300回/15分でもブルートフォース耐性は実質的に保たれる）。
+  // 上限に達してしまっていたため300に緩和。
   const adminAuthGate = [
     createIpRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 300 }),
-    requireAdminAuth(config.adminAuth),
+    requireStaffAuth(staffAuthService),
   ];
+  // 設定画面専用。一般ロール（atl_info@）は403になる（管理者=director@のみアクセス可）。
+  const adminOnlyGate = [...adminAuthGate, requireAdminRole()];
+  app.use('/api/admin/settings', ...adminOnlyGate, createAdminSettingsRouter(settingsRepo, {
+    booking_url: config.bookingUrl,
+    customer_application_notify_email: config.customerApplicationNotifyEmail,
+    slack_webhook_customer_application: config.slack.webhookCustomerApplication ?? '',
+  }));
   app.use(
     '/api/admin/customer-applications',
     ...adminAuthGate,
@@ -108,8 +126,26 @@ async function main(): Promise<void> {
       config.monthlyReport.fromEmail,
     ),
   );
-  // 静的HTML側もBasic Authで保護する。この行は下の一般static配信より前に置くこと
-  // （逆順だと未認証で/admin/*.htmlが一般static経由で読めてしまう）。
+  app.use(
+    '/api/admin/onboarding',
+    ...adminAuthGate,
+    createAdminOnboardingRouter(
+      {
+        customerRepo,
+        zabbixClient,
+        authService,
+        mailer,
+        notificationUsrgrpId: config.zabbix.notificationUsrgrpId,
+        passwordResetUrlBase: config.passwordResetUrlBase,
+      },
+      config.cloudRunJob,
+    ),
+  );
+  // 静的HTML側もスタッフ認証で保護する。settings.htmlは管理者専用のためadminOnlyGateを個別に先に登録すること
+  // （下の一般admin static配信より後だと、adminAuthGate止まりで一般ロールでも読めてしまう）。
+  app.get('/admin/settings.html', ...adminOnlyGate, (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/admin/settings.html')),
+  );
   app.use('/admin', ...adminAuthGate, express.static(path.join(__dirname, '../public/admin')));
 
   app.use(express.static(path.join(__dirname, '../public')));
