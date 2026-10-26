@@ -83,12 +83,24 @@ export class SecureGuardRepo {
     try {
       await client.query('BEGIN');
       if (input.initialOnly) {
+        const organization = await client.query(
+          'SELECT id FROM customer_organizations WHERE id = $1 FOR UPDATE',
+          [input.customerOrganizationId],
+        );
+        if (!organization.rows[0]) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
         const count = await client.query<{ count: string }>(
           `SELECT count(*)::text AS count FROM customer_memberships
            WHERE customer_organization_id = $1 AND status = 'active'`,
           [input.customerOrganizationId],
         );
         if (count.rows[0]?.count !== '0') throw new SecureGuardConflictError('INITIAL_ADMIN_ALREADY_SET');
+        const pending = await client.query(
+          `SELECT id FROM customer_memberships
+           WHERE customer_organization_id = $1 AND is_initial_admin = true AND status = 'pending'
+           FOR UPDATE`,
+          [input.customerOrganizationId],
+        );
+        if (pending.rows[0]) throw new SecureGuardConflictError('INITIAL_ADMIN_INVITATION_PENDING');
       }
       const user = await this.findOrCreateInvitedUser(client, input.email);
       const existing = await client.query(
@@ -99,23 +111,24 @@ export class SecureGuardRepo {
       if (existing.rows[0]?.status === 'active') throw new SecureGuardConflictError('MEMBERSHIP_ALREADY_EXISTS');
       if (existing.rows.length > 0) {
         // A pending invitation may be re-sent after mail delivery failure or expiry. A revoked membership
-        // requires a fresh invitation and is never silently restored.
+        // is restored only by this explicit, fresh invitation and must be accepted again.
         await client.query(
           `UPDATE customer_memberships
-           SET role = $1, status = 'pending', invited_by_user_id = $2, invite_token_hash = $3,
-               invite_expires_at = $4, accepted_at = NULL, revoked_at = NULL, updated_at = now()
-           WHERE user_id = $5 AND customer_organization_id = $6`,
-          [input.role, input.invitedByUserId, input.tokenHash, input.expiresAt, user.id, input.customerOrganizationId],
+           SET role = $1, is_initial_admin = $2, status = 'pending', invited_by_user_id = $3, invite_token_hash = $4,
+               invite_expires_at = $5, accepted_at = NULL, revoked_at = NULL, updated_at = now()
+           WHERE user_id = $6 AND customer_organization_id = $7`,
+          [input.role, input.initialOnly ?? false, input.invitedByUserId, input.tokenHash, input.expiresAt, user.id, input.customerOrganizationId],
         );
       } else {
         await client.query(
           `INSERT INTO customer_memberships
-           (user_id, customer_organization_id, role, status, invited_by_user_id, invite_token_hash, invite_expires_at)
-           VALUES ($1, $2, $3, 'pending', $4, $5, $6)`,
+           (user_id, customer_organization_id, role, is_initial_admin, status, invited_by_user_id, invite_token_hash, invite_expires_at)
+           VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)`,
           [
             user.id,
             input.customerOrganizationId,
             input.role,
+            input.initialOnly ?? false,
             input.invitedByUserId,
             input.tokenHash,
             input.expiresAt,
@@ -137,8 +150,9 @@ export class SecureGuardRepo {
     try {
       await client.query('BEGIN');
       const found = await client.query(
-        `SELECT m.id AS membership_id, m.user_id, m.customer_organization_id
+        `SELECT m.id AS membership_id, m.user_id, m.customer_organization_id, u.status AS user_status
          FROM customer_memberships m
+         JOIN portal_users u ON u.id = m.user_id
          WHERE m.invite_token_hash = $1 AND m.status = 'pending' AND m.invite_expires_at > now()
          FOR UPDATE`,
         [tokenHash],
@@ -148,12 +162,18 @@ export class SecureGuardRepo {
         await client.query('ROLLBACK');
         return null;
       }
-      await client.query(
-        `UPDATE portal_users
-         SET password_hash = $1, status = 'active', session_version = session_version + 1, updated_at = now()
-         WHERE id = $2`,
-        [passwordHash, membership.user_id],
-      );
+      if (membership.user_status === 'disabled') {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      if (membership.user_status === 'invited') {
+        await client.query(
+          `UPDATE portal_users
+           SET password_hash = $1, status = 'active', session_version = session_version + 1, updated_at = now()
+           WHERE id = $2`,
+          [passwordHash, membership.user_id],
+        );
+      }
       await client.query(
         `UPDATE customer_memberships
          SET status = 'active', invite_token_hash = NULL, invite_expires_at = NULL, accepted_at = now(), updated_at = now()
@@ -179,6 +199,10 @@ export class SecureGuardRepo {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query(
+        'SELECT id FROM customer_organizations WHERE id = $1 FOR UPDATE',
+        [scope.customerOrganizationId],
+      );
       const target = await client.query(
         `SELECT id, role FROM customer_memberships
          WHERE id = $1 AND customer_organization_id = $2 AND status = 'active' FOR UPDATE`,
@@ -264,7 +288,7 @@ export class SecureGuardRepo {
 }
 
 export class SecureGuardConflictError extends Error {
-  constructor(readonly code: 'INITIAL_ADMIN_ALREADY_SET' | 'MEMBERSHIP_ALREADY_EXISTS' | 'LAST_ORG_ADMIN') {
+  constructor(readonly code: 'CUSTOMER_ORGANIZATION_NOT_FOUND' | 'INITIAL_ADMIN_ALREADY_SET' | 'INITIAL_ADMIN_INVITATION_PENDING' | 'MEMBERSHIP_ALREADY_EXISTS' | 'LAST_ORG_ADMIN') {
     super(code);
   }
 }

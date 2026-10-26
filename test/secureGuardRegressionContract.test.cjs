@@ -23,3 +23,8 @@ test('migration is additive and defines the tenant-bound identity tables', () =>
   for (const table of ['portal_users', 'customer_organizations', 'customer_memberships', 'msp_role_grants', 'dnsfilter_organization_mappings', 'secure_guard_receipts', 'secure_guard_audit_events']) assert.match(migration, new RegExp(`CREATE TABLE ${table}`));
   assert.doesNotMatch(migration, /DROP TABLE|ALTER TABLE customers/);
 });
+
+test('Secure Guard login applies both IP and account rate-limit gates', () => {
+  const route = read('src/routes/secureGuardAuth.ts');
+  assert.match(route, /secureGuardLoginIpRateLimiter, checkLoginRateLimitFor\(secureGuardLoginRateLimiter\)/);
+});

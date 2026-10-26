@@ -16,7 +16,7 @@ interface AttemptRecord {
  * 割り切り）。将来的に顧客数が増えて複数インスタンス常時稼働になった場合は、
  * Cloud SQL上のテーブルかRedis等の共有ストアに置き換えることを検討する。
  */
-class LoginRateLimiter {
+export class LoginRateLimiter {
   private readonly attempts = new Map<string, AttemptRecord>();
 
   isLocked(key: string): boolean {
@@ -46,12 +46,18 @@ class LoginRateLimiter {
 export const loginRateLimiter = new LoginRateLimiter();
 
 export function checkLoginRateLimit(req: Request, res: Response, next: NextFunction): void {
-  const email = String(req.body?.email ?? '').toLowerCase();
-  if (email && loginRateLimiter.isLocked(email)) {
-    res.status(429).json({ error: 'Too many failed login attempts. Try again later.' });
-    return;
-  }
-  next();
+  checkLoginRateLimitFor(loginRateLimiter)(req, res, next);
+}
+
+export function checkLoginRateLimitFor(limiter: LoginRateLimiter): (req: Request, res: Response, next: NextFunction) => void {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const email = String(req.body?.email ?? '').toLowerCase();
+    if (email && limiter.isLocked(email)) {
+      res.status(429).json({ error: 'Too many failed login attempts. Try again later.' });
+      return;
+    }
+    next();
+  };
 }
 
 /**

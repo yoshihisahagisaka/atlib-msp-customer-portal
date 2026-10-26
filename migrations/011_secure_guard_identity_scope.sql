@@ -27,6 +27,7 @@ CREATE TABLE customer_memberships (
   user_id               UUID NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
   customer_organization_id UUID NOT NULL REFERENCES customer_organizations(id) ON DELETE RESTRICT,
   role                  TEXT NOT NULL CHECK (role IN ('org_admin', 'operator', 'viewer')),
+  is_initial_admin      BOOLEAN NOT NULL DEFAULT false,
   status                TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'revoked')),
   invited_by_user_id    UUID REFERENCES portal_users(id) ON DELETE RESTRICT,
   invite_token_hash     VARCHAR(255),
@@ -36,6 +37,7 @@ CREATE TABLE customer_memberships (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (user_id, customer_organization_id),
+  CHECK ((NOT is_initial_admin) OR role = 'org_admin'),
   CHECK (
     (status = 'pending' AND invite_token_hash IS NOT NULL AND invite_expires_at IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL)
     OR (status = 'active' AND invite_token_hash IS NULL AND invite_expires_at IS NULL AND accepted_at IS NOT NULL AND revoked_at IS NULL)
@@ -45,6 +47,12 @@ CREATE TABLE customer_memberships (
 
 CREATE INDEX idx_customer_memberships_scope
   ON customer_memberships (customer_organization_id, status, role);
+
+-- The organization row is locked during initial invitation issuance. This index is a second line of
+-- defense against a concurrent initial-administrator invitation for a different individual.
+CREATE UNIQUE INDEX idx_customer_memberships_pending_initial_admin
+  ON customer_memberships (customer_organization_id)
+  WHERE is_initial_admin AND status = 'pending';
 
 CREATE TABLE msp_role_grants (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

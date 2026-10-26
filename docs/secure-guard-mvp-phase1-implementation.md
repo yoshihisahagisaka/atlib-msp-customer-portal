@@ -19,4 +19,4 @@ The migration creates no identities, customer organizations, memberships, mappin
 
 ## Verification
 
-`npm test` runs TypeScript compilation and nine offline tests covering personal login, stale-session rejection, token hashing, membership scope enforcement, MSP escalation rejection, existing session preservation, existing Zabbix route mounting, and additive migration coverage.
+`npm test` runs TypeScript compilation and fifteen offline tests covering personal login, stale-session rejection, token hashing, account and IP rate limits, membership scope enforcement, MSP escalation rejection, existing session preservation, existing Zabbix route mounting, additive migration coverage, initial-administrator serialization, and safe acceptance of an added Membership by an existing Identity.
