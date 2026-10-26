@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { CustomerRole } from '../domain/secureGuard';
+import type { SecureGuardC2Projection } from '../domain/secureGuardC2';
 import {
   requireMspAdmin,
   requireSecureGuardCustomerScope,
@@ -35,20 +36,55 @@ export function createSecureGuardRouter(input: {
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
   const requireCustomerScope = requireSecureGuardCustomerScope(input.repo);
 
+  const loadProjection = async (customerOrganizationId: string): Promise<SecureGuardC2Projection | null> => {
+    try {
+      return await input.repo.findLatestVerifiedC2Projection(customerOrganizationId);
+    } catch {
+      // A database or future receipt-source outage must never become a successful empty inventory.
+      return null;
+    }
+  };
+
   router.get('/me', requireIdentity, async (req, res) => {
     const memberships = await input.repo.listActiveMemberships(req.secureGuardUserId!);
     const mspAdmin = await input.repo.hasActiveMspAdminGrant(req.secureGuardUserId!);
     res.json({ memberships, mspAdmin });
   });
 
-  router.get('/overview', requireIdentity, requireCustomerScope, (req, res) => {
+  router.get('/overview', requireIdentity, requireCustomerScope, async (req, res) => {
     const scope = req.secureGuardScope!;
-    // C2 receipts and inventory projections are deliberately out of this first phase.
+    const projection = await loadProjection(scope.customerOrganizationId);
     res.json({
       organization: { name: scope.organizationName },
       scope: { membershipId: scope.membershipId, role: scope.role },
-      observation: null,
+      // This timestamp identifies a completed C2 observation; it is not a live protection state.
+      observation: projection ? {
+        status: 'verified',
+        observedAt: projection.observedAt,
+        mode: projection.mode,
+        mutations: projection.mutations,
+        siteCount: projection.siteCount,
+        agentCount: projection.agentCount,
+      } : { status: 'unavailable' },
     });
+  });
+
+  router.get('/sites', requireIdentity, requireCustomerScope, async (req, res) => {
+    const projection = await loadProjection(req.secureGuardScope!.customerOrganizationId);
+    if (!projection) {
+      res.status(503).json({ error: 'C2_RECEIPT_UNAVAILABLE' });
+      return;
+    }
+    res.json({ observedAt: projection.observedAt, sites: projection.sites });
+  });
+
+  router.get('/agents', requireIdentity, requireCustomerScope, async (req, res) => {
+    const projection = await loadProjection(req.secureGuardScope!.customerOrganizationId);
+    if (!projection) {
+      res.status(503).json({ error: 'C2_RECEIPT_UNAVAILABLE' });
+      return;
+    }
+    res.json({ observedAt: projection.observedAt, agents: projection.agents });
   });
 
   router.post('/memberships/invitations', requireIdentity, requireCustomerScope, async (req, res) => {

@@ -50,11 +50,30 @@ if (scopeSelect) (async () => {
     if (!selected) return showError();
     scopeSelect.value = selected;
     sessionStorage.setItem('secureGuardMembershipId', selected);
+    const renderList = (id, items, text) => {
+      const list = document.getElementById(id);
+      list.replaceChildren(...items.map((item) => {
+        const node = document.createElement('li');
+        node.textContent = text(item);
+        return node;
+      }));
+    };
     const render = async () => {
       sessionStorage.setItem('secureGuardMembershipId', scopeSelect.value);
       const overview = await secureGuardFetch('/overview');
       document.getElementById('organization-name').textContent = overview.organization.name;
       document.getElementById('role').textContent = overview.scope.role;
+      const observation = document.getElementById('observation');
+      if (overview.observation.status !== 'verified') {
+        observation.textContent = '検証済みの観測結果は現在表示できません。現在のリアルタイム保護状態を示すものではありません。';
+        renderList('sites', [], () => '');
+        renderList('agents', [], () => '');
+        return;
+      }
+      observation.textContent = `C2観測結果（${new Date(overview.observation.observedAt).toLocaleString('ja-JP')}）：DryRun、変更 ${overview.observation.mutations} 件、Site ${overview.observation.siteCount} 件、Agent ${overview.observation.agentCount} 件。これは現在のリアルタイム保護状態ではありません。`;
+      const [sites, agents] = await Promise.all([secureGuardFetch('/sites'), secureGuardFetch('/agents')]);
+      renderList('sites', sites.sites, (site) => `Site ${site.displayOrder}：Agent ${site.agentCount} 件`);
+      renderList('agents', agents.agents, (agent) => `Agent ${agent.displayOrder}：Site ${agent.siteDisplayOrder}、状態 ${agent.status} / ${agent.agentState}`);
     };
     scopeSelect.addEventListener('change', () => { render().catch(showError); });
     await render();

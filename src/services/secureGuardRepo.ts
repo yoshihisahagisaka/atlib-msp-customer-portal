@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import type { CustomerRole, CustomerScope } from '../domain/secureGuard';
+import type { SecureGuardC2Projection } from '../domain/secureGuardC2';
 
 export interface PortalUser {
   id: string;
@@ -68,6 +69,80 @@ export class SecureGuardRepo {
       [userId],
     );
     return rows.length === 1;
+  }
+
+  /**
+   * Reads only a pre-verified, intentionally lossy C2 projection. This code never reads GCS,
+   * DNSFilter, a C2 plan body, or a caller-provided DNSFilter organization identifier.
+   */
+  async findLatestVerifiedC2Projection(customerOrganizationId: string): Promise<SecureGuardC2Projection | null> {
+    const receipt = await this.pool.query(
+      `SELECT p.receipt_id, p.source_sha, p.plan_hash, p.object_generation, p.observed_at, p.completed_at,
+              p.mode, p.mutations, p.site_count, p.agent_count
+       FROM secure_guard_c2_receipt_projections p
+       JOIN secure_guard_receipts r ON r.id = p.receipt_id
+        AND r.status = 'verified'
+        AND r.plan_hash = p.plan_hash
+        AND r.object_generation = p.object_generation
+        AND r.source_sha = p.source_sha
+        AND r.observed_at = p.observed_at
+        AND r.completed_at = p.completed_at
+       JOIN dnsfilter_organization_mappings m
+         ON m.customer_organization_id = r.customer_organization_id
+        AND m.dnsfilter_organization_id = p.dnsfilter_organization_id
+        AND m.status = 'active'
+       WHERE r.customer_organization_id = $1
+       ORDER BY p.observed_at DESC, p.completed_at DESC
+       LIMIT 1`,
+      [customerOrganizationId],
+    );
+    const row = receipt.rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const receiptId = String(row.receipt_id);
+    const [sites, agents] = await Promise.all([
+      this.pool.query(
+        `SELECT display_order, agent_count
+         FROM secure_guard_c2_site_projections WHERE receipt_id = $1 ORDER BY display_order`,
+        [receiptId],
+      ),
+      this.pool.query(
+        `SELECT a.display_order, s.display_order AS site_display_order, a.status, a.agent_state
+         FROM secure_guard_c2_agent_projections a
+         JOIN secure_guard_c2_site_projections s ON s.id = a.site_projection_id AND s.receipt_id = a.receipt_id
+         WHERE a.receipt_id = $1 ORDER BY a.display_order`,
+        [receiptId],
+      ),
+    ]);
+    const projection: SecureGuardC2Projection = {
+      observedAt: new Date(String(row.observed_at)).toISOString(),
+      completedAt: new Date(String(row.completed_at)).toISOString(),
+      sourceSha: String(row.source_sha),
+      planHash: String(row.plan_hash),
+      generation: String(row.object_generation),
+      mode: 'DryRun',
+      mutations: 0,
+      siteCount: Number(row.site_count),
+      agentCount: Number(row.agent_count),
+      sites: sites.rows.map((site) => ({ displayOrder: Number(site.display_order), agentCount: Number(site.agent_count) })),
+      agents: agents.rows.map((agent) => ({
+        displayOrder: Number(agent.display_order),
+        siteDisplayOrder: Number(agent.site_display_order),
+        status: String(agent.status),
+        agentState: String(agent.agent_state),
+      })),
+    };
+    // A partially imported or tampered projection is unavailable, never an empty successful result.
+    if (
+      projection.siteCount !== projection.sites.length
+      || projection.agentCount !== projection.agents.length
+      || projection.sites.some((site, index) => site.displayOrder !== index + 1)
+      || projection.agents.some((agent, index) => agent.displayOrder !== index + 1
+        || !projection.sites.some((site) => site.displayOrder === agent.siteDisplayOrder))
+      || projection.sites.some((site) => site.agentCount !== projection.agents.filter(
+        (agent) => agent.siteDisplayOrder === site.displayOrder,
+      ).length)
+    ) return null;
+    return projection;
   }
 
   async createInvitation(input: {
