@@ -36,8 +36,13 @@ import { ReportStorage } from './services/reportStorage';
 import { SettingsRepo } from './services/settingsRepo';
 import { StaffAuthService } from './services/staffAuthService';
 import { requireStaffAuth, requireAdminRole } from './middleware/staffAuth';
+import { requireSecureGuardIdentity } from './middleware/secureGuardAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 import type { StaffRoleDeps } from './domain/staffRoles';
+import { SecureGuardRepo } from './services/secureGuardRepo';
+import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
+import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
+import { createSecureGuardRouter } from './routes/secureGuard';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -54,6 +59,8 @@ async function main(): Promise<void> {
   const monthlyReportRepo = new MonthlyReportRepo(pool);
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
+  const secureGuardRepo = new SecureGuardRepo(pool);
+  const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
   const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
   const adminPrincipalsRepo = new AdminPrincipalsRepo(pool);
   const staffRoleDeps: StaffRoleDeps = {
@@ -94,6 +101,21 @@ async function main(): Promise<void> {
     }),
   );
   app.use('/api/settings', createPublicSettingsRouter(settingsRepo, config.bookingUrl));
+
+  // Secure Guard keeps a separate personal-identity session. Existing customer and staff sessions remain unchanged.
+  app.use(
+    '/api/secure-guard/auth',
+    createSecureGuardAuthRouter(secureGuardIdentityService, config.nodeEnv === 'production'),
+  );
+  app.use(
+    '/api/secure-guard',
+    createSecureGuardRouter({
+      identityService: secureGuardIdentityService,
+      repo: secureGuardRepo,
+      mailer,
+      portalBaseUrl: config.portalBaseUrl,
+    }),
+  );
 
   // Google Workspaceログイン（無認証でアクセスできる必要がある）
   app.use(
@@ -162,6 +184,10 @@ async function main(): Promise<void> {
     res.sendFile(path.join(__dirname, '../public/admin/settings.html')),
   );
   app.use('/admin', ...adminAuthGate, express.static(path.join(__dirname, '../public/admin')));
+
+  app.get('/secure-guard-home.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/secure-guard-home.html')),
+  );
 
   app.use(express.static(path.join(__dirname, '../public')));
 
