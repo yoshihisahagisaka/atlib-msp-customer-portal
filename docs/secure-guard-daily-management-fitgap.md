@@ -10,6 +10,8 @@ The server uses only these GET collection paths, with the DNSFilter Organization
 
 It does not retrieve or interpret OpenAPI before the inventory request. It requires every Network and Agent record to declare the mapped Organization, reconciles Site-scoped Agents with the Organization-wide collection, rejects duplicate IDs and unsafe or scope-changing pagination, and never issues a non-GET request.
 
+Each DNSFilter GET has an explicit eight-second AbortController timeout. Timeout and transport errors return the same safe unavailable result; the client contains no retry loop. The home calls only `GET /api/secure-guard/overview`, whose single Inventory result contains the summary, Sites, and Agents rendered on that screen.
+
 ## Display boundary
 
 The authenticated Organization may view its Network name, Agent hostname and identifier, association, and the API-provided `status` / `agent_state`. The response intentionally contains no API key, authorization header, raw JSON, C2 receipt, GCS content, or inferred policy value. The current verified Network response evidence does not establish a safe policy display field, so Site `policy` is `null` and the UI says that no Policy information was provided by the API.

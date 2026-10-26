@@ -64,3 +64,15 @@ test('rejects another customer record, an API failure, and unmatched organizatio
     await assert.rejects(() => new DnsFilterInventoryClient('key', fixture.fetcher).getInventory(organizationId), DnsFilterInventoryError);
   }
 });
+
+test('aborts a delayed DNSFilter GET once and reports no inventory instead of retrying', async () => {
+  let calls = 0;
+  let aborts = 0;
+  const delayedFetcher = async (_url, init) => new Promise((_resolve, reject) => {
+    calls += 1;
+    init.signal.addEventListener('abort', () => { aborts += 1; reject(new Error('aborted')); }, { once: true });
+  });
+  await assert.rejects(() => new DnsFilterInventoryClient('key', delayedFetcher, 1).getInventory(organizationId), DnsFilterInventoryError);
+  assert.equal(calls, 1);
+  assert.equal(aborts, 1);
+});

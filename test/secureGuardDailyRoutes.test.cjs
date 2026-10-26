@@ -19,16 +19,17 @@ async function withApp(repo, inventoryClient, run) {
 
 function repo(mapping = '2001') { return { findActiveScope: async (user, membership) => user === 'user-1' && membership === 'membership-1' ? scope : null, findActiveDnsFilterOrganization: async () => mapping }; }
 
-test('daily APIs are Membership-scoped and return only the mapped Organization inventory', async () => {
+test('one overview screen request returns the same Membership-scoped Site and Agent inventory', async () => {
   const calls = [];
   await withApp(repo(), { getInventory: async (id) => { calls.push(id); return inventory; } }, async (base) => {
     const headers = { Cookie: 'secure_guard_session=test', 'X-Secure-Guard-Membership': 'membership-1' };
     const overview = await fetch(`${base}/api/secure-guard/overview`, { headers });
-    assert.deepEqual((await overview.json()).protection, { 'active/protected': 1 });
-    const agents = await fetch(`${base}/api/secure-guard/agents`, { headers });
-    assert.deepEqual((await agents.json()).agents, inventory.agents);
+    const body = await overview.json();
+    assert.deepEqual(body.protection, { 'active/protected': 1 });
+    assert.deepEqual(body.sites, inventory.sites);
+    assert.deepEqual(body.agents, inventory.agents);
   });
-  assert.deepEqual(calls, ['2001', '2001']);
+  assert.deepEqual(calls, ['2001']);
 });
 
 test('cross-customer selection, a missing mapping, and upstream read failure are denied without inventory data', async () => {

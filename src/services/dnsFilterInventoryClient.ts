@@ -13,7 +13,7 @@ export interface DnsFilterResponse {
   json(): Promise<unknown>;
 }
 
-export type DnsFilterFetch = (url: string, init: { method: 'GET'; headers: Record<string, string> }) => Promise<DnsFilterResponse>;
+export type DnsFilterFetch = (url: string, init: { method: 'GET'; headers: Record<string, string>; signal: AbortSignal }) => Promise<DnsFilterResponse>;
 
 type RecordValue = Record<string, unknown>;
 
@@ -39,7 +39,11 @@ interface Pages { rows: unknown[]; }
 
 /** GET-only, fail-closed DNSFilter inventory client. It exposes no arbitrary URL or query API. */
 export class DnsFilterInventoryClient {
-  constructor(private readonly apiKey: string | undefined, private readonly fetcher: DnsFilterFetch = fetch as unknown as DnsFilterFetch) {}
+  constructor(
+    private readonly apiKey: string | undefined,
+    private readonly fetcher: DnsFilterFetch = fetch as unknown as DnsFilterFetch,
+    private readonly timeoutMs = 8_000,
+  ) {}
 
   async getInventory(organizationId: string): Promise<SecureGuardInventory> {
     if (!this.apiKey || !/^\d+$/.test(organizationId)) fail();
@@ -115,7 +119,7 @@ export class DnsFilterInventoryClient {
       }
       if (Object.entries(scope).some(([key, value]) => actual.get(key) !== value)) fail();
       seenUrls.add(url.href);
-      const response = await this.fetcher(url.href, { method: 'GET', headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' } });
+      const response = await this.get(url.href);
       if (!response.ok || response.status !== 200) fail();
       let body: RecordValue;
       try { body = object(await response.json()); } catch { fail(); }
@@ -142,5 +146,23 @@ export class DnsFilterInventoryClient {
     }
     if (expectedTotal !== undefined && expectedTotal !== rows.length) fail();
     return { rows };
+  }
+
+  private async get(url: string): Promise<DnsFilterResponse> {
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) fail();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      // There is deliberately no retry: an ambiguous or delayed read is unavailable to the UI.
+      return await this.fetcher(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' },
+        signal: controller.signal,
+      });
+    } catch {
+      fail();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

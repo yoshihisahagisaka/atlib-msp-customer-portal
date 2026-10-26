@@ -74,6 +74,8 @@ export function createSecureGuardRouter(input: {
       siteCount: inventory.sites.length,
       agentCount: inventory.agents.length,
       protection,
+      sites: inventory.sites,
+      agents: inventory.agents,
     });
   });
 
