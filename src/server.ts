@@ -41,6 +41,7 @@ import { createIpRateLimiter } from './middleware/rateLimit';
 import type { StaffRoleDeps } from './domain/staffRoles';
 import { SecureGuardRepo } from './services/secureGuardRepo';
 import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
+import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
 import { createSecureGuardRouter } from './routes/secureGuard';
 
@@ -61,6 +62,8 @@ async function main(): Promise<void> {
   const settingsRepo = new SettingsRepo(pool);
   const secureGuardRepo = new SecureGuardRepo(pool);
   const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
+  // Deployment supplies this only to the server process. No browser route can read it.
+  const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
   const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
   const adminPrincipalsRepo = new AdminPrincipalsRepo(pool);
   const staffRoleDeps: StaffRoleDeps = {
@@ -112,6 +115,7 @@ async function main(): Promise<void> {
     createSecureGuardRouter({
       identityService: secureGuardIdentityService,
       repo: secureGuardRepo,
+      inventoryClient: dnsFilterInventoryClient,
       mailer,
       portalBaseUrl: config.portalBaseUrl,
     }),

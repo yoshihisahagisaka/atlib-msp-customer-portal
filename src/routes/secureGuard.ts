@@ -9,6 +9,8 @@ import {
 import type { Mailer } from '../services/mailer';
 import type { SecureGuardIdentityService } from '../services/secureGuardIdentityService';
 import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secureGuardRepo';
+import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
+import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 
 const membershipRoleSchema = z.enum(['org_admin', 'operator', 'viewer']);
 const invitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -28,6 +30,7 @@ function toError(error: unknown, res: { status: (code: number) => { json: (value
 export function createSecureGuardRouter(input: {
   identityService: SecureGuardIdentityService;
   repo: SecureGuardRepo;
+  inventoryClient: DnsFilterInventoryClient;
   mailer: Mailer;
   portalBaseUrl: string;
 }): Router {
@@ -35,20 +38,61 @@ export function createSecureGuardRouter(input: {
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
   const requireCustomerScope = requireSecureGuardCustomerScope(input.repo);
 
+  const loadInventory = async (customerOrganizationId: string): Promise<SecureGuardInventory | null> => {
+    try {
+      const dnsfilterOrganizationId = await input.repo.findActiveDnsFilterOrganization(customerOrganizationId);
+      if (!dnsfilterOrganizationId) return null;
+      return await input.inventoryClient.getInventory(dnsfilterOrganizationId);
+    } catch {
+      // Neither a missing mapping nor an upstream failure may be represented as an empty successful inventory.
+      return null;
+    }
+  };
+
   router.get('/me', requireIdentity, async (req, res) => {
     const memberships = await input.repo.listActiveMemberships(req.secureGuardUserId!);
     const mspAdmin = await input.repo.hasActiveMspAdminGrant(req.secureGuardUserId!);
     res.json({ memberships, mspAdmin });
   });
 
-  router.get('/overview', requireIdentity, requireCustomerScope, (req, res) => {
+  router.get('/overview', requireIdentity, requireCustomerScope, async (req, res) => {
     const scope = req.secureGuardScope!;
-    // C2 receipts and inventory projections are deliberately out of this first phase.
+    const inventory = await loadInventory(scope.customerOrganizationId);
+    if (!inventory) {
+      res.status(502).json({ error: 'SECURE_GUARD_DATA_UNAVAILABLE' });
+      return;
+    }
+    const protection = inventory.agents.reduce<Record<string, number>>((summary, agent) => {
+      const key = `${agent.status}/${agent.agentState}`;
+      summary[key] = (summary[key] ?? 0) + 1;
+      return summary;
+    }, {});
     res.json({
       organization: { name: scope.organizationName },
       scope: { membershipId: scope.membershipId, role: scope.role },
-      observation: null,
+      fetchedAt: inventory.fetchedAt,
+      siteCount: inventory.sites.length,
+      agentCount: inventory.agents.length,
+      protection,
     });
+  });
+
+  router.get('/sites', requireIdentity, requireCustomerScope, async (req, res) => {
+    const inventory = await loadInventory(req.secureGuardScope!.customerOrganizationId);
+    if (!inventory) {
+      res.status(502).json({ error: 'SECURE_GUARD_DATA_UNAVAILABLE' });
+      return;
+    }
+    res.json({ fetchedAt: inventory.fetchedAt, sites: inventory.sites });
+  });
+
+  router.get('/agents', requireIdentity, requireCustomerScope, async (req, res) => {
+    const inventory = await loadInventory(req.secureGuardScope!.customerOrganizationId);
+    if (!inventory) {
+      res.status(502).json({ error: 'SECURE_GUARD_DATA_UNAVAILABLE' });
+      return;
+    }
+    res.json({ fetchedAt: inventory.fetchedAt, agents: inventory.agents });
   });
 
   router.post('/memberships/invitations', requireIdentity, requireCustomerScope, async (req, res) => {

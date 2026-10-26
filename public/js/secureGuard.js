@@ -14,6 +14,15 @@ async function secureGuardFetch(path, options = {}) {
 
 function showError() { const node = document.getElementById('error'); if (node) node.textContent = '処理を完了できませんでした。'; }
 
+function renderList(id, items, text) {
+  const list = document.getElementById(id);
+  list.replaceChildren(...items.map((item) => {
+    const node = document.createElement('li');
+    node.textContent = text(item);
+    return node;
+  }));
+}
+
 const loginForm = document.getElementById('login-form');
 if (loginForm) loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -50,11 +59,24 @@ if (scopeSelect) (async () => {
     if (!selected) return showError();
     scopeSelect.value = selected;
     sessionStorage.setItem('secureGuardMembershipId', selected);
+    let agents = [];
+    const renderAgents = () => {
+      const filter = (document.getElementById('agent-filter').value || '').toLocaleLowerCase('ja');
+      renderList('agents', agents.filter((agent) => `${agent.hostname} ${agent.siteId} ${agent.status} ${agent.agentState}`.toLocaleLowerCase('ja').includes(filter)), (agent) => `${agent.hostname} / Site ${agent.siteId} / ${agent.status} / ${agent.agentState}`);
+    };
+    document.getElementById('agent-filter').addEventListener('input', renderAgents);
     const render = async () => {
       sessionStorage.setItem('secureGuardMembershipId', scopeSelect.value);
-      const overview = await secureGuardFetch('/overview');
+      const [overview, sites] = await Promise.all([secureGuardFetch('/overview'), secureGuardFetch('/sites')]);
+      const agentResponse = await secureGuardFetch('/agents');
+      agents = agentResponse.agents;
       document.getElementById('organization-name').textContent = overview.organization.name;
       document.getElementById('role').textContent = overview.scope.role;
+      document.getElementById('summary').textContent = `登録Site ${overview.siteCount} 件、登録Agent ${overview.agentCount} 件`;
+      document.getElementById('fetched-at').textContent = `最終取得日時: ${new Date(overview.fetchedAt).toLocaleString('ja-JP')}（現在のリアルタイム状態ではありません）`;
+      renderList('protection', Object.entries(overview.protection), ([state, count]) => `保護状態 ${state}: ${count} 件`);
+      renderList('sites', sites.sites, (site) => `${site.name} / Agent ${site.agentCount} 件 / Policy情報: ${site.policy ?? 'APIから取得できる情報なし'}`);
+      renderAgents();
     };
     scopeSelect.addEventListener('change', () => { render().catch(showError); });
     await render();

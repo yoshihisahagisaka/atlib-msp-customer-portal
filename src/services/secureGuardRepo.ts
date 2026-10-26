@@ -70,6 +70,19 @@ export class SecureGuardRepo {
     return rows.length === 1;
   }
 
+  /** Resolves the external Organization only from the authenticated customer's active server-side scope. */
+  async findActiveDnsFilterOrganization(customerOrganizationId: string): Promise<string | null> {
+    const { rows } = await this.pool.query(
+      `SELECT m.dnsfilter_organization_id
+       FROM dnsfilter_organization_mappings m
+       JOIN customer_organizations o ON o.id = m.customer_organization_id AND o.status = 'active'
+       WHERE m.customer_organization_id = $1 AND m.status = 'active'`,
+      [customerOrganizationId],
+    );
+    const organizationId = rows[0]?.dnsfilter_organization_id;
+    return typeof organizationId === 'string' && /^\d+$/.test(organizationId) ? organizationId : null;
+  }
+
   async createInvitation(input: {
     email: string;
     customerOrganizationId: string;

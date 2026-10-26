@@ -1,5 +1,5 @@
 <!doctype html>
 <html lang="ja">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>atLIB Secure Guard</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="container"><h1>atLIB Secure Guard</h1><button id="logout" type="button">ログアウト</button><section><label>利用Organization<select id="scope" aria-label="利用Organization"></select></label></section><section><h2 id="organization-name"></h2><p id="role"></p><p>端末・Site・保護状態は、C2証跡の読取り機能が追加されるまで表示しません。</p></section><p id="error" role="alert"></p></main><script src="/js/secureGuard.js"></script></body>
+  <body><main class="container"><h1>atLIB Secure Guard</h1><button id="logout" type="button">ログアウト</button><section><label>利用Organization<select id="scope" aria-label="利用Organization"></select></label></section><section><h2 id="organization-name"></h2><p id="role"></p><p id="summary" aria-live="polite"></p><p id="fetched-at"></p><ul id="protection"></ul></section><section><h3>Site一覧</h3><ul id="sites"></ul></section><section><h3>Agent一覧</h3><label>検索・絞り込み<input id="agent-filter" type="search" autocomplete="off" placeholder="端末名、Site、状態"></label><ul id="agents"></ul></section><p id="error" role="alert"></p></main><script src="/js/secureGuard.js"></script></body>
 </html>
