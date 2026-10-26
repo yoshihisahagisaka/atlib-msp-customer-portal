@@ -54,6 +54,17 @@ export class SecureGuardIdentityService {
     return user ? this.issueSession(user) : null;
   }
 
+  async replaceInitialInvitation(input: {
+    email: string;
+    customerOrganizationId: string;
+    invitedByUserId: string;
+  }): Promise<{ token: string; expiresAt: Date }> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+    await this.repo.replaceInitialInvitation({ ...input, tokenHash: this.hashToken(token), expiresAt });
+    return { token, expiresAt };
+  }
+
   private issueSession(user: PortalUser): string {
     const options: jwt.SignOptions = { expiresIn: this.jwtExpiresIn as jwt.SignOptions['expiresIn'] };
     return jwt.sign({ userId: user.id, sessionVersion: user.sessionVersion }, this.jwtSecret, options);

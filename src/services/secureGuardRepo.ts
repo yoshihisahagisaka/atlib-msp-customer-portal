@@ -90,7 +90,7 @@ export class SecureGuardRepo {
         if (!organization.rows[0]) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
         const count = await client.query<{ count: string }>(
           `SELECT count(*)::text AS count FROM customer_memberships
-           WHERE customer_organization_id = $1 AND status = 'active'`,
+           WHERE customer_organization_id = $1 AND role = 'org_admin' AND status = 'active'`,
           [input.customerOrganizationId],
         );
         if (count.rows[0]?.count !== '0') throw new SecureGuardConflictError('INITIAL_ADMIN_ALREADY_SET');
@@ -195,6 +195,102 @@ export class SecureGuardRepo {
     }
   }
 
+  async cancelInitialInvitation(actorUserId: string, customerOrganizationId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockInitialOrganization(client, customerOrganizationId);
+      const pending = await client.query(
+        `SELECT id FROM customer_memberships
+         WHERE customer_organization_id = $1 AND is_initial_admin = true AND status = 'pending'
+         FOR UPDATE`,
+        [customerOrganizationId],
+      );
+      const membershipId = pending.rows[0]?.id;
+      if (!membershipId) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      await this.cancelPendingInitialInvitation(client, membershipId);
+      await this.insertAudit(client, actorUserId, customerOrganizationId, membershipId, 'initial_admin.invitation.cancelled', 'success');
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async replaceInitialInvitation(input: {
+    email: string;
+    customerOrganizationId: string;
+    invitedByUserId: string;
+    tokenHash: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockInitialOrganization(client, input.customerOrganizationId);
+      const active = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM customer_memberships
+         WHERE customer_organization_id = $1 AND role = 'org_admin' AND status = 'active'`,
+        [input.customerOrganizationId],
+      );
+      if (active.rows[0]?.count !== '0') throw new SecureGuardConflictError('INITIAL_ADMIN_ALREADY_SET');
+      const pending = await client.query(
+        `SELECT id FROM customer_memberships
+         WHERE customer_organization_id = $1 AND is_initial_admin = true AND status = 'pending'
+         FOR UPDATE`,
+        [input.customerOrganizationId],
+      );
+      const previousMembershipId = pending.rows[0]?.id as string | undefined;
+      if (previousMembershipId) {
+        await this.cancelPendingInitialInvitation(client, previousMembershipId);
+        await this.insertAudit(
+          client,
+          input.invitedByUserId,
+          input.customerOrganizationId,
+          previousMembershipId,
+          'initial_admin.invitation.cancelled',
+          'success',
+        );
+      }
+      const user = await this.findOrCreateInvitedUser(client, input.email);
+      const existing = await client.query(
+        `SELECT status FROM customer_memberships
+         WHERE user_id = $1 AND customer_organization_id = $2 FOR UPDATE`,
+        [user.id, input.customerOrganizationId],
+      );
+      if (existing.rows[0]?.status === 'active') throw new SecureGuardConflictError('MEMBERSHIP_ALREADY_EXISTS');
+      if (existing.rows.length > 0) {
+        await client.query(
+          `UPDATE customer_memberships
+           SET role = 'org_admin', is_initial_admin = true, status = 'pending', invited_by_user_id = $1,
+               invite_token_hash = $2, invite_expires_at = $3, accepted_at = NULL, revoked_at = NULL, updated_at = now()
+           WHERE user_id = $4 AND customer_organization_id = $5`,
+          [input.invitedByUserId, input.tokenHash, input.expiresAt, user.id, input.customerOrganizationId],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO customer_memberships
+           (user_id, customer_organization_id, role, is_initial_admin, status, invited_by_user_id, invite_token_hash, invite_expires_at)
+           VALUES ($1, $2, 'org_admin', true, 'pending', $3, $4, $5)`,
+          [user.id, input.customerOrganizationId, input.invitedByUserId, input.tokenHash, input.expiresAt],
+        );
+      }
+      await this.insertAudit(client, input.invitedByUserId, input.customerOrganizationId, null, 'initial_admin.invitation.reissued', 'success');
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async revokeMembership(actorUserId: string, scope: CustomerScope, membershipId: string): Promise<boolean> {
     const client = await this.pool.connect();
     try {
@@ -249,6 +345,23 @@ export class SecureGuardRepo {
       [email],
     );
     return this.mapUser(inserted.rows[0]);
+  }
+
+  private async lockInitialOrganization(client: PoolClient, customerOrganizationId: string): Promise<void> {
+    const organization = await client.query(
+      'SELECT id FROM customer_organizations WHERE id = $1 FOR UPDATE',
+      [customerOrganizationId],
+    );
+    if (!organization.rows[0]) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
+  }
+
+  private async cancelPendingInitialInvitation(client: PoolClient, membershipId: string): Promise<void> {
+    await client.query(
+      `UPDATE customer_memberships
+       SET status = 'revoked', revoked_at = now(), invite_token_hash = NULL, invite_expires_at = NULL, updated_at = now()
+       WHERE id = $1`,
+      [membershipId],
+    );
   }
 
   private async insertAudit(

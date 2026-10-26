@@ -45,3 +45,12 @@ test('last-org-admin decision is serialized at the organization row', () => {
   assert.match(revokeMethod, /SELECT id FROM customer_organizations WHERE id = \$1 FOR UPDATE/);
   assert.match(revokeMethod, /LAST_ORG_ADMIN/);
 });
+
+test('initial invitation reissue invalidates the previous token before replacement and audits both actions', () => {
+  const repo = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'secureGuardRepo.ts'), 'utf8');
+  const method = repo.slice(repo.indexOf('async replaceInitialInvitation'), repo.indexOf('async revokeMembership'));
+  assert.ok(method.indexOf('cancelPendingInitialInvitation') < method.indexOf('INSERT INTO customer_memberships'));
+  assert.match(method, /initial_admin\.invitation\.cancelled/);
+  assert.match(method, /initial_admin\.invitation\.reissued/);
+  assert.match(method, /role = 'org_admin' AND status = 'active'/);
+});

@@ -16,6 +16,7 @@ const initialInvitationSchema = z.object({
   customerOrganizationId: z.string().uuid(),
   email: z.string().email(),
 });
+const initialInvitationCancelSchema = z.object({ customerOrganizationId: z.string().uuid() });
 
 function toError(error: unknown, res: { status: (code: number) => { json: (value: unknown) => void } }): boolean {
   if (!(error instanceof SecureGuardConflictError)) return false;
@@ -118,7 +119,60 @@ export function createSecureGuardRouter(input: {
         initialOnly: true,
       });
       const acceptUrl = `${input.portalBaseUrl}/secure-guard-accept.html#token=${invitation.token}`;
-      await input.mailer.sendSecureGuardInvitationEmail(parsed.data.email, acceptUrl);
+      try {
+        await input.mailer.sendSecureGuardInvitationEmail(parsed.data.email, acceptUrl);
+      } catch {
+        // The token stays pending and is not automatically resent. An MSP administrator must explicitly cancel or reissue it.
+        res.status(503).json({ error: 'INVITATION_DELIVERY_UNCONFIRMED' });
+        return;
+      }
+      res.status(202).end();
+    } catch (error) {
+      if (!toError(error, res)) throw error;
+    }
+  });
+
+  router.post('/admin/initial-memberships/invitations/cancel', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = initialInvitationCancelSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'INVALID_REQUEST' });
+      return;
+    }
+    try {
+      const cancelled = await input.repo.cancelInitialInvitation(
+        req.secureGuardUserId!,
+        parsed.data.customerOrganizationId,
+      );
+      if (!cancelled) {
+        res.status(404).json({ error: 'INITIAL_ADMIN_INVITATION_NOT_FOUND' });
+        return;
+      }
+      res.status(204).end();
+    } catch (error) {
+      if (!toError(error, res)) throw error;
+    }
+  });
+
+  router.post('/admin/initial-memberships/invitations/reissue', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = initialInvitationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'INVALID_REQUEST' });
+      return;
+    }
+    try {
+      const invitation = await input.identityService.replaceInitialInvitation({
+        email: parsed.data.email,
+        customerOrganizationId: parsed.data.customerOrganizationId,
+        invitedByUserId: req.secureGuardUserId!,
+      });
+      const acceptUrl = `${input.portalBaseUrl}/secure-guard-accept.html#token=${invitation.token}`;
+      try {
+        await input.mailer.sendSecureGuardInvitationEmail(parsed.data.email, acceptUrl);
+      } catch {
+        // Reissue commits exactly one new pending token before delivery. The operator must decide whether to cancel or reissue again.
+        res.status(503).json({ error: 'INVITATION_DELIVERY_UNCONFIRMED' });
+        return;
+      }
       res.status(202).end();
     } catch (error) {
       if (!toError(error, res)) throw error;

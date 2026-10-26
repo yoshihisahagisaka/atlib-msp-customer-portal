@@ -19,4 +19,10 @@ The migration creates no identities, customer organizations, memberships, mappin
 
 ## Verification
 
-`npm test` runs TypeScript compilation and fifteen offline tests covering personal login, stale-session rejection, token hashing, account and IP rate limits, membership scope enforcement, MSP escalation rejection, existing session preservation, existing Zabbix route mounting, additive migration coverage, initial-administrator serialization, and safe acceptance of an added Membership by an existing Identity.
+`npm test` runs TypeScript compilation and nineteen offline tests covering personal login, stale-session rejection, token hashing, account and IP rate limits, membership scope enforcement, MSP escalation rejection, existing session preservation, existing Zabbix route mounting, additive migration coverage, initial-administrator serialization and recovery, and safe acceptance of an added Membership by an existing Identity.
+
+## Initial invitation recovery
+
+An explicit MSP administrator may cancel a pending initial-administrator invitation or replace it for a corrected recipient. Both paths lock the Customer Organization row, clear the old token before issuing a replacement, and write audit events. A mail delivery failure returns `INVITATION_DELIVERY_UNCONFIRMED`; it does not resend automatically or create another pending invitation.
+
+The offline suite includes HTTP-level authorization and delivery-uncertainty checks. A real PostgreSQL concurrency run has not been performed in this worktree, so runtime validation of PostgreSQL lock scheduling remains unverified.
