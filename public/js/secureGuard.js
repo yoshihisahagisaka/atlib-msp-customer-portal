@@ -14,6 +14,13 @@ async function secureGuardFetch(path, options = {}) {
 
 function showError() { const node = document.getElementById('error'); if (node) node.textContent = '処理を完了できませんでした。'; }
 
+function showMspAdminHome() {
+  sessionStorage.removeItem('secureGuardMembershipId');
+  document.getElementById('scope-section').hidden = true;
+  document.getElementById('customer-inventory').hidden = true;
+  document.getElementById('msp-admin-notice').hidden = false;
+}
+
 function renderList(id, items, text) {
   const list = document.getElementById(id);
   list.replaceChildren(...items.map((item) => {
@@ -56,7 +63,10 @@ if (scopeSelect) (async () => {
     }
     const previous = sessionStorage.getItem('secureGuardMembershipId');
     const selected = me.memberships.some((item) => item.membershipId === previous) ? previous : me.memberships[0]?.membershipId;
-    if (!selected) return showError();
+    if (!selected) {
+      if (me.mspAdmin) return showMspAdminHome();
+      return showError();
+    }
     scopeSelect.value = selected;
     sessionStorage.setItem('secureGuardMembershipId', selected);
     let agents = [];

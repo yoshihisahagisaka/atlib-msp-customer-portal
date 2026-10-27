@@ -46,3 +46,15 @@ test('cross-customer selection, a missing mapping, and upstream read failure are
     });
   }
 });
+
+test('an MSP administrator without a Customer Membership can read only the neutral account state', async () => {
+  const administrator = {
+    listActiveMemberships: async () => [],
+    hasActiveMspAdminGrant: async () => true,
+  };
+  await withApp(administrator, { getInventory: async () => assert.fail('must not load inventory') }, async (base) => {
+    const response = await fetch(`${base}/api/secure-guard/me`, { headers: { Cookie: 'secure_guard_session=test' } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { memberships: [], mspAdmin: true });
+  });
+});
