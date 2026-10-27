@@ -24,6 +24,22 @@ test('migration is additive and defines the tenant-bound identity tables', () =>
   assert.doesNotMatch(migration, /DROP TABLE|ALTER TABLE customers/);
 });
 
+test('migration 012 makes Secure Guard organizations independent without changing Zabbix customers', () => {
+  const migration = read('migrations/012_secure_guard_organization_independence.sql');
+  assert.match(migration, /ADD COLUMN organization_name VARCHAR\(255\)/);
+  assert.match(migration, /SET organization_name = c\.company_name/);
+  assert.match(migration, /ALTER COLUMN customer_id DROP NOT NULL/);
+  assert.match(migration, /DROP CONSTRAINT customer_organizations_customer_id_fkey/);
+  assert.doesNotMatch(migration, /ALTER TABLE customers|DROP TABLE|DELETE FROM/);
+});
+
+test('Secure Guard scope resolution does not require a Zabbix customer record', () => {
+  const repo = read('src/services/secureGuardRepo.ts');
+  const scopeMethods = repo.slice(repo.indexOf('async listActiveMemberships'), repo.indexOf('async hasActiveMspAdminGrant'));
+  assert.match(scopeMethods, /o\.organization_name/);
+  assert.doesNotMatch(scopeMethods, /JOIN customers/);
+});
+
 test('Secure Guard login applies both IP and account rate-limit gates', () => {
   const route = read('src/routes/secureGuardAuth.ts');
   assert.match(route, /secureGuardLoginIpRateLimiter, checkLoginRateLimitFor\(secureGuardLoginRateLimiter\)/);

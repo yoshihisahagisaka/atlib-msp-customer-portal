@@ -38,12 +38,11 @@ export class SecureGuardRepo {
 
   async listActiveMemberships(userId: string): Promise<CustomerScope[]> {
     const { rows } = await this.pool.query(
-      `SELECT m.id AS membership_id, m.customer_organization_id, c.company_name AS organization_name, m.role
+      `SELECT m.id AS membership_id, m.customer_organization_id, o.organization_name, m.role
        FROM customer_memberships m
        JOIN customer_organizations o ON o.id = m.customer_organization_id AND o.status = 'active'
-       JOIN customers c ON c.id = o.customer_id AND c.status = 'active'
        WHERE m.user_id = $1 AND m.status = 'active'
-       ORDER BY c.company_name`,
+       ORDER BY o.organization_name`,
       [userId],
     );
     return rows.map((row) => this.mapScope(row));
@@ -51,10 +50,9 @@ export class SecureGuardRepo {
 
   async findActiveScope(userId: string, membershipId: string): Promise<CustomerScope | null> {
     const { rows } = await this.pool.query(
-      `SELECT m.id AS membership_id, m.customer_organization_id, c.company_name AS organization_name, m.role
+      `SELECT m.id AS membership_id, m.customer_organization_id, o.organization_name, m.role
        FROM customer_memberships m
        JOIN customer_organizations o ON o.id = m.customer_organization_id AND o.status = 'active'
-       JOIN customers c ON c.id = o.customer_id AND c.status = 'active'
        WHERE m.id = $1 AND m.user_id = $2 AND m.status = 'active'`,
       [membershipId, userId],
     );
