@@ -36,7 +36,7 @@ import { ReportStorage } from './services/reportStorage';
 import { SettingsRepo } from './services/settingsRepo';
 import { StaffAuthService } from './services/staffAuthService';
 import { requireStaffAuth, requireAdminRole } from './middleware/staffAuth';
-import { requireSecureGuardIdentity } from './middleware/secureGuardAuth';
+import { requireMspAdmin, requireSecureGuardIdentity } from './middleware/secureGuardAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 import type { StaffRoleDeps } from './domain/staffRoles';
 import { SecureGuardRepo } from './services/secureGuardRepo';
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
   app.get('/secure-guard-home.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
     res.sendFile(path.join(__dirname, '../public/secure-guard-home.html')),
   );
-  app.get('/secure-guard-admin.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
+  app.get('/secure-guard-admin.html', requireSecureGuardIdentity(secureGuardIdentityService), requireMspAdmin(secureGuardRepo), (_req, res) =>
     res.sendFile(path.join(__dirname, '../public/secure-guard-admin.html')),
   );
 

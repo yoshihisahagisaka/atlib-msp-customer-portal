@@ -31,6 +31,10 @@ function toError(error: unknown, res: { status: (code: number) => { json: (value
   return true;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === '23505';
+}
+
 export function createSecureGuardRouter(input: {
   identityService: SecureGuardIdentityService;
   repo: SecureGuardRepo;
@@ -67,13 +71,13 @@ export function createSecureGuardRouter(input: {
     const parsed = organizationSchema.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try { res.status(201).json(await input.repo.createManagedOrganization(req.secureGuardUserId!, parsed.data.organizationName, parsed.data.dnsfilterOrganizationId)); }
-    catch { res.status(409).json({ error: 'ORGANIZATION_CONFLICT' }); }
+    catch (error) { res.status(isUniqueViolation(error) ? 409 : 500).json({ error: isUniqueViolation(error) ? 'ORGANIZATION_CONFLICT' : 'ORGANIZATION_UNAVAILABLE' }); }
   });
   router.patch('/admin/organizations/:organizationId', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = organizationPatchSchema.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try { const updated = await input.repo.updateManagedOrganization(req.secureGuardUserId!, req.params.organizationId!, parsed.data); if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(updated); }
-    catch { res.status(409).json({ error: 'ORGANIZATION_CONFLICT' }); }
+    catch (error) { res.status(isUniqueViolation(error) ? 409 : 500).json({ error: isUniqueViolation(error) ? 'ORGANIZATION_CONFLICT' : 'ORGANIZATION_UNAVAILABLE' }); }
   });
   router.get('/admin/organizations/:organizationId/memberships', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     res.json({ memberships: await input.repo.listManagedMemberships(req.params.organizationId!) });
