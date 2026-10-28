@@ -192,6 +192,9 @@ async function main(): Promise<void> {
   app.get('/secure-guard-home.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
     res.sendFile(path.join(__dirname, '../public/secure-guard-home.html')),
   );
+  app.get('/secure-guard-admin.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/secure-guard-admin.html')),
+  );
 
   app.use(express.static(path.join(__dirname, '../public')));
 

@@ -19,6 +19,10 @@ const initialInvitationSchema = z.object({
   email: z.string().email(),
 });
 const initialInvitationCancelSchema = z.object({ customerOrganizationId: z.string().uuid() });
+const organizationSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() });
+const organizationPatchSchema = z.object({ organizationName: z.string().trim().min(1).max(255).optional(), status: z.enum(['active', 'suspended']).optional(), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() }).refine((value) => Object.keys(value).length > 0);
+const managedInvitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
+const roleUpdateSchema = z.object({ role: membershipRoleSchema });
 
 function toError(error: unknown, res: { status: (code: number) => { json: (value: unknown) => void } }): boolean {
   if (!(error instanceof SecureGuardConflictError)) return false;
@@ -54,6 +58,42 @@ export function createSecureGuardRouter(input: {
     const mspAdmin = await input.repo.hasActiveMspAdminGrant(req.secureGuardUserId!);
     res.json({ memberships, mspAdmin });
   });
+
+  // MSP administration stays in the same authenticated application, but never grants a Customer scope implicitly.
+  router.get('/admin/organizations', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => {
+    res.json({ organizations: await input.repo.listManagedOrganizations() });
+  });
+  router.post('/admin/organizations', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = organizationSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try { res.status(201).json(await input.repo.createManagedOrganization(req.secureGuardUserId!, parsed.data.organizationName, parsed.data.dnsfilterOrganizationId)); }
+    catch { res.status(409).json({ error: 'ORGANIZATION_CONFLICT' }); }
+  });
+  router.patch('/admin/organizations/:organizationId', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = organizationPatchSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try { const updated = await input.repo.updateManagedOrganization(req.secureGuardUserId!, req.params.organizationId!, parsed.data); if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(updated); }
+    catch { res.status(409).json({ error: 'ORGANIZATION_CONFLICT' }); }
+  });
+  router.get('/admin/organizations/:organizationId/memberships', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    res.json({ memberships: await input.repo.listManagedMemberships(req.params.organizationId!) });
+  });
+  router.post('/admin/organizations/:organizationId/memberships/invitations', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = managedInvitationSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+      const invitation = await input.identityService.createInvitation({ email: parsed.data.email, customerOrganizationId: req.params.organizationId!, role: parsed.data.role, invitedByUserId: req.secureGuardUserId! });
+      await input.mailer.sendSecureGuardInvitationEmail(parsed.data.email, `${input.portalBaseUrl}/secure-guard-accept.html#token=${invitation.token}`);
+      res.status(202).end();
+    } catch (error) { if (!toError(error, res)) res.status(409).json({ error: 'MEMBERSHIP_CONFLICT' }); }
+  });
+  router.patch('/admin/organizations/:organizationId/memberships/:membershipId', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = roleUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try { const ok = await input.repo.updateMembershipRole(req.secureGuardUserId!, req.params.organizationId!, req.params.membershipId!, parsed.data.role); if (!ok) return void res.status(404).json({ error: 'MEMBERSHIP_NOT_FOUND' }); res.status(204).end(); }
+    catch (error) { if (!toError(error, res)) throw error; }
+  });
+  router.get('/admin/audit', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => res.json({ events: await input.repo.listAuditEvents() }));
 
   router.get('/overview', requireIdentity, requireCustomerScope, async (req, res) => {
     const scope = req.secureGuardScope!;
@@ -95,6 +135,10 @@ export function createSecureGuardRouter(input: {
       return;
     }
     res.json({ fetchedAt: inventory.fetchedAt, agents: inventory.agents });
+  });
+
+  router.get('/memberships', requireIdentity, requireCustomerScope, async (req, res) => {
+    res.json({ memberships: await input.repo.listManagedMemberships(req.secureGuardScope!.customerOrganizationId) });
   });
 
   router.post('/memberships/invitations', requireIdentity, requireCustomerScope, async (req, res) => {
@@ -146,6 +190,14 @@ export function createSecureGuardRouter(input: {
     } catch (error) {
       if (!toError(error, res)) throw error;
     }
+  });
+
+  router.patch('/memberships/:membershipId', requireIdentity, requireCustomerScope, async (req, res) => {
+    if (req.secureGuardScope!.role !== 'org_admin') return void res.status(403).json({ error: 'CUSTOMER_SCOPE_DENIED' });
+    const parsed = roleUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try { const ok = await input.repo.updateMembershipRole(req.secureGuardUserId!, req.secureGuardScope!.customerOrganizationId, req.params.membershipId!, parsed.data.role); if (!ok) return void res.status(404).json({ error: 'MEMBERSHIP_NOT_FOUND' }); res.status(204).end(); }
+    catch (error) { if (!toError(error, res)) throw error; }
   });
 
   // The initial administrator is never created by a migration or ordinary customer request.

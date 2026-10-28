@@ -55,6 +55,8 @@ const scopeSelect = document.getElementById('scope');
 if (scopeSelect) (async () => {
   try {
     const me = await secureGuardFetch('/me');
+    const adminLink = document.getElementById('msp-admin-link');
+    if (me.mspAdmin && adminLink) adminLink.hidden = false;
     for (const membership of me.memberships) {
       const option = document.createElement('option');
       option.value = membership.membershipId;
@@ -98,3 +100,28 @@ if (logout) logout.addEventListener('click', async () => {
   sessionStorage.removeItem('secureGuardMembershipId');
   location.href = '/secure-guard-login.html';
 });
+
+const adminError = document.getElementById('admin-error');
+function adminErrorMessage() { if (adminError) adminError.textContent = '処理を完了できませんでした。'; }
+async function adminFetch(path, options = {}) { return secureGuardFetch(`/admin${path}`, options); }
+function adminText(value) { const node = document.createElement('p'); node.textContent = value ?? '—'; return node; }
+const organizationForm = document.getElementById('organization-form');
+if (organizationForm) {
+  const renderAdmin = async () => {
+    try {
+      const [organizationData, auditData] = await Promise.all([adminFetch('/organizations'), adminFetch('/audit')]);
+      const organizations = document.getElementById('organizations'); organizations.replaceChildren();
+      for (const org of organizationData.organizations) {
+        const row = document.createElement('div'); row.className = 'card';
+        row.append(adminText(`${org.organizationName} / ${org.status} / DNSFilter: ${org.dnsfilterOrganizationId ?? '未設定'} / ID: ${org.id}`));
+        const stop = document.createElement('button'); stop.className = 'btn btn-small'; stop.textContent = org.status === 'active' ? '停止' : '有効化';
+        stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
+        row.append(stop); organizations.append(row);
+      }
+      const audit = document.getElementById('audit-events'); audit.replaceChildren(...auditData.events.map((event) => adminText(`${new Date(event.createdAt).toLocaleString('ja-JP')} / ${event.organizationName ?? '全体'} / ${event.action} / ${event.result}`)));
+    } catch { adminErrorMessage(); }
+  };
+  organizationForm.addEventListener('submit', async (event) => { event.preventDefault(); try { const name = document.getElementById('organization-name').value; const dnsfilterOrganizationId = document.getElementById('dnsfilter-organization-id').value || undefined; await adminFetch('/organizations', { method: 'POST', body: JSON.stringify({ organizationName: name, dnsfilterOrganizationId }) }); organizationForm.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
+  document.getElementById('initial-invitation-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/initial-memberships/invitations', { method: 'POST', body: JSON.stringify({ customerOrganizationId: document.getElementById('initial-organization-id').value, email: document.getElementById('initial-email').value }) }); } catch { adminErrorMessage(); } });
+  renderAdmin();
+}

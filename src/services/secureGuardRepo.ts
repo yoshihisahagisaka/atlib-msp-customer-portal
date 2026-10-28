@@ -14,6 +14,10 @@ export interface Membership extends CustomerScope {
   status: 'pending' | 'active' | 'revoked';
 }
 
+export interface ManagedOrganization { id: string; organizationName: string; status: 'active' | 'suspended'; dnsfilterOrganizationId: string | null; mappingStatus: 'active' | 'disabled' | null; }
+export interface ManagedMembership { id: string; email: string; role: CustomerRole; status: 'pending' | 'active' | 'revoked'; isInitialAdmin: boolean; }
+export interface AuditEvent { id: string; organizationName: string | null; action: string; result: 'success' | 'denied' | 'failed'; createdAt: string; }
+
 type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 
 export class SecureGuardRepo {
@@ -66,6 +70,75 @@ export class SecureGuardRepo {
       [userId],
     );
     return rows.length === 1;
+  }
+
+  async listManagedOrganizations(): Promise<ManagedOrganization[]> {
+    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status, m.dnsfilter_organization_id, m.status AS mapping_status
+      FROM customer_organizations o LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id ORDER BY o.organization_name`);
+    return rows.map((r) => ({ id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: r.dnsfilter_organization_id === null ? null : String(r.dnsfilter_organization_id), mappingStatus: r.mapping_status === null ? null : r.mapping_status as ManagedOrganization['mappingStatus'] }));
+  }
+
+  async createManagedOrganization(actorUserId: string, organizationName: string, dnsfilterOrganizationId?: string): Promise<ManagedOrganization> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const created = await client.query(`INSERT INTO customer_organizations (organization_name, status) VALUES ($1, 'active') RETURNING id, organization_name, status`, [organizationName]);
+      const row = created.rows[0];
+      if (!row) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
+      if (dnsfilterOrganizationId) await client.query(`INSERT INTO dnsfilter_organization_mappings (customer_organization_id, dnsfilter_organization_id, status) VALUES ($1, $2, 'active')`, [row.id, dnsfilterOrganizationId]);
+      await this.insertAudit(client, actorUserId, String(row.id), null, 'organization.created', 'success');
+      await client.query('COMMIT');
+      return { id: String(row.id), organizationName: String(row.organization_name), status: 'active', dnsfilterOrganizationId: dnsfilterOrganizationId ?? null, mappingStatus: dnsfilterOrganizationId ? 'active' : null };
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async updateManagedOrganization(actorUserId: string, organizationId: string, input: { organizationName?: string; status?: 'active' | 'suspended'; dnsfilterOrganizationId?: string }): Promise<ManagedOrganization | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const found = await client.query(`SELECT id, organization_name, status FROM customer_organizations WHERE id = $1 FOR UPDATE`, [organizationId]);
+      if (!found.rows[0]) { await client.query('ROLLBACK'); return null; }
+      const current = found.rows[0];
+      const name = input.organizationName ?? String(current.organization_name);
+      const status = input.status ?? current.status;
+      const updated = await client.query(`UPDATE customer_organizations SET organization_name = $1, status = $2, updated_at = now() WHERE id = $3 RETURNING id, organization_name, status`, [name, status, organizationId]);
+      if (input.dnsfilterOrganizationId !== undefined) await client.query(`INSERT INTO dnsfilter_organization_mappings (customer_organization_id, dnsfilter_organization_id, status) VALUES ($1, $2, 'active') ON CONFLICT (customer_organization_id) DO UPDATE SET dnsfilter_organization_id = EXCLUDED.dnsfilter_organization_id, status = 'active', updated_at = now()`, [organizationId, input.dnsfilterOrganizationId]);
+      await this.insertAudit(client, actorUserId, organizationId, null, 'organization.updated', 'success');
+      const mapping = await client.query(`SELECT dnsfilter_organization_id, status FROM dnsfilter_organization_mappings WHERE customer_organization_id = $1`, [organizationId]);
+      await client.query('COMMIT');
+      const r = updated.rows[0]!; const m = mapping.rows[0];
+      return { id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: m ? String(m.dnsfilter_organization_id) : null, mappingStatus: m ? m.status as ManagedOrganization['mappingStatus'] : null };
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async listManagedMemberships(organizationId: string): Promise<ManagedMembership[]> {
+    const { rows } = await this.pool.query(`SELECT m.id, u.email, m.role, m.status, m.is_initial_admin FROM customer_memberships m JOIN portal_users u ON u.id = m.user_id WHERE m.customer_organization_id = $1 ORDER BY u.email`, [organizationId]);
+    return rows.map((r) => ({ id: String(r.id), email: String(r.email), role: r.role as CustomerRole, status: r.status as ManagedMembership['status'], isInitialAdmin: Boolean(r.is_initial_admin) }));
+  }
+
+  async updateMembershipRole(actorUserId: string, organizationId: string, membershipId: string, role: CustomerRole): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN'); await this.lockInitialOrganization(client, organizationId);
+      const target = await client.query(`SELECT role, status FROM customer_memberships WHERE id = $1 AND customer_organization_id = $2 FOR UPDATE`, [membershipId, organizationId]);
+      if (!target.rows[0]) { await client.query('ROLLBACK'); return false; }
+      if (target.rows[0].role === 'org_admin' && role !== 'org_admin' && target.rows[0].status === 'active') {
+        const count = await client.query<{ count: string }>(`SELECT count(*)::text AS count FROM customer_memberships WHERE customer_organization_id = $1 AND role = 'org_admin' AND status = 'active'`, [organizationId]);
+        if (count.rows[0]?.count === '1') throw new SecureGuardConflictError('LAST_ORG_ADMIN');
+      }
+      await client.query(`UPDATE customer_memberships SET role = $1, updated_at = now() WHERE id = $2`, [role, membershipId]);
+      await this.insertAudit(client, actorUserId, organizationId, membershipId, 'membership.role.updated', 'success'); await client.query('COMMIT'); return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async listAuditEvents(organizationId?: string): Promise<AuditEvent[]> {
+    const args: string[] = []; const filter = organizationId ? (args.push(organizationId), 'WHERE e.customer_organization_id = $1') : '';
+    const { rows } = await this.pool.query(`SELECT e.id, o.organization_name, e.action, e.result, e.created_at FROM secure_guard_audit_events e LEFT JOIN customer_organizations o ON o.id = e.customer_organization_id ${filter} ORDER BY e.created_at DESC LIMIT 100`, args);
+    return rows.map((r) => ({ id: String(r.id), organizationName: r.organization_name === null ? null : String(r.organization_name), action: String(r.action), result: r.result as AuditEvent['result'], createdAt: new Date(r.created_at).toISOString() }));
+  }
+
+  async recordSystemAudit(actorUserId: string, action: string, result: 'success' | 'failed'): Promise<void> {
+    await this.pool.query(`INSERT INTO secure_guard_audit_events (actor_user_id, action, result) VALUES ($1, $2, $3)`, [actorUserId, action, result]);
   }
 
   /** Resolves the external Organization only from the authenticated customer's active server-side scope. */
