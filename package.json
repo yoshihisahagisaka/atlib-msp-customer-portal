@@ -6,7 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/secureGuardIdentity.test.cjs test/secureGuardScope.test.cjs test/secureGuardRepo.test.cjs test/secureGuardRateLimit.test.cjs test/secureGuardInitialInvitationHttp.test.cjs test/secureGuardRegressionContract.test.cjs test/secureGuardOrganizationIndependence.test.cjs test/dnsFilterInventoryClient.test.cjs test/secureGuardDailyRoutes.test.cjs test/secureGuardAdminRoutes.test.cjs",
+    "test": "npm run build && node --test test/secureGuardIdentity.test.cjs test/secureGuardScope.test.cjs test/secureGuardRepo.test.cjs test/secureGuardRateLimit.test.cjs test/secureGuardInitialInvitationHttp.test.cjs test/secureGuardRegressionContract.test.cjs test/secureGuardOrganizationIndependence.test.cjs test/dnsFilterInventoryClient.test.cjs test/dnsFilterManagementClient.test.cjs test/secureGuardDailyRoutes.test.cjs test/secureGuardAdminRoutes.test.cjs",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "migrate": "node --env-file=.env -r ts-node/register migrations/runner.ts",

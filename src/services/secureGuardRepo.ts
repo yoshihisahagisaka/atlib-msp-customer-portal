@@ -92,6 +92,17 @@ export class SecureGuardRepo {
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
+  async createProvisioningDraft(actorUserId: string, organizationName: string): Promise<ManagedOrganization> {
+    const { rows } = await this.pool.query(`INSERT INTO customer_organizations (organization_name, status) VALUES ($1, 'suspended') RETURNING id, organization_name`, [organizationName]);
+    const row = rows[0]; if (!row) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
+    await this.recordSystemAudit(actorUserId, 'organization.provisioning.started', 'success');
+    return { id: String(row.id), organizationName: String(row.organization_name), status: 'suspended', dnsfilterOrganizationId: null, mappingStatus: null };
+  }
+
+  async finalizeProvisioning(actorUserId: string, organizationId: string, dnsfilterOrganizationId: string): Promise<ManagedOrganization | null> {
+    return this.updateManagedOrganization(actorUserId, organizationId, { status: 'active', dnsfilterOrganizationId });
+  }
+
   async updateManagedOrganization(actorUserId: string, organizationId: string, input: { organizationName?: string; status?: 'active' | 'suspended'; dnsfilterOrganizationId?: string }): Promise<ManagedOrganization | null> {
     const client = await this.pool.connect();
     try {
