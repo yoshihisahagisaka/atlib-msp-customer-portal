@@ -105,6 +105,8 @@ const adminError = document.getElementById('admin-error');
 function adminErrorMessage() { if (adminError) adminError.textContent = '処理を完了できませんでした。'; }
 async function adminFetch(path, options = {}) { return secureGuardFetch(`/admin${path}`, options); }
 function adminText(value) { const node = document.createElement('p'); node.textContent = value ?? '—'; return node; }
+function adminStatus(id, message = '') { const node = document.getElementById(id); if (node) node.textContent = message; }
+function adminList(id, items, render, emptyMessage) { const node = document.getElementById(id); node.replaceChildren(...(items.length ? items.map(render) : [adminText(emptyMessage)])); }
 const organizationForm = document.getElementById('organization-form');
 if (organizationForm) {
   let managedOrganizations = [];
@@ -112,12 +114,14 @@ if (organizationForm) {
   const loadSitesAndPolicies = async () => {
     const id = selectedOrganization(); const siteForm = document.getElementById('site-form');
     if (!id) { siteForm.hidden = true; return; }
-    try { const [policies, sites] = await Promise.all([adminFetch(`/organizations/${id}/policies`), adminFetch(`/organizations/${id}/sites`)]); const policyList = document.getElementById('policy-list'); policyList.replaceChildren(...policies.policies.map((p) => adminText(`${p.name} (${p.global ? 'Global' : 'Organization'})`))); const select = document.getElementById('site-policy'); select.replaceChildren(...policies.policies.map((p) => { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; return option; })); document.getElementById('site-list').replaceChildren(...sites.sites.map((s) => adminText(`Site: ${s.name}`))); siteForm.hidden = false; } catch { adminErrorMessage(); }
+    adminStatus('site-policy-status', '取得中です。');
+    try { const [policies, sites] = await Promise.all([adminFetch(`/organizations/${id}/policies`), adminFetch(`/organizations/${id}/sites`)]); adminList('policy-list', policies.policies, (p) => adminText(`${p.name} (${p.global ? 'Global' : 'Organization'})`), '利用可能なPolicyはありません。'); const select = document.getElementById('site-policy'); select.replaceChildren(...policies.policies.map((p) => { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; return option; })); adminList('site-list', sites.sites, (s) => adminText(`Site: ${s.name}`), '登録済みSiteはありません。'); adminStatus('site-policy-status', '取得しました。'); siteForm.hidden = false; } catch { adminStatus('site-policy-status', 'Site・Policyを取得できませんでした。'); siteForm.hidden = true; }
   };
   const renderAdmin = async () => {
     try {
-      const [organizationData, auditData] = await Promise.all([adminFetch('/organizations'), adminFetch('/audit')]);
-      managedOrganizations = organizationData.organizations; const organizations = document.getElementById('organizations'); organizations.replaceChildren();
+      const [organizationResult, auditResult] = await Promise.allSettled([adminFetch('/organizations'), adminFetch('/audit')]);
+      if (organizationResult.status !== 'fulfilled') { adminStatus('organizations-status', 'Organization一覧を取得できませんでした。'); return; }
+      const organizationData = organizationResult.value; managedOrganizations = organizationData.organizations; const organizations = document.getElementById('organizations'); organizations.replaceChildren();
       const scope = document.getElementById('managed-organization-select'); const before = scope.value; scope.replaceChildren(); scope.append(new Option('選択してください', ''));
       for (const org of organizationData.organizations) {
         const row = document.createElement('div'); row.className = 'card';
@@ -126,8 +130,9 @@ if (organizationForm) {
         stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
         row.append(stop); organizations.append(row); scope.append(new Option(org.organizationName, org.id));
       }
-      scope.value = managedOrganizations.some((o) => o.id === before) ? before : '';
-      const audit = document.getElementById('audit-events'); audit.replaceChildren(...auditData.events.map((event) => adminText(`${new Date(event.createdAt).toLocaleString('ja-JP')} / ${event.organizationName ?? '全体'} / ${event.action} / ${event.result}`)));
+      scope.value = managedOrganizations.some((o) => o.id === before) ? before : ''; adminStatus('organizations-status', managedOrganizations.length ? '' : 'atLIB管理対象Organizationはまだ登録されていません。');
+      if (auditResult.status === 'fulfilled') { adminList('audit-events', auditResult.value.events, (event) => adminText(`${new Date(event.createdAt).toLocaleString('ja-JP')} / ${event.organizationName ?? '全体'} / ${event.action} / ${event.result}`), '監査履歴はありません。'); adminStatus('audit-status'); }
+      else { document.getElementById('audit-events').replaceChildren(); adminStatus('audit-status', '監査履歴を取得できませんでした。'); }
     } catch { adminErrorMessage(); }
   };
   organizationForm.addEventListener('submit', async (event) => { event.preventDefault(); try { const name = document.getElementById('organization-name').value; await adminFetch('/dnsfilter/organizations', { method: 'POST', body: JSON.stringify({ organizationName: name }) }); organizationForm.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
@@ -135,7 +140,7 @@ if (organizationForm) {
   document.getElementById('provisioning-recovery-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const localId = document.getElementById('recovery-organization-id').value; await adminFetch(`/organizations/${localId}/provisioning-recovery`, { method: 'POST', body: JSON.stringify({ dnsfilterOrganizationId: document.getElementById('recovery-dnsfilter-organization-id').value }) }); event.target.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('initial-invitation-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/initial-memberships/invitations', { method: 'POST', body: JSON.stringify({ customerOrganizationId: document.getElementById('initial-organization-id').value, email: document.getElementById('initial-email').value }) }); } catch { adminErrorMessage(); } });
   document.getElementById('managed-organization-select').addEventListener('change', () => loadSitesAndPolicies());
-  document.getElementById('refresh-dnsfilter-organizations').addEventListener('click', async () => { try { const data = await adminFetch('/dnsfilter/organizations'); document.getElementById('dnsfilter-organizations').replaceChildren(...data.organizations.map((o) => adminText(`${o.name} / ID: ${o.id}`))); } catch { adminErrorMessage(); } });
+  document.getElementById('refresh-dnsfilter-organizations').addEventListener('click', async () => { adminStatus('dnsfilter-organizations-status', '取得中です。'); try { const data = await adminFetch('/dnsfilter/organizations'); adminList('dnsfilter-organizations', data.organizations, (o) => adminText(`${o.name} / ID: ${o.id}`), 'MSP配下の顧客Organizationはありません。'); adminStatus('dnsfilter-organizations-status', '取得しました。'); } catch { document.getElementById('dnsfilter-organizations').replaceChildren(); adminStatus('dnsfilter-organizations-status', 'DNSFilter Organization一覧を取得できませんでした。'); } });
   document.getElementById('site-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const policyIds = [...document.getElementById('site-policy').selectedOptions].map((o) => o.value); await adminFetch(`/organizations/${selectedOrganization()}/sites`, { method: 'POST', body: JSON.stringify({ name: document.getElementById('site-name').value, policyIds }) }); event.target.reset(); await loadSitesAndPolicies(); } catch { adminErrorMessage(); } });
   renderAdmin();
 }

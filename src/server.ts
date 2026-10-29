@@ -45,6 +45,7 @@ import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
 import { createSecureGuardRouter } from './routes/secureGuard';
 import { DnsFilterManagementClient } from './services/dnsFilterManagementClient';
+import { safeHttpLogRedactions, safeHttpLogSerializers } from './lib/httpLog';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
   // req.ipが正しいクライアントIPを指すようにtrust proxyを有効化する（IPレート制限で使用）。
   app.set('trust proxy', true);
-  app.use(pinoHttp({ logger })); // 操作ログ（誰がいつ何をしたか）の基礎になる構造化アクセスログ
+  app.use(pinoHttp({ logger, serializers: safeHttpLogSerializers, redact: safeHttpLogRedactions }));
   app.use(express.json());
   app.use(cookieParser());
 
