@@ -107,22 +107,34 @@ async function adminFetch(path, options = {}) { return secureGuardFetch(`/admin$
 function adminText(value) { const node = document.createElement('p'); node.textContent = value ?? '—'; return node; }
 const organizationForm = document.getElementById('organization-form');
 if (organizationForm) {
+  let managedOrganizations = [];
+  const selectedOrganization = () => document.getElementById('managed-organization-select').value;
+  const loadSitesAndPolicies = async () => {
+    const id = selectedOrganization(); const siteForm = document.getElementById('site-form');
+    if (!id) { siteForm.hidden = true; return; }
+    try { const [policies, sites] = await Promise.all([adminFetch(`/organizations/${id}/policies`), adminFetch(`/organizations/${id}/sites`)]); const policyList = document.getElementById('policy-list'); policyList.replaceChildren(...policies.policies.map((p) => adminText(`${p.name} (${p.global ? 'Global' : 'Organization'})`))); const select = document.getElementById('site-policy'); select.replaceChildren(...policies.policies.map((p) => { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; return option; })); document.getElementById('site-list').replaceChildren(...sites.sites.map((s) => adminText(`Site: ${s.name}`))); siteForm.hidden = false; } catch { adminErrorMessage(); }
+  };
   const renderAdmin = async () => {
     try {
       const [organizationData, auditData] = await Promise.all([adminFetch('/organizations'), adminFetch('/audit')]);
-      const organizations = document.getElementById('organizations'); organizations.replaceChildren();
+      managedOrganizations = organizationData.organizations; const organizations = document.getElementById('organizations'); organizations.replaceChildren();
+      const scope = document.getElementById('managed-organization-select'); const before = scope.value; scope.replaceChildren(); scope.append(new Option('選択してください', ''));
       for (const org of organizationData.organizations) {
         const row = document.createElement('div'); row.className = 'card';
         row.append(adminText(`${org.organizationName} / ${org.status} / DNSFilter: ${org.dnsfilterOrganizationId ?? '未設定'} / ID: ${org.id}`));
         const stop = document.createElement('button'); stop.className = 'btn btn-small'; stop.textContent = org.status === 'active' ? '停止' : '有効化';
         stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
-        row.append(stop); organizations.append(row);
+        row.append(stop); organizations.append(row); scope.append(new Option(org.organizationName, org.id));
       }
+      scope.value = managedOrganizations.some((o) => o.id === before) ? before : '';
       const audit = document.getElementById('audit-events'); audit.replaceChildren(...auditData.events.map((event) => adminText(`${new Date(event.createdAt).toLocaleString('ja-JP')} / ${event.organizationName ?? '全体'} / ${event.action} / ${event.result}`)));
     } catch { adminErrorMessage(); }
   };
   organizationForm.addEventListener('submit', async (event) => { event.preventDefault(); try { const name = document.getElementById('organization-name').value; await adminFetch('/dnsfilter/organizations', { method: 'POST', body: JSON.stringify({ organizationName: name }) }); organizationForm.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('organization-import-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/dnsfilter/organizations/import', { method: 'POST', body: JSON.stringify({ organizationName: document.getElementById('import-organization-name').value, dnsfilterOrganizationId: document.getElementById('import-dnsfilter-organization-id').value }) }); event.target.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('initial-invitation-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/initial-memberships/invitations', { method: 'POST', body: JSON.stringify({ customerOrganizationId: document.getElementById('initial-organization-id').value, email: document.getElementById('initial-email').value }) }); } catch { adminErrorMessage(); } });
+  document.getElementById('managed-organization-select').addEventListener('change', () => loadSitesAndPolicies());
+  document.getElementById('refresh-dnsfilter-organizations').addEventListener('click', async () => { try { const data = await adminFetch('/dnsfilter/organizations'); document.getElementById('dnsfilter-organizations').replaceChildren(...data.organizations.map((o) => adminText(`${o.name} / ID: ${o.id}`))); } catch { adminErrorMessage(); } });
+  document.getElementById('site-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const policyIds = [...document.getElementById('site-policy').selectedOptions].map((o) => o.value); await adminFetch(`/organizations/${selectedOrganization()}/sites`, { method: 'POST', body: JSON.stringify({ name: document.getElementById('site-name').value, policyIds }) }); event.target.reset(); await loadSitesAndPolicies(); } catch { adminErrorMessage(); } });
   renderAdmin();
 }

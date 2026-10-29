@@ -27,6 +27,7 @@ const roleUpdateSchema = z.object({ role: membershipRoleSchema });
 const provisioningSchema = z.object({ organizationName: z.string().trim().min(1).max(255) });
 const importSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const networkSchema = z.object({ name: z.string().trim().min(1).max(255), policyIds: z.array(z.string().regex(/^\d+$/)).max(10) });
+const recoverySchema = z.object({ dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 
 function toError(error: unknown, res: { status: (code: number) => { json: (value: unknown) => void } }): boolean {
   if (!(error instanceof SecureGuardConflictError)) return false;
@@ -104,6 +105,9 @@ export function createSecureGuardRouter(input: {
     catch (error) { if (!toError(error, res)) throw error; }
   });
   router.get('/admin/audit', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => res.json({ events: await input.repo.listAuditEvents() }));
+  router.get('/admin/dnsfilter/organizations', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => {
+    try { res.json({ organizations: await management().listOrganizations() }); } catch { res.status(502).json({ error: 'DNSFILTER_UNAVAILABLE' }); }
+  });
   router.post('/admin/dnsfilter/organizations', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = provisioningSchema.safeParse(req.body); if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     const draft = await input.repo.createProvisioningDraft(req.secureGuardUserId!, parsed.data.organizationName);
@@ -115,9 +119,18 @@ export function createSecureGuardRouter(input: {
     try { const remote = await management().getOrganization(parsed.data.dnsfilterOrganizationId); const local = await input.repo.createManagedOrganization(req.secureGuardUserId!, parsed.data.organizationName, remote.id); res.status(201).json(local); }
     catch (error) { res.status(error instanceof DnsFilterManagementError ? 502 : 409).json({ error: error instanceof DnsFilterManagementError ? error.code : 'ORGANIZATION_CONFLICT' }); }
   });
+  router.post('/admin/organizations/:organizationId/provisioning-recovery', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = recoverySchema.safeParse(req.body); if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try { const remote = await management().getOrganization(parsed.data.dnsfilterOrganizationId); const local = await input.repo.finalizeProvisioning(req.secureGuardUserId!, req.params.organizationId!, remote.id); if (!local) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(local); }
+    catch { res.status(502).json({ error: 'DNSFILTER_PROVISIONING_UNRESOLVED' }); }
+  });
   router.get('/admin/organizations/:organizationId/policies', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const dnsId = await input.repo.findActiveDnsFilterOrganization(req.params.organizationId!); if (!dnsId) return void res.status(404).json({ error: 'DNSFILTER_MAPPING_NOT_FOUND' });
     try { res.json({ policies: await management().listPolicies(dnsId) }); } catch { res.status(502).json({ error: 'DNSFILTER_UNAVAILABLE' }); }
+  });
+  router.get('/admin/organizations/:organizationId/sites', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const dnsId = await input.repo.findActiveDnsFilterOrganization(req.params.organizationId!); if (!dnsId) return void res.status(404).json({ error: 'DNSFILTER_MAPPING_NOT_FOUND' });
+    try { res.json({ sites: await management().listNetworks(dnsId) }); } catch { res.status(502).json({ error: 'DNSFILTER_UNAVAILABLE' }); }
   });
   router.post('/admin/organizations/:organizationId/sites', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = networkSchema.safeParse(req.body); if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
