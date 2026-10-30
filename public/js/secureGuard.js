@@ -107,8 +107,8 @@ async function adminFetch(path, options = {}) { return secureGuardFetch(`/admin$
 function adminText(value) { const node = document.createElement('p'); node.textContent = value ?? '—'; return node; }
 function adminStatus(id, message = '') { const node = document.getElementById(id); if (node) node.textContent = message; }
 function adminList(id, items, render, emptyMessage) { const node = document.getElementById(id); node.replaceChildren(...(items.length ? items.map(render) : [adminText(emptyMessage)])); }
-const organizationForm = document.getElementById('organization-form');
-if (organizationForm) {
+const adminOrganizationList = document.getElementById('organizations');
+if (adminOrganizationList) {
   let managedOrganizations = [];
   const selectedOrganization = () => document.getElementById('managed-organization-select').value;
   const loadSitesAndPolicies = async () => {
@@ -135,7 +135,6 @@ if (organizationForm) {
       else { document.getElementById('audit-events').replaceChildren(); adminStatus('audit-status', '監査履歴を取得できませんでした。'); }
     } catch { adminErrorMessage(); }
   };
-  organizationForm.addEventListener('submit', async (event) => { event.preventDefault(); try { const name = document.getElementById('organization-name').value; await adminFetch('/dnsfilter/organizations', { method: 'POST', body: JSON.stringify({ organizationName: name }) }); organizationForm.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('organization-import-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/dnsfilter/organizations/import', { method: 'POST', body: JSON.stringify({ organizationName: document.getElementById('import-organization-name').value, dnsfilterOrganizationId: document.getElementById('import-dnsfilter-organization-id').value }) }); event.target.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('provisioning-recovery-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const localId = document.getElementById('recovery-organization-id').value; await adminFetch(`/organizations/${localId}/provisioning-recovery`, { method: 'POST', body: JSON.stringify({ dnsfilterOrganizationId: document.getElementById('recovery-dnsfilter-organization-id').value }) }); event.target.reset(); await renderAdmin(); } catch { adminErrorMessage(); } });
   document.getElementById('initial-invitation-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/initial-memberships/invitations', { method: 'POST', body: JSON.stringify({ customerOrganizationId: document.getElementById('initial-organization-id').value, email: document.getElementById('initial-email').value }) }); } catch { adminErrorMessage(); } });
