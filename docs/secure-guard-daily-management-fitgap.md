@@ -115,3 +115,94 @@ Site設定の確認は、Organizationの契約・標準Policy・Block Pageが確
 4. 解約、Agent削除、Policy／Allow List変更はこの改修から除外し、個別の実機検証と安全契約を先に確定する。
 
 今回の確認で実行したDNSFilter操作は GET のみであり、DB、IAM、Secret、Cloud Run、Production trafficへの変更はない。
+
+## 2026-10-30 E2E統括 — 解約前ゲートとマルチテナントFit/Gap
+
+### 確認したCanonicalの状態
+
+| 範囲 | 状態 | 根拠・限界 |
+| --- | --- | --- |
+| Portal PR #3 | HEAD `9ddfd468274a6aec039f581080a07db35d216ee0`。作業ツリーclean | 実装・試験・Runbookの読取。今回、コード変更なし。 |
+| 日常Inventory | 実機PASS | `10220954` に対するNetwork／Organization全体Agent／Site別AgentのGET、所属照合、Portal実API GETの過去記録。再実行しない。 |
+| PortalのOrganization／Site作成 | モック・自動試験PASS、実機変更は未実施 | DNSFilter Management ClientはPOST候補を持つが、課金・標準設定の未確定により本番POSTは禁止を維持。 |
+| Subscription／Billing | API応答構造は実測、Core／Plus設定方法は未確認 | 公開MSP APIで安全にプランを確定・変更する契約は得られていない。 |
+| C2解約 | DryRun／監査計画は既存Canonicalに存在。Agent解除・Organization削除は未実装または最終承認待ち | 既存RunbookはUNKNOWN時の自動再送を禁止し、Organization DELETEを別途最終承認とする。今回、C2の再実行なし。 |
+| 端末削除・解除 | 未検証・実行禁止 | 公式資料・旧Runbookに候補はあるが、実機での安全な成功・復旧は確定していない。 |
+
+### `10222523`（HA Test Organization 03）の削除前Read-only結果
+
+2026-10-30に本文非出力・8秒タイムアウト・再試行なしで実施したGET、および件数だけを返すPortal本番DBのSELECT結果を記録する。
+
+| 確認項目 | 結果 | 判定 |
+| --- | --- | --- |
+| DNSFilter Organization | HTTP 200、対象ID・MSP `11473` 所属一致 | PASS |
+| Subscription relationship | null | 課金終了や削除可否の根拠には不足 |
+| Network（Site） | HTTP 200、0件、ページ終端は明示null | PASS（空であることのみ） |
+| Organization全体Agent | HTTP 200、0件、ページ終端は明示null | PASS（空であることのみ） |
+| Portal DNSFilter mapping | 1件。対応するCustomer Organizationはactive | **DELETE前に対応付けの扱いを決定する必要あり** |
+| Portal Membership | active／pending／revokedとも0件 | 影響を受ける利用者がいないことの補助証拠。DB以外の外部契約・請求の不存在を意味しない。 |
+
+この結果は「DNSFilterのOrganization削除を許可」するものではない。特に、Subscription relationshipがnullであること、Site／Agentが0件であること、Membershipが0件であることは、DNSFilter課金停止・データ消去・Portal側の対応付け解除を自動的に安全にしない。
+
+### 削除E2Eの実行前ゲート
+
+以下を全て満たすまで、DELETE、Site削除、Agent解除、Mapping無効化・削除を送信しない。
+
+1. 対象Organization、MSP所属、全ページのSite／Agent／依存物が直前GETで再確認されている。
+2. DNSFilterの正式DELETE契約（path、必須入力、成功・失敗応答、不可逆なデータ損失）を公式仕様または正式サポート回答で確認している。
+3. Billing画面または契約担当により、削除と課金終了・クレジット・最低料金・翌月請求の関係が確認されている。
+4. Portal mapping 1件の状態遷移、監査記録、失敗時の停止方法を、DNSFilter側の結果確定後に実施する順序として承認している。結果不明時は両側を自動再送・自動削除しない。
+5. C2の実行対象、DryRun plan hash、永続監査、UNKNOWN時の人手照合を、実際に配置済みのC2 Source／Image／Runbookと対応付けて確認している。
+6. 削除対象・影響範囲・最大送信回数1回・復旧不能性を含む最終パッケージを統括へ提示し、DELETE直前に明示承認を得ている。
+
+現在は1の一部だけが確認済みであり、2〜6が未完了であるため、削除E2Eは **STOP** とする。
+
+### マルチテナントHAの確認結果
+
+| 境界 | 実装・試験状態 |
+| --- | --- |
+| MSP全体管理者 | 有効な個人Identityと独立した`msp_admin` Grantが必要。Customer Membershipからの暗黙昇格は拒否する。 |
+| Customer Role | `org_admin`、`operator`、`viewer`をCustomer Membershipに保持。MSP Grantとは別テーブル・別検証。 |
+| 顧客越境拒否 | ブラウザ入力のCustomer／DNSFilter IDを認可根拠にせず、認証Identityと有効Membershipからサーバー側でScopeを解決する。試験あり。 |
+| 招待・失効 | 初期管理者の競合防止、最終`org_admin`失効防止、Membership失効拒否、監査記録を実装・自動試験済み。 |
+| 監査 | Organization、Membership、provisioning回復操作を`secure_guard_audit_events`へ記録する実装。DNSFilter本文・APIキー・Tokenは記録しない。 |
+| API結果不明 | Organization作成結果不明は`DNSFILTER_CREATE_OUTCOME_UNKNOWN`として停止し、勝手な再POSTをしない。C2のUNKNOWNも同じく自動再送しない。 |
+
+### 安全なPowerShell削除前確認（GET専用）
+
+この確認は削除コマンドではない。実行する場合、正規のPowerShellセッションで1回だけ実行し、応答本文・Secret・Site／Agent IDを表示・保存しない。
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$apiKey = $null
+try {
+  $apiKey = gcloud secrets versions access 1 `
+    --secret=secure-guard-dnsfilter-api-key --project=msp-zabbix
+  $headers = @{ Authorization = "Bearer $apiKey"; Accept = 'application/json' }
+  $checks = @(
+    @{ Name = 'Organization'; Uri = 'https://api.dnsfilter.com/v1/organizations/10222523?include_current_mrr=true' },
+    @{ Name = 'Networks'; Uri = 'https://api.dnsfilter.com/v1/networks?organization_id=10222523' },
+    @{ Name = 'Agents'; Uri = 'https://api.dnsfilter.com/v1/user_agents?organization_ids=10222523' }
+  )
+  foreach ($check in $checks) {
+    $response = Invoke-WebRequest -Method GET -Uri $check.Uri `
+      -Headers $headers -TimeoutSec 8 -SkipHttpErrorCheck
+    $body = if ($response.StatusCode -eq 200) { $response.Content | ConvertFrom-Json } else { $null }
+    [pscustomobject]@{
+      Endpoint = $check.Name
+      HttpStatus = [int]$response.StatusCode
+      RecordCount = if ($null -eq $body) { $null } elseif ($body.data -is [array]) { @($body.data).Count } else { 1 }
+      NextIsNull = ($null -ne $body -and $null -eq $body.links.next)
+    }
+  }
+} finally {
+  Remove-Variable apiKey -ErrorAction SilentlyContinue
+  Remove-Variable headers -ErrorAction SilentlyContinue
+}
+```
+
+### 一括改修の対象と除外
+
+次の改修対象は、標準Policy／Block PageをSite作成時に運用固定値として適用し、作成後GETで確認する部分に限定する。顧客向けのPolicy変更画面、Agent削除、Organization削除、Subscription変更、Universal Allow／Block List変更は含めない。これら低頻度・特権操作は、公式DNSFilter画面と承認済み手順を使う。
+
+今回の追加調査で行ったDNSFilter操作は GET 3回、本番DB操作はSELECT 1回のみである。DNSFilter変更、DB変更、IAM・Secret変更、Cloud Run操作、Production traffic変更は0件。
