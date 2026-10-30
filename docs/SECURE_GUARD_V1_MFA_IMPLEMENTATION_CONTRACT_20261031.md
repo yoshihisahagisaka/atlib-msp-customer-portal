@@ -1,8 +1,8 @@
 # Secure Guard v1｜MFA実装契約
 
-日付: 2026-10-31  
-状態: 統括合意済みの実装契約。コード、migration、テスト、デプロイは未実施。  
-基準: PR #3 HEAD `25b17b21c93f0284a58b827cdd52a4bb2baff83d`  
+日付: 2026-10-31
+状態: 統括合意済みの実装契約。コード、migration、テスト、デプロイは未実施。
+基準: PR #3 HEAD `25b17b21c93f0284a58b827cdd52a4bb2baff83d`
 上位: `DECISION_SECURE_GUARD_V1_SERVICE_LAUNCH_20261030.md`、`SECURE_GUARD_V1_IMPLEMENTATION_FITGAP_20261030.md`、`SECURE_GUARD_V1_MSP_ORG_SYNC_IMPLEMENTATION_CONTRACT_20261030.md`、`SECURE_GUARD_V1_MSP_CUSTOMER_DETAIL_CONTRACT_20261031.md`
 
 ## 1. 目的と不変条件
