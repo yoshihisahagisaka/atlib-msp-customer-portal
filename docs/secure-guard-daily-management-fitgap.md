@@ -206,3 +206,44 @@ try {
 次の改修対象は、標準Policy／Block PageをSite作成時に運用固定値として適用し、作成後GETで確認する部分に限定する。顧客向けのPolicy変更画面、Agent削除、Organization削除、Subscription変更、Universal Allow／Block List変更は含めない。これら低頻度・特権操作は、公式DNSFilter画面と承認済み手順を使う。
 
 今回の追加調査で行ったDNSFilter操作は GET 3回、本番DB操作はSELECT 1回のみである。DNSFilter変更、DB変更、IAM・Secret変更、Cloud Run操作、Production traffic変更は0件。
+
+
+## 2026-10-30｜Windows Agent削除API 実機E2E結果・暫定運用手順
+
+> この節は2026-10-30の**後続実機検証結果**。上記の「端末削除・解除は未検証」という2026-10-30初期Fit/Gapの記述を更新する。Organization削除E2Eは引き続き別扱いであり、完了を意味しない。
+
+### 検証対象と根拠
+
+- MSP: 11473、Test Organization 02: 10220954、Windows端末: atl20260003、Agent UUID: 2a7659c5-68ec-4704-850f-e0f65347b2ee。
+- 実行前のAPI GET: 1件、active/protected、nextページなし。WindowsのDNSFilter AgentおよびService ManagerはRunning、Wi-Fi DNSは127.0.0.2。MSI再入手可能。
+- DNSFilter公式OpenAPIの \`DELETE /v1/user_agents/{id}\` は「Soft deletes an user agent.」。任意query \`queue_uninstall\` は「Uninstall user agent」、\`clear_registry\` は「Clear registry when uninstalling user agent」。成功応答に204を定義。GUIの「Delete」「Delete & Uninstall」とAPIの厳密な内部呼出対応までは実測していない。
+
+### ケースA：リモートアンインストール＋削除（実機PASS）
+
+- 実行: \`DELETE /v1/user_agents/2a7659c5-68ec-4704-850f-e0f65347b2ee?queue_uninstall=true\`、HTTP 204。
+- Windows「プログラムと機能」からDNSFilter Agentが消失。DNSFilter Roaming Clients一覧から対象消失。
+- Wi-Fi DNSが127.0.0.2から192.168.0.1へ復帰し、\`Resolve-DnsName www.microsoft.com -DnsOnly\` が成功。
+- 本人がアンインストール完了を確認してからMSIで再インストール。再登録GETは同一Agent UUID、active/protected。UUIDが同一となる識別アルゴリズム（MAC等）は未確認であり推測しない。
+- 適用範囲: 今回のオンラインWindows端末1台。オフライン端末・他OS・他Agent versionでの同一挙動は未確認。
+
+### ケースB：登録のみSoft Delete（通信障害を実測）
+
+- 再登録後、同一Agent UUIDに対して \`DELETE /v1/user_agents/{id}\`（\`queue_uninstall\` なし）を実施。今回の実行HTTPコードは共有記録にないため記載しない。
+- DNSFilter Roaming Clients一覧から対象消失。一方WindowsのDNSFilter Agent／Service ManagerはRunning、Wi-Fi DNSは127.0.0.2のまま。
+- 利用者がインターネットサイトへ接続できなくなったと報告。手動アンインストールで復旧した。内部的なDNS障害原因までは未解析。
+- **判断:** 通常の顧客向け端末撤去でSoft Deleteを使用しない。既に端末側アンインストールが済んだ残存登録の整理など例外用途は、対象状態と通信影響を確認したうえで別途運用判断する。
+
+### 暫定運用手順（技術 × 運用 × 管理）
+
+1. **技術:** 通常の端末撤去は、対象Organization・Agent UUID・Hostnameの所属を照合し、正式APIの \`queue_uninstall=true\` を1回要求する。HTTP 204は受付であり端末側完了の保証ではない。結果不明時は再送しない。
+2. **運用:** 顧客へ事前に撤去手順と通信影響を案内する。解約時は契約期間内に撤去期間（例: 7日、未確定）を設け、未完了端末には手動アンインストールを案内する。単純Soft Deleteは通常の撤去手順として案内しない。
+3. **管理:** 対象テナント、実行者、要求時刻、受付結果、端末側完了/未完了、残存端末、顧客への案内を記録する。顧客Role・越境防止・監査・UNKNOWN安全停止は既存Contractを維持する。
+4. **通信障害時:** 端末側のDNSFilter Agent残存とDNS設定を確認し、承認済みの手動アンインストール・DNS復元手順で復旧する。今回の手動アンインストールによる復旧は実機PASS。
+5. **課金:** Agent登録削除と割当ライセンス減少・課金停止は同義ではない。仕入請求の実績照合は請求開始後に実施する方針。課金停止条件を推測で確定しない。
+
+### 保留・別工程
+
+- Pending Uninstall中にSoft Deleteした場合、キューが維持されるかは**未検証**。必要性を運用上評価してから追加E2Eを判断する。
+- Site／Organization削除、依存物の順序、Portal mappingと権限失効、課金停止のE2Eは**未完了**。既存C2/PR #44の安全ゲート・別承認を維持。
+- 顧客管理画面の「アンインストール＆削除」実装・HAは未完了。端末登録のみ削除を通常UIに公開しない。
+- この記録追加は文書更新のみ。DNSFilter／Cloud Run／DB／IAM／Secret／本番トラフィックの変更を伴わない。
