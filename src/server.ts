@@ -36,8 +36,16 @@ import { ReportStorage } from './services/reportStorage';
 import { SettingsRepo } from './services/settingsRepo';
 import { StaffAuthService } from './services/staffAuthService';
 import { requireStaffAuth, requireAdminRole } from './middleware/staffAuth';
+import { requireMspAdmin, requireSecureGuardIdentity } from './middleware/secureGuardAuth';
 import { createIpRateLimiter } from './middleware/rateLimit';
 import type { StaffRoleDeps } from './domain/staffRoles';
+import { SecureGuardRepo } from './services/secureGuardRepo';
+import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
+import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
+import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
+import { createSecureGuardRouter } from './routes/secureGuard';
+import { DnsFilterManagementClient } from './services/dnsFilterManagementClient';
+import { safeHttpLogRedactions, safeHttpLogSerializers } from './lib/httpLog';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -54,6 +62,11 @@ async function main(): Promise<void> {
   const monthlyReportRepo = new MonthlyReportRepo(pool);
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
+  const secureGuardRepo = new SecureGuardRepo(pool);
+  const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
+  // Deployment supplies this only to the server process. No browser route can read it.
+  const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
+  const dnsFilterManagementClient = new DnsFilterManagementClient(config.gcpProjectId, process.env.DNSFILTER_MSP_ID);
   const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
   const adminPrincipalsRepo = new AdminPrincipalsRepo(pool);
   const staffRoleDeps: StaffRoleDeps = {
@@ -67,7 +80,7 @@ async function main(): Promise<void> {
   // Cloud Run本番ではGoogle Front Endが1ホップ手前でTLS終端しX-Forwarded-Forを付与するため、
   // req.ipが正しいクライアントIPを指すようにtrust proxyを有効化する（IPレート制限で使用）。
   app.set('trust proxy', true);
-  app.use(pinoHttp({ logger })); // 操作ログ（誰がいつ何をしたか）の基礎になる構造化アクセスログ
+  app.use(pinoHttp({ logger, serializers: safeHttpLogSerializers, redact: safeHttpLogRedactions }));
   app.use(express.json());
   app.use(cookieParser());
 
@@ -94,6 +107,23 @@ async function main(): Promise<void> {
     }),
   );
   app.use('/api/settings', createPublicSettingsRouter(settingsRepo, config.bookingUrl));
+
+  // Secure Guard keeps a separate personal-identity session. Existing customer and staff sessions remain unchanged.
+  app.use(
+    '/api/secure-guard/auth',
+    createSecureGuardAuthRouter(secureGuardIdentityService, config.nodeEnv === 'production'),
+  );
+  app.use(
+    '/api/secure-guard',
+    createSecureGuardRouter({
+      identityService: secureGuardIdentityService,
+      repo: secureGuardRepo,
+      inventoryClient: dnsFilterInventoryClient,
+      mailer,
+      portalBaseUrl: config.portalBaseUrl,
+      managementClient: dnsFilterManagementClient,
+    }),
+  );
 
   // Google Workspaceログイン（無認証でアクセスできる必要がある）
   app.use(
@@ -162,6 +192,13 @@ async function main(): Promise<void> {
     res.sendFile(path.join(__dirname, '../public/admin/settings.html')),
   );
   app.use('/admin', ...adminAuthGate, express.static(path.join(__dirname, '../public/admin')));
+
+  app.get('/secure-guard-home.html', requireSecureGuardIdentity(secureGuardIdentityService), (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/secure-guard-home.html')),
+  );
+  app.get('/secure-guard-admin.html', requireSecureGuardIdentity(secureGuardIdentityService), requireMspAdmin(secureGuardRepo), (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/secure-guard-admin.html')),
+  );
 
   app.use(express.static(path.join(__dirname, '../public')));
 
