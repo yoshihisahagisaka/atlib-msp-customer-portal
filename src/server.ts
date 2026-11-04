@@ -43,6 +43,7 @@ import { SecureGuardRepo } from './services/secureGuardRepo';
 import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
 import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
 import { DnsFilterRoamingUsageClient } from './services/dnsFilterRoamingUsageClient';
+import { SecureGuardOverageStore } from './services/secureGuardOverageStore';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
 import { createSecureGuardRouter } from './routes/secureGuard';
 import { DnsFilterManagementClient } from './services/dnsFilterManagementClient';
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
   const secureGuardRepo = new SecureGuardRepo(pool);
+  const secureGuardOverageStore = new SecureGuardOverageStore(pool);
   const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
   // Deployment supplies this only to the server process. No browser route can read it.
   const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
@@ -125,6 +127,7 @@ async function main(): Promise<void> {
       portalBaseUrl: config.portalBaseUrl,
       managementClient: dnsFilterManagementClient,
       roamingUsageClient: dnsFilterRoamingUsageClient,
+      overageStore: secureGuardOverageStore,
     }),
   );
 
