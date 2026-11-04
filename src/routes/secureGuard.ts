@@ -24,13 +24,9 @@ const initialInvitationSchema = z.object({
 });
 const initialInvitationCancelSchema = z.object({ customerOrganizationId: z.string().uuid() });
 const organizationSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() });
-// Reference snapshot is entered only by the MSP administrator after inspecting DNSFilter GUI.
 const overageHandlingSchema = z.object({
   responseChoice: z.enum(['reduce_clients', 'increase_allocation']),
   responseNote: z.string().trim().max(500).nullable().optional(),
-}).strict();
-const allocationSnapshotSchema = z.object({
-  allocatedRcLicensesSnapshot: z.number().int().min(0).max(2147483647),
 }).strict();
 const organizationPatchSchema = z.object({ organizationName: z.string().trim().min(1).max(255).optional(), status: z.enum(['active', 'suspended']).optional(), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() }).refine((value) => Object.keys(value).length > 0);
 const managedInvitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -98,33 +94,6 @@ export function createSecureGuardRouter(input: {
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try { const updated = await input.repo.updateManagedOrganization(req.secureGuardUserId!, req.params.organizationId!, parsed.data); if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(updated); }
     catch (error) { res.status(isUniqueViolation(error) ? 409 : 500).json({ error: isUniqueViolation(error) ? 'ORGANIZATION_CONFLICT' : 'ORGANIZATION_UNAVAILABLE' }); }
-  });
-  // This endpoint never changes DNSFilter billing allocation. It saves a dated GUI reference only.
-  router.patch('/admin/organizations/:organizationId/allocation-snapshot', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
-    const customerOrganizationId = req.params.organizationId!;
-    if (!z.string().uuid().safeParse(customerOrganizationId).success) {
-      res.status(400).json({ error: 'INVALID_REQUEST' });
-      return;
-    }
-    const parsed = allocationSnapshotSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'INVALID_REQUEST' });
-      return;
-    }
-    try {
-      const value = await input.repo.setAllocationSnapshot(
-        req.secureGuardUserId!,
-        customerOrganizationId,
-        parsed.data.allocatedRcLicensesSnapshot,
-      );
-      if (!value) {
-        res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
-        return;
-      }
-      res.json(value);
-    } catch {
-      res.status(500).json({ error: 'ALLOCATION_SNAPSHOT_UNAVAILABLE' });
-    }
   });
   // Verified official API fields only. Read-only, MSP-only, no polling or Slack side effects.
   router.get('/admin/organizations/:organizationId/roaming-license-usage', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
