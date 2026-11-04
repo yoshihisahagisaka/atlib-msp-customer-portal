@@ -14,7 +14,22 @@ export interface Membership extends CustomerScope {
   status: 'pending' | 'active' | 'revoked';
 }
 
-export interface ManagedOrganization { id: string; organizationName: string; status: 'active' | 'suspended'; dnsfilterOrganizationId: string | null; mappingStatus: 'active' | 'disabled' | null; }
+export interface ManagedOrganization {
+  id: string;
+  organizationName: string;
+  status: 'active' | 'suspended';
+  dnsfilterOrganizationId: string | null;
+  mappingStatus: 'active' | 'disabled' | null;
+  /** Manual reference copied from DNSFilter GUI; NOT a DNSFilter API value or billing truth. */
+  allocatedRcLicensesSnapshot?: number | null;
+  allocationSnapshotUpdatedAt?: string | null;
+  allocationSnapshotUpdatedBy?: string | null;
+}
+export interface AllocationSnapshot {
+  allocatedRcLicensesSnapshot: number;
+  allocationSnapshotUpdatedAt: string;
+  allocationSnapshotUpdatedBy: string;
+}
 export interface ManagedMembership { id: string; email: string; role: CustomerRole; status: 'pending' | 'active' | 'revoked'; isInitialAdmin: boolean; }
 export interface AuditEvent { id: string; organizationName: string | null; action: string; result: 'success' | 'denied' | 'failed'; createdAt: string; }
 
@@ -73,9 +88,72 @@ export class SecureGuardRepo {
   }
 
   async listManagedOrganizations(): Promise<ManagedOrganization[]> {
-    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status, m.dnsfilter_organization_id, m.status AS mapping_status
-      FROM customer_organizations o LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id ORDER BY o.organization_name`);
-    return rows.map((r) => ({ id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: r.dnsfilter_organization_id === null ? null : String(r.dnsfilter_organization_id), mappingStatus: r.mapping_status === null ? null : r.mapping_status as ManagedOrganization['mappingStatus'] }));
+    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status,
+      m.dnsfilter_organization_id, m.status AS mapping_status,
+      o.dnsfilter_allocated_rc_licenses_snapshot, o.license_snapshot_updated_at,
+      o.license_snapshot_updated_by
+      FROM customer_organizations o
+      LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id
+      ORDER BY o.organization_name`);
+    return rows.map((r) => ({
+      id: String(r.id),
+      organizationName: String(r.organization_name),
+      status: r.status as ManagedOrganization['status'],
+      dnsfilterOrganizationId: r.dnsfilter_organization_id == null ? null : String(r.dnsfilter_organization_id),
+      mappingStatus: r.mapping_status == null ? null : r.mapping_status as ManagedOrganization['mappingStatus'],
+      allocatedRcLicensesSnapshot: r.dnsfilter_allocated_rc_licenses_snapshot == null
+        ? null : Number(r.dnsfilter_allocated_rc_licenses_snapshot),
+      allocationSnapshotUpdatedAt: r.license_snapshot_updated_at == null
+        ? null : new Date(r.license_snapshot_updated_at).toISOString(),
+      allocationSnapshotUpdatedBy: r.license_snapshot_updated_by == null
+        ? null : String(r.license_snapshot_updated_by),
+    }));
+  }
+
+  /** A dated copy of the DNSFilter GUI quantity; does not write to DNSFilter. */
+  async setAllocationSnapshot(
+    actorUserId: string,
+    customerOrganizationId: string,
+    allocatedRcLicensesSnapshot: number,
+  ): Promise<AllocationSnapshot | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // A mapping must already be verified and active. A local draft is never billable.
+      const found = await client.query(`SELECT o.id
+        FROM customer_organizations o
+        JOIN dnsfilter_organization_mappings m
+          ON m.customer_organization_id = o.id AND m.status = 'active'
+        WHERE o.id = $1 AND o.status = 'active'
+        FOR UPDATE OF o`, [customerOrganizationId]);
+      if (found.rows.length !== 1) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const updated = await client.query(`UPDATE customer_organizations SET
+        dnsfilter_allocated_rc_licenses_snapshot = $2,
+        license_snapshot_updated_at = now(),
+        license_snapshot_updated_by = $3,
+        updated_at = now()
+        WHERE id = $1
+        RETURNING dnsfilter_allocated_rc_licenses_snapshot,
+          license_snapshot_updated_at, license_snapshot_updated_by`,
+        [customerOrganizationId, allocatedRcLicensesSnapshot, actorUserId]);
+      const row = updated.rows[0];
+      if (!row) throw new Error('ALLOCATION_SNAPSHOT_WRITE_FAILED');
+      await this.insertAudit(client, actorUserId, customerOrganizationId, null, 'license.allocation_snapshot.updated', 'success');
+      await client.query('COMMIT');
+      return {
+        allocatedRcLicensesSnapshot: Number(row.dnsfilter_allocated_rc_licenses_snapshot),
+        allocationSnapshotUpdatedAt: new Date(row.license_snapshot_updated_at).toISOString(),
+        allocationSnapshotUpdatedBy: String(row.license_snapshot_updated_by),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createManagedOrganization(actorUserId: string, organizationName: string, dnsfilterOrganizationId?: string): Promise<ManagedOrganization> {
