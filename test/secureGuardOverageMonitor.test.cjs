@@ -108,28 +108,40 @@ test('unavailable DNSFilter reading preserves episode status and does not send S
   assert.equal(observation, 0);
 });
 
-test('DB store keeps a single active episode and resolves only after confirmed in-allocation reading', async () => {
+test('DB store serializes episodes and rejects stale/out-of-order readings after resolution', async () => {
   const statements = [];
   let activeId = null;
+  let latest = null;
   const client = {
     async query(sql, values) {
       statements.push({ sql, values });
       if (sql.includes('SELECT o.id')) return { rows: [{ id: orgId }] };
-      if (sql.includes('SELECT id FROM secure_guard_overage_alerts')) return { rows: activeId ? [{ id: activeId }] : [] };
-      if (sql.includes('INSERT INTO secure_guard_overage_alerts')) activeId = 1;
-      if (sql.includes('handling_status = \'resolved\'')) activeId = null;
+      if (sql.includes('SELECT id, last_observed_at, resolved_at')) {
+        return { rows: latest ? [{ id: 1, last_observed_at: latest, resolved_at: activeId ? null : new Date(latest) }] : [] };
+      }
+      if (sql.includes('INSERT INTO secure_guard_overage_alerts')) {
+        activeId = 1; latest = values[4];
+      }
+      if (sql.includes('UPDATE secure_guard_overage_alerts SET')) {
+        if (sql.includes("handling_status = 'resolved'")) {
+          activeId = null; latest = values[1];
+        } else latest = values[4];
+      }
       return { rows: [] };
     },
     release() {},
   };
   const store = new SecureGuardOverageStore({ connect: async () => client });
   const over = compareConfirmedLicenseUsage(2, 1);
+  const later = '2026-11-04T06:00:01.000Z';
+  const resolvedAt = '2026-11-04T06:00:02.000Z';
   assert.equal(await store.observe(orgId, '10220954', over, observedAt), 'opened');
-  assert.equal(await store.observe(orgId, '10220954', over, observedAt), 'updated');
-  assert.equal(await store.observe(orgId, '10220954', compareConfirmedLicenseUsage(1, 1), observedAt), 'resolved');
-  assert.equal(await store.observe(orgId, '10220954', compareConfirmedLicenseUsage(null, 1), observedAt), 'unavailable');
+  assert.equal(await store.observe(orgId, '10220954', over, later), 'updated');
+  assert.equal(await store.observe(orgId, '10220954', compareConfirmedLicenseUsage(1, 1), resolvedAt), 'resolved');
+  assert.equal(await store.observe(orgId, '10220954', over, observedAt), 'stale');
+  assert.equal(await store.observe(orgId, '10220954', compareConfirmedLicenseUsage(null, 1), resolvedAt), 'unavailable');
   assert.equal(statements.filter((s) => s.sql.includes('INSERT INTO secure_guard_overage_alerts')).length, 1);
-  assert.equal(statements.filter((s) => s.sql.includes('COMMIT')).length, 3);
+  assert.equal(statements.filter((s) => s.sql.includes('COMMIT')).length, 4);
 });
 
 test('one Slack attempt per claimed episode records success or manual-review failure, with no actual webhook call', async () => {
