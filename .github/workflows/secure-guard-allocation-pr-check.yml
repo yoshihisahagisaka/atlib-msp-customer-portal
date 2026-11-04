@@ -1,4 +1,4 @@
-name: Secure Guard allocation PR offline checks
+name: Secure Guard overage monitoring Draft offline checks
 
 on:
   pull_request:
