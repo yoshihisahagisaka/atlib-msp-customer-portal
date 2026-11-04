@@ -110,6 +110,67 @@ function adminList(id, items, render, emptyMessage) { const node = document.getE
 const adminOrganizationList = document.getElementById('organizations');
 if (adminOrganizationList) {
   let managedOrganizations = [];
+  const loadOverageAlerts = async () => {
+    const container = document.getElementById('overage-alerts');
+    if (!container) return;
+    adminStatus('overage-alerts-status', '超過対応状況を取得しています。');
+    try {
+      const data = await adminFetch('/overage-alerts');
+      const alerts = Array.isArray(data.alerts) ? data.alerts : [];
+      container.replaceChildren();
+      if (!alerts.length) {
+        container.append(adminText('対応中の超過はありません（直近の定期取得結果に基づきます）。'));
+      }
+      for (const alert of alerts) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.append(adminText(`${alert.organizationName}: 割当 ${alert.allocated}台 / 利用 ${alert.usage}台 / 超過 ${alert.overBy}台`));
+        const notificationLabel = { pending: '通知待ち', attempting: '送信処理中', sent: '通知済', needs_review: '送信要確認（自動再送なし）' }[alert.notificationStatus] || '不明';
+        card.append(adminText(`発見: ${new Date(alert.openedAt).toLocaleString('ja-JP')} / 最終確認: ${new Date(alert.lastObservedAt).toLocaleString('ja-JP')} / 対応: ${alert.handlingStatus === 'in_progress' ? '対応中' : '未対応'} / Slack: ${notificationLabel}`));
+        const form = document.createElement('form');
+        const choiceLabel = document.createElement('label');
+        choiceLabel.textContent = '顧客へ確認した対応方針';
+        const select = document.createElement('select');
+        select.required = true;
+        select.append(new Option('選択してください', ''), new Option('不要端末を整理する', 'reduce_clients'), new Option('割当ライセンス数を増やす', 'increase_allocation'));
+        select.value = alert.responseChoice || '';
+        choiceLabel.append(select);
+        const noteLabel = document.createElement('label');
+        noteLabel.textContent = '対応メモ（任意・500文字まで）';
+        const note = document.createElement('textarea');
+        note.maxLength = 500;
+        note.value = alert.responseNote || '';
+        noteLabel.append(note);
+        const save = document.createElement('button');
+        save.type = 'submit'; save.className = 'btn btn-small btn-secondary'; save.textContent = '対応内容を記録';
+        const status = document.createElement('p');
+        status.setAttribute('role', 'status');
+        form.append(choiceLabel, noteLabel, save, status);
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          if (!select.value) return;
+          save.disabled = true;
+          status.textContent = '記録しています。';
+          try {
+            await adminFetch(`/overage-alerts/${encodeURIComponent(alert.id)}/handling`, {
+              method: 'PATCH',
+              body: JSON.stringify({ responseChoice: select.value, responseNote: note.value.trim() || null }),
+            });
+            await loadOverageAlerts();
+          } catch {
+            status.textContent = '対応内容を記録できませんでした。';
+            save.disabled = false;
+          }
+        });
+        card.append(form);
+        container.append(card);
+      }
+      adminStatus('overage-alerts-status', `${alerts.length}件の未解消超過（最新のAPI照会は定期処理側で実施）`);
+    } catch {
+      container.replaceChildren();
+      adminStatus('overage-alerts-status', '超過対応状況を取得できませんでした。定期監視は未稼働の可能性があります。');
+    }
+  };
   const selectedOrganization = () => document.getElementById('managed-organization-select').value;
   const loadSitesAndPolicies = async () => {
     const id = selectedOrganization(); const siteForm = document.getElementById('site-form');
@@ -128,7 +189,36 @@ if (adminOrganizationList) {
         row.append(adminText(`${org.organizationName} / ${org.status} / DNSFilter: ${org.dnsfilterOrganizationId ?? '未設定'} / ID: ${org.id}`));
         const stop = document.createElement('button'); stop.className = 'btn btn-small'; stop.textContent = org.status === 'active' ? '停止' : '有効化';
         stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
-        row.append(stop); organizations.append(row); scope.append(new Option(org.organizationName, org.id));
+        row.append(stop);
+
+        // API numbers are read from DNSFilter, never derived from the Agent list.
+        const usageButton = document.createElement('button');
+        usageButton.type = 'button';
+        usageButton.className = 'btn btn-small btn-secondary';
+        usageButton.textContent = 'DNSFilterの割当数・利用数を確認';
+        usageButton.disabled = org.status !== 'active' || org.mappingStatus !== 'active';
+        const usageStatus = document.createElement('p');
+        usageStatus.setAttribute('role', 'status');
+        usageStatus.textContent = 'API利用状況: 未取得（定期監視・Slack通知は無効）';
+        usageButton.addEventListener('click', async () => {
+          usageButton.disabled = true;
+          usageStatus.textContent = 'DNSFilter公式APIを照会しています。';
+          try {
+            const result = await adminFetch(`/organizations/${encodeURIComponent(org.id)}/roaming-license-usage`);
+            const label = result.status === 'overage'
+              ? `超過 ${result.overBy}台`
+              : result.status === 'within_allocation' ? '超過なし' : '判定不可';
+            usageStatus.textContent =
+              `DNSFilter API割当 ${result.allocated}台 / 利用 ${result.usage}台 / ${label} / 取得日時 ${new Date(result.observedAt).toLocaleString('ja-JP')}（参考表示・未通知）`;
+          } catch {
+            usageStatus.textContent = '公式API利用状況を確認できませんでした。超過判定は行いません。';
+          } finally {
+            usageButton.disabled = org.status !== 'active' || org.mappingStatus !== 'active';
+          }
+        });
+        row.append(usageButton, usageStatus);
+        organizations.append(row);
+        scope.append(new Option(org.organizationName, org.id));
       }
       scope.value = managedOrganizations.some((o) => o.id === before) ? before : ''; adminStatus('organizations-status', managedOrganizations.length ? '' : 'atLIB管理対象Organizationはまだ登録されていません。');
       if (auditResult.status === 'fulfilled') { adminList('audit-events', auditResult.value.events, (event) => adminText(`${new Date(event.createdAt).toLocaleString('ja-JP')} / ${event.organizationName ?? '全体'} / ${event.action} / ${event.result}`), '監査履歴はありません。'); adminStatus('audit-status'); }
@@ -141,5 +231,7 @@ if (adminOrganizationList) {
   document.getElementById('managed-organization-select').addEventListener('change', () => loadSitesAndPolicies());
   document.getElementById('refresh-dnsfilter-organizations').addEventListener('click', async () => { adminStatus('dnsfilter-organizations-status', '取得中です。'); try { const data = await adminFetch('/dnsfilter/organizations'); adminList('dnsfilter-organizations', data.organizations, (o) => adminText(`${o.name} / ID: ${o.id}`), 'MSP配下の顧客Organizationはありません。'); adminStatus('dnsfilter-organizations-status', '取得しました。'); } catch { document.getElementById('dnsfilter-organizations').replaceChildren(); adminStatus('dnsfilter-organizations-status', 'DNSFilter Organization一覧を取得できませんでした。'); } });
   document.getElementById('site-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const policyIds = [...document.getElementById('site-policy').selectedOptions].map((o) => o.value); await adminFetch(`/organizations/${selectedOrganization()}/sites`, { method: 'POST', body: JSON.stringify({ name: document.getElementById('site-name').value, policyIds }) }); event.target.reset(); await loadSitesAndPolicies(); } catch { adminErrorMessage(); } });
+  document.getElementById('refresh-overage-alerts')?.addEventListener('click', () => loadOverageAlerts());
+  loadOverageAlerts();
   renderAdmin();
 }

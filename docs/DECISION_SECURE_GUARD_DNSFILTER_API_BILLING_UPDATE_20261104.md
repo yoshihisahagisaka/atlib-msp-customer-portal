@@ -69,6 +69,21 @@
 - Slackが未設定・送信失敗の場合でも、管理画面側の超過表示は継続。送信成功と判定できない状況で「通知済み」として記録しない。Webhook URLやToken、認証情報をログに出さない。
 - 通知の前提条件は従来どおり**既存PoC・実装で確認済みの公式利用数が取得できること**と、MSP管理者による割当数の手動転記があること。独自の台数集計・DNSFilter自動PATCHは行わない。
 
+## 4D. 2026-11-04 最新統括判断：公式API一致確認後の超過監視（4B/4Cを更新）
+
+2026-11-04の同一Organizationでの最終実機再照合において、GUIとGET /v1/metrics/organization_usage_detailed/{id} の割当・利用両方が一致した。
+- Test02 Core: GUI/APIの割当数1・利用数2。
+- Test03 Plus: GUI/APIの割当数3・利用数0。
+- user_count、Agent一覧件数、Network Licenses、Current License Usageは超過判定に使わない。
+
+この実測を受け、**超過監視の正本データを同じDNSFilter公式API応答の allocated_roaming_clients と roaming_clients_in_use に統一**する。4B/4Cの「GUI割当数を手動転記して比較」は本監視から撤回する。API取得不能なときは手動参照値で補完せず UNKNOWN とし、超過発生・解消を誤判定しない。API値の意味は「DNSFilter公式画面と照合した利用数／割当数」であり、独自算出した保護台数や契約上限ではない。
+
+**本システムで請求エンジン、仕入支払額計算、顧客請求額集計、請求確定処理は作らない。** DNSFilterの実際の仕入金額は公式Billing画面で確認する。超過検出時にはMSP管理画面＋専用Slack通知を行い、atLIB担当者が顧客へ「不要端末整理」または「割当数増加」を確認する。DNSFilterの設定変更も顧客への請求も自動実行しない。
+
+Draft PR #4に残っていた手動割当参照用のMigration 014、API、入力画面および対応テストは、この最新判断に合わせて撤去する。**既存実環境DBへのMigration適用は未実施**であり、実機DBで既に014が適用済みかどうかは別途read-onlyで検証する。Migration 015は最小の超過対応記録用とし、適用には別途Go/No-Goが必要。実装詳細は SECURE_GUARD_OVERAGE_MONITOR_V1_IMPLEMENTATION_20261104.md を参照。
+
+本節は4A・4B・4Cのうちデータソース、手動転記、請求集計に関する古い記述より優先する。OrganizationのSKU/Quantityによる有料登録・変更の別レーンの安全ゲートや承認は変更しない。
+
 ## 5. 後続作業
 1. SKU正式値と公式API schemaを照合し、既存作成フローのコードレベル差分を確定。
 2. 旧MSP Sync/Launch契約と本Decisionの優先関係を明示して実装指示を更新。F5同期は残す。

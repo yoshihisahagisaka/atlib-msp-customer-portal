@@ -14,7 +14,13 @@ export interface Membership extends CustomerScope {
   status: 'pending' | 'active' | 'revoked';
 }
 
-export interface ManagedOrganization { id: string; organizationName: string; status: 'active' | 'suspended'; dnsfilterOrganizationId: string | null; mappingStatus: 'active' | 'disabled' | null; }
+export interface ManagedOrganization {
+  id: string;
+  organizationName: string;
+  status: 'active' | 'suspended';
+  dnsfilterOrganizationId: string | null;
+  mappingStatus: 'active' | 'disabled' | null;
+}
 export interface ManagedMembership { id: string; email: string; role: CustomerRole; status: 'pending' | 'active' | 'revoked'; isInitialAdmin: boolean; }
 export interface AuditEvent { id: string; organizationName: string | null; action: string; result: 'success' | 'denied' | 'failed'; createdAt: string; }
 
@@ -73,9 +79,18 @@ export class SecureGuardRepo {
   }
 
   async listManagedOrganizations(): Promise<ManagedOrganization[]> {
-    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status, m.dnsfilter_organization_id, m.status AS mapping_status
-      FROM customer_organizations o LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id ORDER BY o.organization_name`);
-    return rows.map((r) => ({ id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: r.dnsfilter_organization_id === null ? null : String(r.dnsfilter_organization_id), mappingStatus: r.mapping_status === null ? null : r.mapping_status as ManagedOrganization['mappingStatus'] }));
+    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status,
+      m.dnsfilter_organization_id, m.status AS mapping_status
+      FROM customer_organizations o
+      LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id
+      ORDER BY o.organization_name`);
+    return rows.map((r) => ({
+      id: String(r.id),
+      organizationName: String(r.organization_name),
+      status: r.status as ManagedOrganization['status'],
+      dnsfilterOrganizationId: r.dnsfilter_organization_id == null ? null : String(r.dnsfilter_organization_id),
+      mappingStatus: r.mapping_status == null ? null : r.mapping_status as ManagedOrganization['mappingStatus'],
+    }));
   }
 
   async createManagedOrganization(actorUserId: string, organizationName: string, dnsfilterOrganizationId?: string): Promise<ManagedOrganization> {
