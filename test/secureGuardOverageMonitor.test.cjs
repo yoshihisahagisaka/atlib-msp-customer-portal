@@ -131,3 +131,43 @@ test('DB store keeps a single active episode and resolves only after confirmed i
   assert.equal(statements.filter((s) => s.sql.includes('INSERT INTO secure_guard_overage_alerts')).length, 1);
   assert.equal(statements.filter((s) => s.sql.includes('COMMIT')).length, 3);
 });
+
+test('one Slack attempt per claimed episode records success or manual-review failure, with no actual webhook call', async () => {
+  for (const delivery of ['sent', 'failed']) {
+    const calls = { claims: 0, sends: 0, completions: [] };
+    const result = await runSecureGuardOverageCheck({
+      repo: { listManagedOrganizations: async () => [org] },
+      client: { getRoamingUsage: async () => ({ roamingClientsInUse: 2, dnsfilterAllocatedRoamingClients: 1, retrievedAt: observedAt }) },
+      store: {
+        observe: async () => 'updated',
+        claimPendingNotification: async () => (++calls.claims === 1
+          ? { id: '12', organizationName: 'Customer', usage: 2, allocated: 1, checkedAt: observedAt } : null),
+        completeNotification: async (id, state) => { calls.completions.push([id, state]); },
+      },
+      slackWebhook: 'https://test-only.invalid/no-post',
+      sendSlack: async (webhook, message) => {
+        assert.equal(webhook, 'https://test-only.invalid/no-post');
+        assert.equal(message.usage, 2); assert.equal(message.allocated, 1);
+        calls.sends++;
+        return delivery;
+      },
+    });
+    assert.equal(calls.sends, 1);
+    assert.deepEqual(calls.completions, [['12', delivery === 'sent' ? 'sent' : 'needs_review']]);
+    assert.equal(result.notificationsSent, delivery === 'sent' ? 1 : 0);
+    assert.equal(result.notificationsNeedReview, delivery === 'sent' ? 0 : 1);
+  }
+});
+
+test('one-shot job is disabled without explicit opt-in and needs no secrets to refuse execution', () => {
+  const { spawnSync } = require('node:child_process');
+  const path = require('node:path');
+  const env = { ...process.env };
+  delete env.SECURE_GUARD_OVERAGE_JOB_ENABLED;
+  delete env.SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK;
+  const processResult = spawnSync(process.execPath, [path.join(__dirname, '..', 'dist/jobs/secureGuardOverageOnce.js')], {
+    env, encoding: 'utf8', timeout: 5000,
+  });
+  assert.equal(processResult.status, 2);
+  assert.match(processResult.stderr, /job is disabled/);
+});
