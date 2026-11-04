@@ -69,3 +69,19 @@ gcloud.cmd sql instances list --project=msp-zabbix --format="table(name,region,s
 禁止：`gcloud config set`、`gcloud run deploy`、`gcloud sql connect`、`gcloud compute ssh`、`npm run migrate`、DBの変更SQL、DNSFilter設定変更、Slack実送信。Staging候補が見つかっても、実体確認前に接続や操作を進めない。Cloud Run/DBの列挙でStagingが見つからなければ、その不在を記録して停止する。本番資産をStagingの代用にしない。
 
 対象StagingのProject ID・Cloud SQLインスタンス名・DB名・確認用read-only権限・責任者が確定した後だけ、前節のSELECT文をその環境で実行する。DB接続が不明なら**未実施**として記録する。GUI/APIの利用数突合はこれとは別の既知PASSであり、Staging DBの安全確認PASSを意味しない。
+
+## 実機Read-only結果（2026-11-04、運用者提示）
+
+PowerShell `gcloud.cmd run services list --project=msp-zabbix --region=asia-northeast1` と `gcloud.cmd sql instances list --project=msp-zabbix` の実行結果に基づく確認。変更操作は行っていない。
+
+| 区分 | リソース | 判定 |
+| --- | --- | --- |
+| Cloud Run | `msp-customer-portal` | 既存本番サービス |
+| Cloud SQL | `msp-customer-portal-db` | 既存本番DB |
+| Cloud Run | `sales-tools-staging` | Sales Tools専用。Secure Guard用ではない |
+| Cloud SQL | `sales-tools-staging-db` | Sales Tools専用。Secure Guard用ではない |
+| Cloud Run/SQL | 顧客ポータル専用Staging | 指定Project/Regionの一覧に該当リソースなし |
+
+他に列挙されたCloud Runは `atlib-cashflow`, `ppap-download-service`, `ppap-upload-service`, `ppap-virus-scan`, `sales-tools`。この一覧は独立した別Projectの調査結果を含まず、「全GCP組織内にStagingが存在しない」とまでは断定しない。
+
+**Gate結果：Staging環境が未特定のため、Migration 015適用／Staging DB SELECT／E2EはNo-Go（未実施）。** `sales-tools-staging-db`を流用しない。必要であれば独立した顧客ポータルStagingを新設するが、クラウドリソース作成・費用発生・データ複製を伴うため別途構成と権限の承認が必要。現時点でStagingは作成していない。既存本番の稼働・DBへの変更なし。
