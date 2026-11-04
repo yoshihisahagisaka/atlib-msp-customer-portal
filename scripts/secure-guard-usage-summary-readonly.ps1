@@ -53,14 +53,28 @@ try {
     @{ Name = 'Test02 Core'; Id = '10220954' },
     @{ Name = 'Test03 Plus'; Id = '10222523' }
   )
-  # OS-wise total_roaming_clients is deployment distribution, not Protected status.
-  # Only the direct official total/active metric is a candidate for GUI comparison.
-  $paths = @('/v1/traffic_reports/total_client_stats')
+  # Compare two official GET summaries against the GUI "Roaming Clients in Use".
+  # Issue #36 observed roaming_clients_in_use=2 in organization_usage_detailed;
+  # the later Fit/Gap checked the different key roaming_client_count (blank).
+  # Neither endpoint is approved for automated overage alerts until current
+  # responses and UI definitions are reconciled. No raw response is printed.
+  $toDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+  $fromDate = (Get-Date).ToUniversalTime().AddDays(-7).ToString('yyyy-MM-dd')
 
   foreach ($org in $organizations) {
-    foreach ($path in $paths) {
-      Write-Host ("=== {0} : {1} ===" -f $org.Name, $path)
-      $uri = "https://api.dnsfilter.com$($path)?organization_id=$($org.Id)"
+    $checks = @(
+      @{
+        Label = "organization_usage_detailed (from=$fromDate; to=$toDate)"
+        Uri = "https://api.dnsfilter.com/v1/metrics/organization_usage_detailed/$($org.Id)?from=$fromDate&to=$toDate"
+      },
+      @{
+        Label = 'total_client_stats'
+        Uri = "https://api.dnsfilter.com/v1/traffic_reports/total_client_stats?organization_id=$($org.Id)"
+      }
+    )
+    foreach ($check in $checks) {
+      Write-Host ("=== {0} : {1} ===" -f $org.Name, $check.Label)
+      $uri = $check.Uri
       try {
         $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -TimeoutSec 15
         Write-Host 'HTTP: 200'
