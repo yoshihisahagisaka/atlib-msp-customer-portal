@@ -157,6 +157,15 @@ export class SecureGuardOverageStore {
    * One irreversible claim per episode. An ambiguous Slack delivery is
    * 'needs_review', never auto-retried (which could create duplicate posts).
    */
+  /** A crashed/ambiguous attempt is flagged for human inspection, never resent automatically. */
+  async reconcileStaleNotifications(): Promise<number> {
+    const result = await this.pool.query(`UPDATE secure_guard_overage_alerts SET
+      notification_status = 'needs_review', updated_at = now()
+      WHERE notification_status = 'attempting'
+        AND notification_attempted_at < now() - interval '15 minutes'`);
+    return result.rowCount ?? 0;
+  }
+
   async claimPendingNotification(): Promise<{
     id: string; organizationName: string; usage: number; allocated: number; checkedAt: string;
   } | null> {
