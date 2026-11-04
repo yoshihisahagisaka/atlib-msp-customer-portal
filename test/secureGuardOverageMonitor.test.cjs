@@ -82,6 +82,7 @@ test('monitor opens once, remains same episode, resolves on confirmed normal usa
         if (episode.active) { episode.active = false; return 'resolved'; }
         return 'normal';
       },
+      reconcileStaleNotifications: async () => 0,
       claimPendingNotification: async () => { episode.claims++; throw Error('must not be called'); },
       completeNotification: async () => { throw Error('must not be called'); },
     },
@@ -101,7 +102,7 @@ test('unavailable DNSFilter reading preserves episode status and does not send S
   const result = await runSecureGuardOverageCheck({
     repo: { listManagedOrganizations: async () => [org] },
     client: { getRoamingUsage: async () => { throw Error('DNSFilter unavailable'); } },
-    store: { observe: async () => { observation++; }, claimPendingNotification: async () => null, completeNotification: async () => undefined },
+    store: { observe: async () => { observation++; }, reconcileStaleNotifications: async () => 0, claimPendingNotification: async () => null, completeNotification: async () => undefined },
   });
   assert.equal(result.unavailable, 1);
   assert.equal(result.checked, 0);
@@ -152,6 +153,7 @@ test('one Slack attempt per claimed episode records success or manual-review fai
       client: { getRoamingUsage: async () => ({ roamingClientsInUse: 2, dnsfilterAllocatedRoamingClients: 1, retrievedAt: observedAt }) },
       store: {
         observe: async () => 'updated',
+        reconcileStaleNotifications: async () => 0,
         claimPendingNotification: async () => (++calls.claims === 1
           ? { id: '12', organizationName: 'Customer', usage: 2, allocated: 1, checkedAt: observedAt } : null),
         completeNotification: async (id, state) => { calls.completions.push([id, state]); },
@@ -182,4 +184,29 @@ test('one-shot job is disabled without explicit opt-in and needs no secrets to r
   });
   assert.equal(processResult.status, 2);
   assert.match(processResult.stderr, /job is disabled/);
+});
+
+test('interrupted Slack attempt is marked for human review and is never auto-retried', async () => {
+  const queries = [];
+  const store = new SecureGuardOverageStore({ query: async (sql) => {
+    queries.push(sql);
+    return { rowCount: 2, rows: [] };
+  } });
+  assert.equal(await store.reconcileStaleNotifications(), 2);
+  assert.match(queries[0], /notification_status = 'attempting'/);
+  assert.match(queries[0], /notification_status = 'needs_review'/);
+  assert.match(queries[0], /15 minutes/);
+
+  const summary = await runSecureGuardOverageCheck({
+    repo: { listManagedOrganizations: async () => [] },
+    client: { getRoamingUsage: async () => { throw Error('no GET expected'); } },
+    store: {
+      observe: async () => { throw Error('no observation expected'); },
+      reconcileStaleNotifications: async () => 2,
+      claimPendingNotification: async () => { throw Error('no webhook, no claims'); },
+      completeNotification: async () => { throw Error('no webhook, no send'); },
+    },
+  });
+  assert.equal(summary.notificationsNeedReview, 2);
+  assert.equal(summary.notificationsSent, 0);
 });
