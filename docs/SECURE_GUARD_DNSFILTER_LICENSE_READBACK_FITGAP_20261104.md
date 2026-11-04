@@ -2,7 +2,7 @@
 
 日付: 2026-11-04
 対象: PR #3 `feature/secure-guard-daily-management`
-区分: 公開資料調査＋現行コード確認。**API実測・課金更新・実装HAは未実施**。
+区分: 公開資料調査＋現行コード確認＋ユーザー実機Read-only GET。**課金更新・アプリ内E2E・実装HAは未実施**。
 優先: `DECISION_SECURE_GUARD_DNSFILTER_API_BILLING_UPDATE_20261104.md`, `SECURE_GUARD_V1_ORG_PROVISIONING_SKU_QUANTITY_CONTRACT_20261104.md`
 
 ## 確認済みの出所と事実
@@ -27,7 +27,7 @@
 
 ## 次のRead-only HA（既存テストOrgのみ）
 1. `scripts/secure-guard-license-readonly-probe.ps1` はDNSFilterの`GET /v1/metrics/organization_usage_detailed/{id}`を、Test02とTest03のみに各1回実行し、選択した数値・フィールド名だけ出力。Secretの表示・POST/PATCH/DELETEなし。
-2. **実測結果**: Test02はHTTP200だが`roaming_client_count`空欄／`user_count=1`でGUIの2台と一致しない。メトリクスを直ちにUとして採用しない。既存Agent Inventoryの組織全件数とGUIの`Roaming Clients in Use=2`を照合する。
+2. **実測結果**: Test02はHTTP200だが`roaming_client_count`空欄／`user_count=1`でGUIの2台と一致しない。メトリクスを直ちにUとして採用しない。次に`GET /v1/user_agents?organization_ids=10220954`で2件・次ページなしを確認し、GUIの`Roaming Clients in Use=2`と一致した。
 3. API失敗時はエラーHTTPコードのみ表示し、別経路・再認証・権限拡大を自動で試行しない。
 4. **割当数量Qは依然取得不能**ならVendorへ「Core/Plusにおける各OrgのAllocated RC Licensesのread-only API/公式方法」「PATCH後のread-back手段」「未導入0台時の最低有料割当（GUIには0表示例あり）」を確認。正式手段が得られるまで自動PATCHしない。
 
@@ -37,9 +37,16 @@
 - 両方とも `roaming_client_count` と `mobile_roaming_client_count` は**PowerShell出力空欄**。現行診断コードは「属性欠落」と「JSON null」を区別しないため、今の情報ではどちらか未確定。**0台に変換しない**。
 - GUI上でTest02のRoaming Clients in Useは2台とユーザーが確認済み。したがって、返された`user_count=1`を実登録端末数として採用することは**否決**。
 - プラン名称の読取は`basic=Core`, `plus=Plus`の実測対応を得たが、POST/PATCHに渡す正式`sku`の値と同一とは断定しない。
-- **今後のUの第一候補は既存`DnsFilterInventoryClient.getInventory`が組織スコープ・ページング・Site横断一致を検証した`agents`の件数**。DNSFilter公式ドキュメントでは「Roaming Clients in Use」は当該アカウントに関連付けられた全Agentの数。GUIのTest02 2台と当該件数を照合し、stale/offline/queue-uninstallの扱いに注意する。ネットワーク経由の利用分は別途課金基準を確認する。
+- **U（Roaming Client実登録数）の取得候補を実機で照合済み**: Test02 ID `10220954` に対する `GET /v1/user_agents?organization_ids=10220954` は `data` が**2件**、`links.next`はnull。GUI `Roaming Clients in Use=2` と一致。既存`DnsFilterInventoryClient.getInventory`は組織スコープ、全Site、ページング、整合性検証を持ち、これを実装上のU_RC取得経路として再利用する。ただし**直接の単発GETの一致は確認したが、アプリ内の同機能の実環境E2E・オフライン/古い/削除済みAgentの課金カウントは未検証**。ネットワーク経由の利用分は別途計数する。
 - **割当ライセンス数Qのread-backは引き続き未確認**。既存Org GETでは返されないため、自動PATCHは未承認・未実装とする。
 - 根拠: ユーザー実機出力、DNSFilter公式「Pricing license types」https://help.dnsfilter.com/hc/en-us/articles/4991568454035-Pricing-license-types 。
+
+
+## GUIのAllocated/Current Usage説明（2026-11-04）
+- ユーザー提示のSubscriptions画面: Test02/Coreは**Allocated RC Licenses=0、Roaming Clients in Use=2、Network Licenses in Use=0、Current License Usage=2、Cost=$0.00/mo**。Test03/Plusは割当1、実使用0、Cost=$2.00/mo。親MSPはNFR 25席、課金$0.00。
+- `Current License Usage`のtooltipは「The total licenses recommended based on actual usage (Roaming Clients + Network Traffic). This may impact your DNSFilter billing.」。したがって`Current License Usage`はAgent件数単独とは定義できず、ネットワーク経由のライセンスも含む推奨値。Test02はネットワーク利用0なのでAgent2件と総利用2件が一致する。
+- GUIの`Cost=$0.00/mo`は表示値であって最終Invoiceでの課金0や、割当0での継続契約適法性を確定する証拠ではない。DNSFilter公式回答の「アクティブOrganization最低1ライセンス」とGUIの0表示には不一致あり。変更が確定保存された状態かも未確認。
+- 結論: U_RCの候補取得経路は確認できたが、Q（割当数）はAPI取得不可のまま。**U_RCはQではない**。自動変更の有効化はQ read-back正式経路が確定するまで保留。
 
 ## 後続実装ゲート
 - 実利用Uの意味と現在割当Qの検証手段がそろうまで、自動ライセンス増減を本番ONにしない。
