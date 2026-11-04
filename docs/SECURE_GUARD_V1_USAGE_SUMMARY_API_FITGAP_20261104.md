@@ -35,6 +35,35 @@ DNSFilter公式管理画面を正本とする。Secure GuardはAPIに存在す�
 - この不一致がある間は、API割当数を利用した超過通知・請求・自動補正を禁止。定期実行・Slack実送信は従前どおり無効。
 - `total_client_stats` は今回両Orgで400。採用対象外。再試行を繰り返さない。
 
+## 2026-11-04 最終再照合・数量計算の新決定
+
+ユーザーが公式GUIで **Test02の割当を1、Test03の割当を3** に設定した後、同一Read-onlyスクリプトで再実測：
+
+| フィールド | Test02 Core (10220954) | Test03 Plus (10222523) |
+| --- | ---: | ---: |
+| GUI Allocated RC Licenses | 1 | 3 |
+| API `allocated_roaming_clients` | **1** | **3** |
+| GUI Roaming Clients in Use | 2 | 0 |
+| API `roaming_clients_in_use` | **2** | **0** |
+| API `user_count`（監視・数量算定には不使用） | 1 | 3 |
+
+**現在の2 Organizationでは割当・利用の両方ともGUI/API一致。** Test02の以前のGUI「0」表示が未保存か反映差かは未確定だが、現在の同期PASSは実測で確認した。探索中の `total_client_stats` は両Organizationで400のため不採用。
+
+### 数量の責任分担（ユーザー決定・2026-11-04）
+
+- **DNSFilter仕入・支払数量：`allocated_roaming_clients`**。
+- **atLIB顧客請求の従量数量：`roaming_clients_in_use`**。
+- **超過監視：利用数量 − 割当数量**（正数の場合に超過）。エージェント方式だけを対象にし、Network Licenses・`Current License Usage`・`user_count` は対象外。
+- API値は**取得時点の値**。請求確定前に、対象月の数量採用ルール（基準日・変更履歴・増減時日割・休眠Agent整理等）を契約/請求管理レーンで別途確定する。今回のPRは請求書生成・価格計算・請求確定を行わない。
+- 既存の手動割当スナップショットは履歴とフォールバック候補として保持するが、APIが正常なら監視判定は同一レスポンスの公式2項目を使用する。API取得失敗時に手動値で成功を偽装しない。
+
+### PR #4の実装境界
+
+- `DnsFilterRoamingUsageClient`：公式 `organization_usage_detailed` の**GETのみ**。Organization ID、応答形状、非負整数の割当/利用数を検証。未知形状・他Organization・非200はfail-closed。
+- MSP管理者限定のオンデマンド表示と純粋比較ロジックへの接続。登録Agent一覧からの数え直しなし。
+- GitHub ActionsのTypeScriptビルド・55テスト PASS / 0 FAIL（Run 41789507485）。
+- **未実施**：本番API接続、DB Migration、定期ジョブ、超過イベント永続化・重複排除、Slack実送信、請求算定。Draft維持。
+
 ## 現行PoC/実機で確定していること
 - `GET /v1/user_agents?organization_ids=10220954` は Test02/Coreで**データ2レコード**、次ページなし。これは「一覧2件」の事実であり、Protected台数・課金対象台数・契約利用数の意味付けはしない。
 - 既存Issue #36の2026-10-18実機GETでは、`GET /v1/metrics/organization_usage_detailed/{id}` の **`roaming_clients_in_use=2`、`network_traffic_in_use=0`** が、当時のGUI表示（2、0）と一致した。`allocated_roaming_clients=1`、`user_count=1`は別の意味の値。
