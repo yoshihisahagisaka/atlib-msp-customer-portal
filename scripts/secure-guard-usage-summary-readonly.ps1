@@ -62,14 +62,12 @@ try {
   $fromDate = (Get-Date).ToUniversalTime().AddDays(-7).ToString('yyyy-MM-dd')
 
   foreach ($org in $organizations) {
+    # The previously exploratory total_client_stats endpoint returned HTTP 400
+    # for both test Organizations; do not retry it for this approved check.
     $checks = @(
       @{
         Label = "organization_usage_detailed (from=$fromDate; to=$toDate)"
         Uri = "https://api.dnsfilter.com/v1/metrics/organization_usage_detailed/$($org.Id)?from=$fromDate&to=$toDate"
-      },
-      @{
-        Label = 'total_client_stats'
-        Uri = "https://api.dnsfilter.com/v1/traffic_reports/total_client_stats?organization_id=$($org.Id)"
       }
     )
     foreach ($check in $checks) {
