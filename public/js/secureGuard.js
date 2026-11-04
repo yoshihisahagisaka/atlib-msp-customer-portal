@@ -179,6 +179,34 @@ if (adminOrganizationList) {
           }
         });
         row.append(allocationForm);
+
+        // API numbers are read from DNSFilter, never derived from the Agent list.
+        // The manual GUI snapshot remains separate and is not used for this comparison.
+        const usageButton = document.createElement('button');
+        usageButton.type = 'button';
+        usageButton.className = 'btn btn-small btn-secondary';
+        usageButton.textContent = 'DNSFilterの割当数・利用数を確認';
+        usageButton.disabled = org.status !== 'active' || org.mappingStatus !== 'active';
+        const usageStatus = document.createElement('p');
+        usageStatus.setAttribute('role', 'status');
+        usageStatus.textContent = 'API利用状況: 未取得（定期監視・Slack通知は無効）';
+        usageButton.addEventListener('click', async () => {
+          usageButton.disabled = true;
+          usageStatus.textContent = 'DNSFilter公式APIを照会しています。';
+          try {
+            const result = await adminFetch(`/organizations/${encodeURIComponent(org.id)}/roaming-license-usage`);
+            const label = result.status === 'overage'
+              ? `超過 ${result.overBy}台`
+              : result.status === 'within_allocation' ? '超過なし' : '判定不可';
+            usageStatus.textContent =
+              `DNSFilter API割当 ${result.allocated}台 / 利用 ${result.usage}台 / ${label} / 取得日時 ${new Date(result.observedAt).toLocaleString('ja-JP')}（参考表示・未通知）`;
+          } catch {
+            usageStatus.textContent = '公式API利用状況を確認できませんでした。超過判定は行いません。';
+          } finally {
+            usageButton.disabled = org.status !== 'active' || org.mappingStatus !== 'active';
+          }
+        });
+        row.append(usageButton, usageStatus);
         organizations.append(row);
         scope.append(new Option(org.organizationName, org.id));
       }
