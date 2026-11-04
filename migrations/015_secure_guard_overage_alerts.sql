@@ -1,6 +1,7 @@
 -- Secure Guard only: minimum durable overage episode and human follow-up state.
 -- No prices, invoices, billing periods, DNSFilter mutations or backfill.
--- Migration 014 is the separate draft manual snapshot; verify concurrent migrations before application.
+-- Migration 014 manual snapshot was retired from this Draft before application.
+-- Confirm schema_migrations and competing migration numbers before staging or production use.
 CREATE TABLE secure_guard_overage_alerts (
   id BIGSERIAL PRIMARY KEY,
   customer_organization_id UUID NOT NULL
