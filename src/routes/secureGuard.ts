@@ -14,6 +14,7 @@ import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
 import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
 import { compareConfirmedLicenseUsage } from '../services/secureGuardLicenseOverage';
+import type { SecureGuardOverageStore } from '../services/secureGuardOverageStore';
 
 const membershipRoleSchema = z.enum(['org_admin', 'operator', 'viewer']);
 const invitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -24,6 +25,10 @@ const initialInvitationSchema = z.object({
 const initialInvitationCancelSchema = z.object({ customerOrganizationId: z.string().uuid() });
 const organizationSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() });
 // Reference snapshot is entered only by the MSP administrator after inspecting DNSFilter GUI.
+const overageHandlingSchema = z.object({
+  responseChoice: z.enum(['reduce_clients', 'increase_allocation']),
+  responseNote: z.string().trim().max(500).nullable().optional(),
+}).strict();
 const allocationSnapshotSchema = z.object({
   allocatedRcLicensesSnapshot: z.number().int().min(0).max(2147483647),
 }).strict();
@@ -54,6 +59,7 @@ export function createSecureGuardRouter(input: {
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
   roamingUsageClient?: DnsFilterRoamingUsageClient;
+  overageStore?: Pick<SecureGuardOverageStore, 'listOpen' | 'markInProgress'>;
 }): Router {
   const router = Router();
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
@@ -157,6 +163,26 @@ export function createSecureGuardRouter(input: {
     } catch {
       res.status(502).json({ error: 'ROAMING_USAGE_UNAVAILABLE' });
     }
+  });
+  // Internal MSP response tracking only; neither endpoint changes DNSFilter licensing or bills a client.
+  router.get('/admin/overage-alerts', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => {
+    if (!input.overageStore) return void res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' });
+    try { res.json({ alerts: await input.overageStore.listOpen() }); }
+    catch { res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' }); }
+  });
+  router.patch('/admin/overage-alerts/:alertId/handling', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    if (!input.overageStore) return void res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' });
+    if (!/^\\d+$/.test(req.params.alertId!)) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    const parsed = overageHandlingSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+      const updated = await input.overageStore.markInProgress(
+        req.secureGuardUserId!, req.params.alertId!, parsed.data.responseChoice,
+        parsed.data.responseNote || null,
+      );
+      if (!updated) return void res.status(404).json({ error: 'OVERAGE_ALERT_NOT_FOUND' });
+      res.status(204).end();
+    } catch { res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' }); }
   });
   router.get('/admin/organizations/:organizationId/memberships', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     res.json({ memberships: await input.repo.listManagedMemberships(req.params.organizationId!) });
