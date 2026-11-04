@@ -32,3 +32,5 @@ CREATE UNIQUE INDEX secure_guard_overage_one_open_per_organization
   WHERE resolved_at IS NULL;
 CREATE INDEX secure_guard_overage_recent
   ON secure_guard_overage_alerts(opened_at DESC, customer_organization_id);
+CREATE INDEX secure_guard_overage_org_observed
+  ON secure_guard_overage_alerts(customer_organization_id, last_observed_at DESC, id DESC);
