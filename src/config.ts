@@ -52,6 +52,8 @@ export interface Config {
     // (コード側はチャンネルの概念を持たない)。
     webhookCustomerApplication?: string;
     webhookMonthlyReport?: string;
+    /** Dedicated Secure Guard allocation-overage channel; unset until explicitly supplied. */
+    webhookSecureGuardOverage?: string;
   };
   cloudRunJob: {
     // オンボーディング時のZabbixディスカバリ設定Job（msp-discovery-setup）呼び出し用。
@@ -158,6 +160,7 @@ export async function loadConfig(): Promise<Config> {
     slack: {
       webhookCustomerApplication: process.env.SLACK_WEBHOOK_CUSTOMER_APPLICATION || undefined,
       webhookMonthlyReport: process.env.SLACK_WEBHOOK_MONTHLY_REPORT || undefined,
+      webhookSecureGuardOverage: process.env.SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK || undefined,
     },
     cloudRunJob: {
       projectId: gcpProjectId,
