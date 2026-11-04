@@ -3,6 +3,19 @@
 対象: Draft PR #4（PR #3をbaseとする差分）。基準: `4d6ff027bba559d43e5db95298a396cc11733937`。
 区分: 公開API仕様の確認＋既存PoC照合。**最新GUI定義に基づく実API再照合は未実施。超過判定・通知は未有効。**
 
+## 確定スコープ（2026-11-04 最終判断）
+
+**Secure Guard管理システムの目的はライセンス利用監視と超過時の対応管理のみ。** 以前の「割当数からDNSFilter支払額、利用数から顧客請求額を計算する」という検討は本システムの仕様から撤回する。請求書・金額集計・単価・課金履歴・独自請求基盤は実装しない。DNSFilter仕入金額は公式Billing画面で確認する。
+
+- 公式GET `GET /v1/metrics/organization_usage_detailed/{id}` から `allocated_roaming_clients` と `roaming_clients_in_use` のみを使って超過判定する。
+- `roaming_clients_in_use > allocated_roaming_clients` のときMSP管理画面にアラートを表示し、Secure Guard専用Slackに通知する。
+- atLIBが顧客へ「不要端末を整理する」か「割当ライセンス数を増やす」かを確認する。いずれも自動実行しない。
+- 同一超過で毎回Slackを連投しないように最小限の状態・通知結果を記録。対応中・解消を管理する。
+- 運用開始前に専用Slack通知先をユーザーから取得する。本番配信・Scheduler・DB migration・DNSFilter変更系APIは別途Go/No-Go。
+- 従前の手動割当スナップショットはDraft PR #4の歴史的実装であり、通常監視では使用しない。削除・Migration整理はレビューで調整する。
+
+この項目を本ドキュメントの最新Canonical判断とし、以下にある請求数量計算案の記載より優先する。
+
 ## 目的
 DNSFilter公式管理画面を正本とする。Secure GuardはAPIに存在する数字・状態をそのまま表示/比較し、登録レコード数から別の「保護中台数」「課金対象台数」を生成しない。提供方式はRoaming Clientエージェントに限定。割当ライセンス数は公式GUIからMSP管理者が契約・変更時だけ手動転記する（PR #4の実装）。
 
