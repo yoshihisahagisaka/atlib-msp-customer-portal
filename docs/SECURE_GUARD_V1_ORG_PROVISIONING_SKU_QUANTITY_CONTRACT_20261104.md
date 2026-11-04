@@ -56,6 +56,15 @@
 - 参照値がない、古い、またはAPIが必要な公式利用数を返せない場合は超過なしと断言せず「照合不可」とする。通知可能なAPIフィールドと計数定義は既存PoC・Canonicalを正としてFit/Gapする。既存検証をやり直さない。
 - 優先Decision: `DECISION_SECURE_GUARD_DNSFILTER_API_BILLING_UPDATE_20261104.md` の4B。これまでのQ取得API必須論や、台数の独自計算/自動割当案より優先する。
 
+## 6B. 超過アラート：管理画面とSlack（実装時チャンネル指定）
+- 4B承認の比較結果を**Secure Guard管理画面に表示**し、**超過検知時にはSlack Incoming Webhookでも通知**する。いずれも同じ比較値と判定を使用し、Slack用に別の端末数集計・状態管理を作らない。
+- SlackはSecure Guard通知用の**独立した設定**を用意する。現行`src/config.ts`には`webhookCustomerApplication`と`webhookMonthlyReport`が存在するが**再利用しない（業務用途・送信先が異なる）**。Webhook送信方式、秘匿情報の既存扱いのみ再利用。チャンネル/Webhookの実値はユーザーが実装時に提示するため、現時点では未設定・送信禁止。
+- メッセージに顧客名、利用数（DNSFilter APIで確認済みのフィールド）、参照用の手動割当数、超過数、判定時刻、管理画面URL（有効なものがある場合）を含める。Token・Webhook・Site Key・個人の端末情報を載せない。
+- 同一状態の定期チェックは重複通知しない。新たな超過や超過数が変化した場合に通知。正常/取得失敗/UNKNOWNと、正常復帰を誤認しない。最小の通知履歴と監査に限定し、独自CRMや高機能通知管理UIを増設しない。
+- Slack未設定・失敗時も管理画面の超過表示は有効。Slack未配信を配信成功と扱わない。必要な場合の再送は重複防止と監査を前提に、Workの既存実装Fit/Gapで最小化する。
+- テスト: Webhook未設定なら送信ゼロ、超過なしはゼロ、新規超過は1回、同一超過の再チェックはゼロ、超過数変更時は1回、UNKNOWNは誤送信なし、Webhook失敗時にUI表示を損なわず秘密をログに出さない。
+- 通知チャンネルの設定・実Webhook送信・本番稼働は**後続の実装段階で別途確認**。本更新は仕様・承認範囲のみ。
+
 ## 7. 未確定・次のFit/Gap
 1. DNSFilterから送付されるCore/Plus正式SKU文字列。
 2. Organization作成時のSKU/数量保存値を確認できる公式GET/Billing手段。現行`GET /v1/organizations/{id}`は値を返さない。
