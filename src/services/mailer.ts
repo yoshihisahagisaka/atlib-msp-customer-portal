@@ -61,6 +61,22 @@ export class Mailer {
     });
   }
 
+  async sendSecureGuardInvitationEmail(to: string, acceptUrl: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: 'atLIB Secure Guard ご利用開始のご案内',
+      text: [
+        'atLIB Secure Guardへの招待を受け付けました。',
+        '以下のURLを開き、個人用パスワードを設定してください。',
+        '',
+        acceptUrl,
+        '',
+        'この招待は24時間で失効し、一度だけ利用できます。心当たりがない場合は破棄してください。',
+      ].join('\n'),
+    });
+  }
+
   /**
    * toはカンマ区切りで複数宛先可。生成済みPPTXをそのまま添付して送る。
    * fromは通常のSMTP_FROM(個人メールボックス)とは別に、月次レポート専用の送信元(noreply@atlib.jp等)を渡す想定。
