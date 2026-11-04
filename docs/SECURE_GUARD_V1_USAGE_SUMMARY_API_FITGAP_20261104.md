@@ -15,6 +15,26 @@ DNSFilter公式管理画面を正本とする。Secure GuardはAPIに存在す�
   - https://help.dnsfilter.com/hc/en-us/articles/4991568454035-Pricing-license-types
   - https://help.dnsfilter.com/hc/en-us/articles/43809316077715-Sales-managed-MSP-subscription-management
 
+## 2026-11-04 再実測：GUIとの照合
+
+ユーザーが公式管理画面で確認し、既存Read-onlyスクリプト（UTC 2026-10-28〜11-04）を実行した結果：
+
+| 項目 | Test02 Core (10220954) | Test03 Plus (10222523) |
+| --- | ---: | ---: |
+| GUI Allocated Licenses 入力値 | **0** | 1 |
+| API `allocated_roaming_clients` | **1** | 1 |
+| GUI Roaming Clients in Use | 2 | 0 |
+| API `roaming_clients_in_use` | 2 | 0 |
+| `organization_usage_detailed` HTTP | 200 | 200 |
+| `total_client_stats` HTTP | 400 | 400 |
+
+判定：
+- **利用数のGUI/API照合はPASS**（2件）。現行Roaming Client方式の監視に利用する候補は `roaming_clients_in_use`。
+- **割当数のGUI/API照合はTest02でFAIL**（GUI 0、API 1）。`allocated_roaming_clients` を割当参照値へ自動採用・補正しない。既存のMSP管理者によるGUI値手動転記を維持する。
+- 画面の0が保存済みか、保存・再読込後も0かは未確認。DNSFilter公式文書では既存Organizationの初期割当1、過去ベンダー回答（atlib-corporate-site PR #44）では最低1ライセンスの記録があり、この差の原因は未確定。
+- この不一致がある間は、API割当数を利用した超過通知・請求・自動補正を禁止。定期実行・Slack実送信は従前どおり無効。
+- `total_client_stats` は今回両Orgで400。採用対象外。再試行を繰り返さない。
+
 ## 現行PoC/実機で確定していること
 - `GET /v1/user_agents?organization_ids=10220954` は Test02/Coreで**データ2レコード**、次ページなし。これは「一覧2件」の事実であり、Protected台数・課金対象台数・契約利用数の意味付けはしない。
 - 既存Issue #36の2026-10-18実機GETでは、`GET /v1/metrics/organization_usage_detailed/{id}` の **`roaming_clients_in_use=2`、`network_traffic_in_use=0`** が、当時のGUI表示（2、0）と一致した。`allocated_roaming_clients=1`、`user_count=1`は別の意味の値。
