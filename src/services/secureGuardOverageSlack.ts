@@ -35,7 +35,7 @@ export async function sendSecureGuardOverageSlack(
     '*【Secure Guard】割当ライセンス超過*',
     `顧客: ${safeName(message.organizationName)}`,
     `DNSFilter利用数: ${message.usage}台`,
-    `割当ライセンス数（DNSFilter画面から転記）: ${message.allocated}台`,
+    `割当ライセンス数（DNSFilter公式API）: ${message.allocated}台`,
     `超過: ${message.usage - message.allocated}台`,
     `確認日時: ${message.checkedAt}`,
     '不要端末の削除、または割当数の変更をご確認ください。',
