@@ -190,58 +190,7 @@ if (adminOrganizationList) {
         stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
         row.append(stop);
 
-        // DNSFilter GUI is authoritative. This is an explicitly dated manual copy of Allocated RC Licenses.
-        const snapshot = org.allocatedRcLicensesSnapshot;
-        const knownSnapshot = snapshot !== null && snapshot !== undefined;
-        const updatedAt = org.allocationSnapshotUpdatedAt
-          ? new Date(org.allocationSnapshotUpdatedAt).toLocaleString('ja-JP') : '未転記';
-        row.append(adminText(`DNSFilter割当ライセンス数（手動転記）: ${knownSnapshot ? snapshot + '台' : '未設定'} / 最終転記: ${updatedAt}`));
-        const allocationForm = document.createElement('form');
-        const allocationLabel = document.createElement('label');
-        allocationLabel.textContent = '公式画面で確認した割当ライセンス数';
-        const allocationInput = document.createElement('input');
-        allocationInput.type = 'number';
-        allocationInput.min = '0';
-        allocationInput.max = '2147483647';
-        allocationInput.step = '1';
-        allocationInput.required = true;
-        allocationInput.value = knownSnapshot ? String(snapshot) : '';
-        allocationInput.disabled = org.status !== 'active' || org.mappingStatus !== 'active';
-        allocationLabel.append(allocationInput);
-        const allocationSave = document.createElement('button');
-        allocationSave.type = 'submit';
-        allocationSave.textContent = '転記内容を保存';
-        allocationSave.className = 'btn btn-small btn-secondary';
-        allocationSave.disabled = allocationInput.disabled;
-        const allocationStatus = document.createElement('p');
-        allocationStatus.setAttribute('role', 'status');
-        allocationForm.append(allocationLabel, allocationSave, allocationStatus);
-        allocationForm.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const raw = allocationInput.value.trim();
-          const value = Number(raw);
-          if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(value) || value > 2147483647) {
-            allocationStatus.textContent = '0以上の整数で入力してください。未入力を0台として保存することはできません。';
-            return;
-          }
-          allocationSave.disabled = true;
-          allocationStatus.textContent = '転記内容を保存しています。';
-          try {
-            await adminFetch(`/organizations/${encodeURIComponent(org.id)}/allocation-snapshot`, {
-              method: 'PATCH',
-              body: JSON.stringify({ allocatedRcLicensesSnapshot: value }),
-            });
-            await renderAdmin();
-            adminStatus('organizations-status', '割当ライセンス数の参照値を保存しました。DNSFilterの割当設定は変更していません。');
-          } catch {
-            allocationStatus.textContent = '保存できませんでした。DNSFilter側の設定は変更されていません。';
-            allocationSave.disabled = false;
-          }
-        });
-        row.append(allocationForm);
-
         // API numbers are read from DNSFilter, never derived from the Agent list.
-        // The manual GUI snapshot remains separate and is not used for this comparison.
         const usageButton = document.createElement('button');
         usageButton.type = 'button';
         usageButton.className = 'btn btn-small btn-secondary';
