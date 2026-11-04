@@ -125,7 +125,8 @@ if (adminOrganizationList) {
         const card = document.createElement('div');
         card.className = 'card';
         card.append(adminText(`${alert.organizationName}: 割当 ${alert.allocated}台 / 利用 ${alert.usage}台 / 超過 ${alert.overBy}台`));
-        card.append(adminText(`発見: ${new Date(alert.openedAt).toLocaleString('ja-JP')} / 最終確認: ${new Date(alert.lastObservedAt).toLocaleString('ja-JP')} / 対応: ${alert.handlingStatus === 'in_progress' ? '対応中' : '未対応'} / 通知: ${alert.notificationStatus}`));
+        const notificationLabel = { pending: '通知待ち', attempting: '送信処理中', sent: '通知済', needs_review: '送信要確認（自動再送なし）' }[alert.notificationStatus] || '不明';
+        card.append(adminText(`発見: ${new Date(alert.openedAt).toLocaleString('ja-JP')} / 最終確認: ${new Date(alert.lastObservedAt).toLocaleString('ja-JP')} / 対応: ${alert.handlingStatus === 'in_progress' ? '対応中' : '未対応'} / Slack: ${notificationLabel}`));
         const form = document.createElement('form');
         const choiceLabel = document.createElement('label');
         choiceLabel.textContent = '顧客へ確認した対応方針';
