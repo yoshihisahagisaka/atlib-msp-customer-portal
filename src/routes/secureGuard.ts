@@ -172,7 +172,7 @@ export function createSecureGuardRouter(input: {
   });
   router.patch('/admin/overage-alerts/:alertId/handling', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     if (!input.overageStore) return void res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' });
-    if (!/^\\d+$/.test(req.params.alertId!)) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    if (!/^\d+$/.test(req.params.alertId!)) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     const parsed = overageHandlingSchema.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try {
