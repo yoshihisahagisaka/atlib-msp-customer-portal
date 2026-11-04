@@ -1,6 +1,7 @@
 # Secure Guard: one-time, READ-ONLY DNSFilter official usage-summary inspection.
 # Outputs field names and scalar count values only. Never shows API keys, hostnames, Agent IDs or raw bodies.
 # Run in Windows PowerShell 5.1+ from the repository root.
+# The API's 'active' count is NOT assumed equivalent to GUI 'Protected'.
 # This is not a license counting implementation, scheduled monitor or permission to bill from these values.
 [CmdletBinding()]
 param(
@@ -52,10 +53,9 @@ try {
     @{ Name = 'Test02 Core'; Id = '10220954' },
     @{ Name = 'Test03 Plus'; Id = '10222523' }
   )
-  $paths = @(
-    '/v1/traffic_reports/total_roaming_clients',
-    '/v1/traffic_reports/total_client_stats'
-  )
+  # OS-wise total_roaming_clients is deployment distribution, not Protected status.
+  # Only the direct official total/active metric is a candidate for GUI comparison.
+  $paths = @('/v1/traffic_reports/total_client_stats')
 
   foreach ($org in $organizations) {
     foreach ($path in $paths) {
