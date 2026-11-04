@@ -77,14 +77,14 @@ const org = { id: orgId, status: 'active', mappingStatus: 'active', dnsfilterOrg
 const path = '/api/secure-guard/admin/organizations/' + orgId + '/roaming-license-usage';
 const headers = { Cookie: 'secure_guard_session=test' };
 
-test('MSP-only API exposes official counts and never uses manually entered allocation', async () => {
+test('MSP-only API exposes verified DNSFilter quantities without local allocation inference', async () => {
   const seen = [];
   const client = { getRoamingUsage: async (id) => {
     seen.push(id);
     return { roamingClientsInUse: 2, dnsfilterAllocatedRoamingClients: 1,
       retrievedAt: observed.toISOString(), from: '2026-10-28', to: '2026-11-04' };
   } };
-  await withApp(true, [{ ...org, allocatedRcLicensesSnapshot: 99 }], client, async (base) => {
+  await withApp(true, [org], client, async (base) => {
     const response = await fetch(base + path, { headers });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
