@@ -22,7 +22,7 @@ export interface OverageMonitorSummary {
 export async function runSecureGuardOverageCheck(input: {
   repo: Pick<SecureGuardRepo, 'listManagedOrganizations'>;
   client: Pick<DnsFilterRoamingUsageClient, 'getRoamingUsage'>;
-  store: Pick<SecureGuardOverageStore, 'observe' | 'claimPendingNotification' | 'completeNotification'>;
+  store: Pick<SecureGuardOverageStore, 'observe' | 'claimPendingNotification' | 'completeNotification' | 'reconcileStaleNotifications'>;
   slackWebhook?: string;
   managementUrl?: string;
   /** Injectable only for offline tests; production uses the dedicated Slack adapter. */
@@ -57,6 +57,7 @@ export async function runSecureGuardOverageCheck(input: {
     }
   }
 
+  summary.notificationsNeedReview += await input.store.reconcileStaleNotifications();
   if (!input.slackWebhook) return summary;
   // One pass for only the backlog present at the start, never an unbounded loop.
   const maxClaims = Math.max(organizations.length, 1);
