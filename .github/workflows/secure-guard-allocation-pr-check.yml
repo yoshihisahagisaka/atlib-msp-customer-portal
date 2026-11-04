@@ -1,0 +1,37 @@
+name: Secure Guard allocation PR offline checks
+
+on:
+  pull_request:
+    branches:
+      - feature/secure-guard-daily-management
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'public/**'
+      - 'migrations/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/secure-guard-allocation-pr-check.yml'
+  push:
+    branches:
+      - feat/secure-guard-allocation-snapshot-20261104
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile and run offline tests
+        run: npm test
