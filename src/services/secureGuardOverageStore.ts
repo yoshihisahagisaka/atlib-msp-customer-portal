@@ -33,7 +33,7 @@ export class SecureGuardOverageStore {
     dnsfilterOrganizationId: string,
     comparison: LicenseOverageResult,
     observedAt: string,
-  ): Promise<'opened' | 'updated' | 'resolved' | 'normal' | 'unavailable'> {
+  ): Promise<'opened' | 'updated' | 'resolved' | 'normal' | 'unavailable' | 'stale'> {
     if (comparison.status === 'unknown') return 'unavailable';
     if (!validNumber(comparison.usage) || !validNumber(comparison.allocated) ||
         !/^\d+$/.test(dnsfilterOrganizationId) || Number.isNaN(Date.parse(observedAt))) {
@@ -51,10 +51,18 @@ export class SecureGuardOverageStore {
         await client.query('ROLLBACK');
         return 'unavailable';
       }
-      const existing = await client.query(`SELECT id FROM secure_guard_overage_alerts
-        WHERE customer_organization_id = $1 AND resolved_at IS NULL FOR UPDATE`,
+      // Highest observed timestamp is retained even after resolution. An older
+      // concurrent GET must not reopen a resolved episode or silently clear an alert.
+      const existing = await client.query(`SELECT id, last_observed_at, resolved_at
+        FROM secure_guard_overage_alerts WHERE customer_organization_id = $1
+        ORDER BY last_observed_at DESC, id DESC LIMIT 1 FOR UPDATE`,
       [customerOrganizationId]);
-      const id = existing.rows[0]?.id;
+      const last = existing.rows[0];
+      if (last && new Date(last.last_observed_at).getTime() >= Date.parse(observedAt)) {
+        await client.query('COMMIT');
+        return 'stale';
+      }
+      const id = last && last.resolved_at === null ? last.id : null;
       if (comparison.status === 'overage') {
         if (comparison.overBy === null || !validNumber(comparison.overBy) || comparison.overBy === 0) {
           await client.query('ROLLBACK');
