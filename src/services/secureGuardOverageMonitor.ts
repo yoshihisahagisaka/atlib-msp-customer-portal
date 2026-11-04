@@ -24,6 +24,8 @@ export async function runSecureGuardOverageCheck(input: {
   store: Pick<SecureGuardOverageStore, 'observe' | 'claimPendingNotification' | 'completeNotification'>;
   slackWebhook?: string;
   managementUrl?: string;
+  /** Injectable only for offline tests; production uses the dedicated Slack adapter. */
+  sendSlack?: typeof sendSecureGuardOverageSlack;
 }): Promise<OverageMonitorSummary> {
   const summary: OverageMonitorSummary = {
     checked: 0, unavailable: 0, opened: 0, resolved: 0,
@@ -59,7 +61,7 @@ export async function runSecureGuardOverageCheck(input: {
   for (let claimNumber = 0; claimNumber < maxClaims; claimNumber++) {
     const notification = await input.store.claimPendingNotification();
     if (!notification) break;
-    const delivery = await sendSecureGuardOverageSlack(input.slackWebhook, {
+    const delivery = await (input.sendSlack ?? sendSecureGuardOverageSlack)(input.slackWebhook, {
       organizationName: notification.organizationName,
       usage: notification.usage,
       allocated: notification.allocated,
