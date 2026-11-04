@@ -11,7 +11,7 @@
 - ユーザーが実際に取得したOpenAPI: `OrganizationCreateSpec` は `{organization: OrganizationCreate}`。 `OrganizationCreate` 内の `name:string`, `managed_by_msp_id:integer` が必須、`sku:string`, `quantity:integer` は任意定義。skuのenum・具体値は非公開。
 - 同一MSPのTest Organization 02/Coreと03/PlusのGETではSKU、Quantity、Planが得られない。Distributor向け `GET /v1/distributors/skus_available` はHTTP404。プラン識別値・Billingのread-backフィールドは**未確定**。DNSFilterがアカウント用SKU値を別途通知予定。
 - 有料プラン保存で即時課金開始、変更は日割り精算。端末の実登録数と割当数量は別。
-- この契約は**個別Organization登録**と**契約上限を超えないライセンス整合方針**を固定する。画面表示/F5の既存Org同期は別契約のまま維持。大量登録・独自請求エンジンは別工程。
+- この契約は**DNSFilter APIによる個別Organization登録**だけを具体化し、ライセンス自動調整はAPI読取・検証手段が確定するまで保留する。画面表示/F5の既存Org同期は別契約のまま維持。大量登録・独自請求エンジンは別工程。
 
 ## 2. 既存コードの利用箇所
 - `src/services/dnsFilterManagementClient.ts`: `createOrganization(name)` は `POST /v1/organizations` に `{organization:{name,managed_by_msp_id:Number(mspId)}}` を送信し、レスポンスのOrg IDとMSP所属を検証。8秒タイムアウト・raw本文非表示。これを拡張する。新規クライアントを作らない。
@@ -50,8 +50,8 @@
 ## 7. 未確定・次のFit/Gap
 1. DNSFilterから送付されるCore/Plus正式SKU文字列。
 2. Organization作成時のSKU/数量保存値を確認できる公式GET/Billing手段。現行`GET /v1/organizations/{id}`は値を返さない。
-3. 数量の正式な上限制約、顧客契約上限Cの最小保持先、既存Config/SecretでSKUを保持する最小方式。
-4. 管理画面`Protected`とAPI`status`/`agent_state`の実測対応、保護状態Pと仕入課金対象の差、現在割当Qの正式GETまたは請求照合手段。これらが未解決なら自動調整は保留する。
+3. 数量の正式な制約、既存Config/Secretで正式SKUを保持する最小方式。独自の契約台数テーブルは本契約の対象外。
+4. DNSFilter管理画面とAPIで同じ台数・状態・割当数を直接参照できる公式手段。これらが未解決ならSecure Guardでは値を作らず、自動調整も保留する。
 5. Work実装前にPR #3最新版とのFit/Gap、テスト差分、稼働中のreview revisionを照合する。
 
 本記録は**設計のみ**。コード・DB Migration・DNSFilter書込・Cloud Run・Secret・IAM・Production操作を行わない。
