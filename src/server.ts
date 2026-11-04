@@ -42,6 +42,7 @@ import type { StaffRoleDeps } from './domain/staffRoles';
 import { SecureGuardRepo } from './services/secureGuardRepo';
 import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
 import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
+import { DnsFilterRoamingUsageClient } from './services/dnsFilterRoamingUsageClient';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
 import { createSecureGuardRouter } from './routes/secureGuard';
 import { DnsFilterManagementClient } from './services/dnsFilterManagementClient';
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
   const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
   // Deployment supplies this only to the server process. No browser route can read it.
   const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
+  const dnsFilterRoamingUsageClient = new DnsFilterRoamingUsageClient(config.gcpProjectId);
   const dnsFilterManagementClient = new DnsFilterManagementClient(config.gcpProjectId, process.env.DNSFILTER_MSP_ID);
   const staffAuthService = new StaffAuthService(config.staffAuth.jwtSecret);
   const adminPrincipalsRepo = new AdminPrincipalsRepo(pool);
@@ -122,6 +124,7 @@ async function main(): Promise<void> {
       mailer,
       portalBaseUrl: config.portalBaseUrl,
       managementClient: dnsFilterManagementClient,
+      roamingUsageClient: dnsFilterRoamingUsageClient,
     }),
   );
 
