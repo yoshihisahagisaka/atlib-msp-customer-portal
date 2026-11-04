@@ -12,6 +12,8 @@ import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secu
 import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
 import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
+import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
+import { compareConfirmedLicenseUsage } from '../services/secureGuardLicenseOverage';
 
 const membershipRoleSchema = z.enum(['org_admin', 'operator', 'viewer']);
 const invitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -51,6 +53,7 @@ export function createSecureGuardRouter(input: {
   mailer: Mailer;
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
+  roamingUsageClient?: DnsFilterRoamingUsageClient;
 }): Router {
   const router = Router();
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
@@ -115,6 +118,44 @@ export function createSecureGuardRouter(input: {
       res.json(value);
     } catch {
       res.status(500).json({ error: 'ALLOCATION_SNAPSHOT_UNAVAILABLE' });
+    }
+  });
+  // Verified official API fields only. Read-only, MSP-only, no polling or Slack side effects.
+  router.get('/admin/organizations/:organizationId/roaming-license-usage', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const organizationId = req.params.organizationId!;
+    if (!z.string().uuid().safeParse(organizationId).success) {
+      res.status(400).json({ error: 'INVALID_REQUEST' });
+      return;
+    }
+    if (!input.roamingUsageClient) {
+      res.status(503).json({ error: 'ROAMING_USAGE_UNAVAILABLE' });
+      return;
+    }
+    try {
+      const organizations = await input.repo.listManagedOrganizations();
+      const organization = organizations.find((candidate) => candidate.id === organizationId);
+      if (!organization || organization.status !== 'active' || organization.mappingStatus !== 'active' ||
+          !organization.dnsfilterOrganizationId) {
+        res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
+        return;
+      }
+      const usage = await input.roamingUsageClient.getRoamingUsage(organization.dnsfilterOrganizationId);
+      const comparison = compareConfirmedLicenseUsage(
+        usage.roamingClientsInUse, usage.dnsfilterAllocatedRoamingClients,
+      );
+      res.json({
+        organizationId,
+        source: 'dnsfilter.organization_usage_detailed',
+        allocated: usage.dnsfilterAllocatedRoamingClients,
+        usage: usage.roamingClientsInUse,
+        status: comparison.status,
+        overBy: comparison.overBy,
+        observedAt: usage.retrievedAt,
+        periodFrom: usage.from,
+        periodTo: usage.to,
+      });
+    } catch {
+      res.status(502).json({ error: 'ROAMING_USAGE_UNAVAILABLE' });
     }
   });
   router.get('/admin/organizations/:organizationId/memberships', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
