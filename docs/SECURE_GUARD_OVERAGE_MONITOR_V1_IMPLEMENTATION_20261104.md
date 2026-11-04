@@ -20,11 +20,11 @@
 ## 本番変更前のGate（未実施）
 
 - [ ] PR #4のReview・統括Go、Git CanonicalとのFit/Gap。
-- [ ] Migration 014/015 と本番DB・他レーンの番号競合をread-only確認。停止判断者／切り戻し責任者確定。
+- [ ] Migration 015 と本番DB・他レーンの番号競合をread-only確認。ドラフトから撤去した旧014がどこかの環境で適用済みでないか確認。停止判断者／切り戻し責任者確定。
 - [ ] DNSFilter API Secret、MSPと顧客Organizationの対応付け、GET-only権限を再確認。
 - [ ] 専用Slackチャンネル／Webhook受領、Secret登録、承認済み宛先へのテスト。
 - [ ] 監視間隔、ジョブ主体の最小権限、二重起動防止、障害時手順を確定。
 - [ ] Stagingで過少／同数／超過／API障害／Slack障害／解消のE2E検証。
 - [ ] Go後のみMigration・Jobデプロイ・Scheduler・Slack実送信。
 
-現在：Git上のDraft実装とオフライン検証のみ。DB Migration適用・ジョブ実行・本番デプロイ・Slack送信は未実施。旧手動割当参照値（Migration 014）は今回の超過判定のソースに使わず、ドラフト整理はレビュー時に行う。
+現在：Git上のDraft実装とオフライン検証のみ。DB Migration適用・ジョブ実行・本番デプロイ・Slack送信は未実施。旧手動割当参照用Migration 014・API・UI・テストは本Draftから撤去した。本番DBでは適用履歴を未確認のため、DBスキーマを変更せず事前確認する。
