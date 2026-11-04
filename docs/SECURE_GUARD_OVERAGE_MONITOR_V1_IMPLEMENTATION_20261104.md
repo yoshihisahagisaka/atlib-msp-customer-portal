@@ -54,3 +54,18 @@ SELECT to_regclass('public.secure_guard_audit_events') AS audit_table;
 Staging E2Eは「超過発生→継続→対応記録→割当内への復帰」、公式API失敗→判定維持、旧観測値→状態維持、Webhook未設定→Claimなし、Webhook失敗/タイムアウト→送信要確認、自動再送なし、の最小ケースで検証する。作成時から請求関連テーブル・価格計算・DNSFilter変更APIを使わない。
 
 監視Jobの**自動起動・実装済みSchedulerはゼロ**。Jobの実行時にはPostgreSQLの専用セッションロックを取得し、二重起動時は後続をスキップする。Stagingで実際に重複起動を試し、ロックの取得・解放・クラッシュ時解放と集計の整合を検証する。ジョブが中断すると送信中の案件は15分経過後に「送信要確認」へ移し、Slackへ自動再送しない。管理画面で担当者が確認する。監視有効化には別途Go/No-Goが必要で、異常時はJob実行を止めて案件履歴を保全し、DBテーブルを即時DROPしない。
+
+## Staging接続先の発見ゲート（2026-11-04／Read-only）
+
+既存「運用手順書_ポータルデプロイ.md」が明示する `msp-zabbix` / `msp-customer-portal` / `msp-customer-portal-db` / `msp-frontend-server` は**本番**構成であり、これをStagingと推定してDB接続・SQL確認してはならない。Git内のRunbook・環境サンプルだけでは独立したStagingのProject / Cloud Run / Cloud SQL / Database / 実行主体は特定できていない。現段階は**Staging対象未確定／DB照合未実施**。
+
+Windows PowerShellで認証済みの運用者が次の**列挙のみ**を実行し、表示されたリソースのうち「どれがStagingか」を構成管理・運用責任者と突合する。ここで指定する `msp-zabbix` は既知の本番Projectの名前であり、同一Project内にStagingが存在すると断定するものではない。Stagingが別Projectの場合はそのProject IDを正式に確認してから同等のread-only列挙を行う。
+
+```powershell
+gcloud.cmd run services list --project=msp-zabbix --region=asia-northeast1 --format="table(metadata.name,status.url)"
+gcloud.cmd sql instances list --project=msp-zabbix --format="table(name,region,state,connectionName)"
+```
+
+禁止：`gcloud config set`、`gcloud run deploy`、`gcloud sql connect`、`gcloud compute ssh`、`npm run migrate`、DBの変更SQL、DNSFilter設定変更、Slack実送信。Staging候補が見つかっても、実体確認前に接続や操作を進めない。Cloud Run/DBの列挙でStagingが見つからなければ、その不在を記録して停止する。本番資産をStagingの代用にしない。
+
+対象StagingのProject ID・Cloud SQLインスタンス名・DB名・確認用read-only権限・責任者が確定した後だけ、前節のSELECT文をその環境で実行する。DB接続が不明なら**未実施**として記録する。GUI/APIの利用数突合はこれとは別の既知PASSであり、Staging DBの安全確認PASSを意味しない。
