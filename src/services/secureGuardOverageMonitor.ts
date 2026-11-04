@@ -7,6 +7,7 @@ import { sendSecureGuardOverageSlack } from './secureGuardOverageSlack';
 export interface OverageMonitorSummary {
   checked: number;
   unavailable: number;
+  stale: number;
   opened: number;
   resolved: number;
   notificationsSent: number;
@@ -28,7 +29,7 @@ export async function runSecureGuardOverageCheck(input: {
   sendSlack?: typeof sendSecureGuardOverageSlack;
 }): Promise<OverageMonitorSummary> {
   const summary: OverageMonitorSummary = {
-    checked: 0, unavailable: 0, opened: 0, resolved: 0,
+    checked: 0, unavailable: 0, stale: 0, opened: 0, resolved: 0,
     notificationsSent: 0, notificationsNeedReview: 0,
   };
   const organizations = await input.repo.listManagedOrganizations();
@@ -44,6 +45,7 @@ export async function runSecureGuardOverageCheck(input: {
         organization.id, organization.dnsfilterOrganizationId, comparison, usage.retrievedAt,
       );
       if (outcome === 'unavailable') summary.unavailable++;
+      else if (outcome === 'stale') summary.stale++;
       else {
         summary.checked++;
         if (outcome === 'opened') summary.opened++;
