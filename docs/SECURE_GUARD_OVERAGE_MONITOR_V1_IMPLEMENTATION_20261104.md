@@ -28,3 +28,29 @@
 - [ ] Go後のみMigration・Jobデプロイ・Scheduler・Slack実送信。
 
 現在：Git上のDraft実装とオフライン検証のみ。DB Migration適用・ジョブ実行・本番デプロイ・Slack送信は未実施。旧手動割当参照用Migration 014・API・UI・テストは本Draftから撤去した。本番DBでは適用履歴を未確認のため、DBスキーマを変更せず事前確認する。
+
+## Staging事前確認（read-only、実行は別途承認）
+
+同一リポジトリの migration runner は未適用のSQLファイルを**全件**昇順適用する。したがってMigration 015だけを適用したい場面で、未確認の通常 migrate コマンドを実行してはならない。現在のPRブランチでは旧014は削除済みで、013はMFA別レーンの予約番号である。実際の環境の適用履歴とレーン変更を照合する。
+
+確認SQL（DB接続先・主体・権限を確定した上で、SELECTのみ実施）：
+
+```sql
+SELECT current_database(), current_user;
+SELECT filename, applied_at FROM schema_migrations
+ WHERE filename ~ '^(011|012|013|014|015)_' ORDER BY filename;
+SELECT to_regclass('public.secure_guard_overage_alerts') AS overage_alert_table;
+SELECT to_regclass('public.customer_organizations') AS customer_org_table;
+SELECT to_regclass('public.dnsfilter_organization_mappings') AS dnsfilter_mapping_table;
+SELECT to_regclass('public.secure_guard_audit_events') AS audit_table;
+```
+
+判定：
+- 015が未適用・対象テーブル未存在 → 変更はまだ行わず、Migration差分と責任者を確認。
+- 015が適用済み・対象テーブル存在 → 既存状態とDDLを照合し、重複適用はしない。
+- 014が適用済み／DDLだけ存在、013と衝突、履歴不一致 → STOP。原因・切り戻し責任者を決めるまでは無変更。
+- DB接続不可、schema_migrations取得不可、認証不明 → STOP。権限を上げたり別DBへ切り替えたりして回避しない。
+
+Staging E2Eは「超過発生→継続→対応記録→割当内への復帰」、公式API失敗→判定維持、旧観測値→状態維持、Webhook未設定→Claimなし、Webhook失敗/タイムアウト→送信要確認、自動再送なし、の最小ケースで検証する。作成時から請求関連テーブル・価格計算・DNSFilter変更APIを使わない。
+
+監視Jobの**自動起動・実装済みSchedulerはゼロ**。ジョブが中断すると送信中の案件は15分経過後に「送信要確認」へ移し、Slackへ自動再送しない。管理画面で担当者が確認する。監視有効化には別途Go/No-Goが必要で、異常時はJob実行を止めて案件履歴を保全し、DBテーブルを即時DROPしない。
