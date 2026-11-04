@@ -1,9 +1,14 @@
+import type { PoolClient } from 'pg';
 import { loadConfig } from '../config';
 import { createPool } from '../db/pool';
 import { SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
 import { SecureGuardOverageStore } from '../services/secureGuardOverageStore';
 import { runSecureGuardOverageCheck } from '../services/secureGuardOverageMonitor';
+
+// Dedicated session lock prevents two scheduled iterations from racing with each other.
+// Keep the key stable; use no per-customer/ad hoc locks.
+const monitorLockKey = '6004588700000104';
 
 /** One opt-in iteration; no process-level cron, no automatic migration or DNSFilter changes. */
 async function main(): Promise<void> {
@@ -14,7 +19,16 @@ async function main(): Promise<void> {
   }
   const config = await loadConfig();
   const pool = createPool(config);
+  let lease: PoolClient | undefined;
+  let lockHeld = false;
   try {
+    lease = await pool.connect();
+    const acquired = await lease.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired', [monitorLockKey]);
+    if (acquired.rows[0]?.acquired !== true) {
+      console.log(JSON.stringify({ job: 'secure-guard-overage', result: 'skipped_already_running' }));
+      return;
+    }
+    lockHeld = true;
     const result = await runSecureGuardOverageCheck({
       repo: new SecureGuardRepo(pool),
       client: new DnsFilterRoamingUsageClient(config.gcpProjectId),
@@ -26,6 +40,15 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ job: 'secure-guard-overage', ...result }));
     if (result.unavailable || result.notificationsNeedReview) process.exitCode = 1;
   } finally {
+    if (lease) {
+      if (lockHeld) {
+        try {
+          const unlocked = await lease.query('SELECT pg_advisory_unlock($1::bigint) AS released', [monitorLockKey]);
+          if (unlocked.rows[0]?.released !== true) process.exitCode = 1;
+        } catch { process.exitCode = 1; }
+      }
+      lease.release();
+    }
     await pool.end();
   }
 }
