@@ -22,6 +22,19 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local_ci_fixture_password_not_a_secret
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
@@ -36,3 +49,11 @@ jobs:
         run: npm test
       - name: Typecheck SG dedicated migration runner
         run: npm run typecheck:secure-guard-migration
+      - name: Secure Guard isolated PostgreSQL 16 integration
+        run: npm run test:secure-guard-db-e2e
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'

@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck:secure-guard-migration": "tsc -p tsconfig.secure-guard-migration.json",
+    "test:secure-guard-db-e2e": "node --test test/integration/secureGuardDatabaseE2E.test.cjs",
     "test": "npm run build && node --test test/secureGuardIdentity.test.cjs test/secureGuardScope.test.cjs test/secureGuardRepo.test.cjs test/secureGuardRateLimit.test.cjs test/secureGuardInitialInvitationHttp.test.cjs test/secureGuardRegressionContract.test.cjs test/secureGuardOrganizationIndependence.test.cjs test/dnsFilterInventoryClient.test.cjs test/dnsFilterManagementClient.test.cjs test/secureGuardDailyRoutes.test.cjs test/secureGuardAdminRoutes.test.cjs test/httpLog.test.cjs test/secureGuardOverageSlack.test.cjs test/secureGuardOfficialUsage.test.cjs test/secureGuardOverageMonitor.test.cjs test/secureGuardDatabaseIsolation.test.cjs",
     "start": "node dist/server.js",
     "secure-guard:overage-once": "node dist/jobs/secureGuardOverageOnce.js",
