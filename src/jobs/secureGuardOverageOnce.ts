@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { loadConfig } from '../config';
-import { createPool } from '../db/pool';
+import { readSecureGuardDatabaseSettings, createSecureGuardDatabasePool } from '../db/secureGuardDatabase';
 import { SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
 import { SecureGuardOverageStore } from '../services/secureGuardOverageStore';
@@ -18,7 +18,12 @@ async function main(): Promise<void> {
     return;
   }
   const config = await loadConfig();
-  const pool = createPool(config);
+  // Overage history must not write into the saturated legacy Portal database.
+  const secureGuardSettings = readSecureGuardDatabaseSettings(process.env, 'runtime');
+  if (!secureGuardSettings) {
+    throw new Error('Dedicated Secure Guard database required for overage job');
+  }
+  const pool = createSecureGuardDatabasePool(secureGuardSettings);
   let lease: PoolClient | undefined;
   let lockHeld = false;
   try {

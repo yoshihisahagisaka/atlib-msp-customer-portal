@@ -6,11 +6,13 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/secureGuardIdentity.test.cjs test/secureGuardScope.test.cjs test/secureGuardRepo.test.cjs test/secureGuardRateLimit.test.cjs test/secureGuardInitialInvitationHttp.test.cjs test/secureGuardRegressionContract.test.cjs test/secureGuardOrganizationIndependence.test.cjs test/dnsFilterInventoryClient.test.cjs test/dnsFilterManagementClient.test.cjs test/secureGuardDailyRoutes.test.cjs test/secureGuardAdminRoutes.test.cjs test/httpLog.test.cjs test/secureGuardOverageSlack.test.cjs test/secureGuardOfficialUsage.test.cjs test/secureGuardOverageMonitor.test.cjs",
+    "typecheck:secure-guard-migration": "tsc -p tsconfig.secure-guard-migration.json",
+    "test": "npm run build && node --test test/secureGuardIdentity.test.cjs test/secureGuardScope.test.cjs test/secureGuardRepo.test.cjs test/secureGuardRateLimit.test.cjs test/secureGuardInitialInvitationHttp.test.cjs test/secureGuardRegressionContract.test.cjs test/secureGuardOrganizationIndependence.test.cjs test/dnsFilterInventoryClient.test.cjs test/dnsFilterManagementClient.test.cjs test/secureGuardDailyRoutes.test.cjs test/secureGuardAdminRoutes.test.cjs test/httpLog.test.cjs test/secureGuardOverageSlack.test.cjs test/secureGuardOfficialUsage.test.cjs test/secureGuardOverageMonitor.test.cjs test/secureGuardDatabaseIsolation.test.cjs",
     "start": "node dist/server.js",
     "secure-guard:overage-once": "node dist/jobs/secureGuardOverageOnce.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "migrate": "node --env-file=.env -r ts-node/register migrations/runner.ts",
+    "migrate:secure-guard": "node -r ts-node/register migrations/secure_guard_runner.ts",
     "onboard": "node --env-file=.env -r ts-node/register scripts/onboarding/create_customer.ts",
     "build:batch": "tsc -p tsconfig.batch.json",
     "start:batch": "node dist-batch/batch/generate-monthly-reports.js"

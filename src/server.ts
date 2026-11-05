@@ -5,6 +5,7 @@ import pinoHttp from 'pino-http';
 import pino from 'pino';
 import { loadConfig } from './config';
 import { createPool } from './db/pool';
+import { readSecureGuardDatabaseSettings, createSecureGuardDatabasePool } from './db/secureGuardDatabase';
 import { CustomerRepo } from './services/customerRepo';
 import { Mailer } from './services/mailer';
 import { AuthService } from './services/authService';
@@ -54,6 +55,10 @@ async function main(): Promise<void> {
   const logger = pino({ level: config.nodeEnv === 'production' ? 'info' : 'debug' });
 
   const pool = createPool(config);
+  const secureGuardDatabaseSettings = readSecureGuardDatabaseSettings();
+  const secureGuardPool = secureGuardDatabaseSettings
+    ? createSecureGuardDatabasePool(secureGuardDatabaseSettings)
+    : pool;
   const customerRepo = new CustomerRepo(pool);
   const mailer = new Mailer(config.smtp);
   const authService = new AuthService(pool, customerRepo, mailer, config);
@@ -64,8 +69,8 @@ async function main(): Promise<void> {
   const monthlyReportRepo = new MonthlyReportRepo(pool);
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
-  const secureGuardRepo = new SecureGuardRepo(pool);
-  const secureGuardOverageStore = new SecureGuardOverageStore(pool);
+  const secureGuardRepo = new SecureGuardRepo(secureGuardPool);
+  const secureGuardOverageStore = new SecureGuardOverageStore(secureGuardPool);
   const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
   // Deployment supplies this only to the server process. No browser route can read it.
   const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);

@@ -1,0 +1,38 @@
+name: Secure Guard dedicated database offline checks
+
+on:
+  pull_request:
+    branches:
+      - feat/secure-guard-allocation-snapshot-20261104
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'package.json'
+      - 'tsconfig.secure-guard-migration.json'
+      - '.github/workflows/secure-guard-dedicated-db-pr-check.yml'
+  push:
+    branches:
+      - feat/secure-guard-shared-sql-db-prep-20261105
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile and run offline tests
+        run: npm test
+      - name: Typecheck SG dedicated migration runner
+        run: npm run typecheck:secure-guard-migration
