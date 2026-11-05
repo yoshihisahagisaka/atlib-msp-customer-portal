@@ -6,6 +6,7 @@
 - 既存Portal、Sales Tools、PPAP/Secure Send本番DBは不変更。Secure Sendの将来分離は別工程。
 - SECU:MIE Draft PR #42（基盤設計）、#43（runtime接続分離）、#44（旧SECU専用Staging準備）に加え、**#45（`fee66401619e994f40aeffb497d24f4f1b72b909`、2026-11-05）の共用Cloud SQL設計を現行実行正本**として照合する。PR #44の旧インスタンス作成手順は廃止。各PRのSECU:MIE単独検証をSGとの共用構成Goとみなさない。
 - 共用Stagingは `msp-zabbix` / `asia-northeast1`、`secumie-sg-shared-staging-db`（PostgreSQL 16 Enterprise、ZONAL、2 vCPU / 7.5 GiB、SSD 20 GiB自動拡張、Private IPのみ、backup/PITR 7日、deletion protection）。**2026-11-05時点で未作成**。Private Service Accessは現行default VPCに未設定で、先行する別承認が必要。
+- SECU PR #45の追加Preflight `cfb4c104ae96b554a2ab72457bc7bfc4132e7b4a`（第12節）でPSA候補 `172.20.0.0/16` / `google-managed-services-default`、Staging zone `asia-northeast1-c`、Proxy v2 sidecarのloopback `127.0.0.1:5432` が固定候補となった。既存SG Portalは現状のConnectorを維持し、専用DB接続/Proxy追加と新Revisionは別途承認。PSAとStaging実作成はまだNo-Go。
 - 共用Productionの候補は `secumie-sg-shared-prod-db`（REGIONAL HA、2 vCPU / 7.5 GiB、SSD 30 GiB）だが、**Production No-Go**。
 - 本文はSecure Guard側の実装候補とInsight側へのインターフェース要求。**Staging作成、DB作成、権限付与、Migration実行、実データ移行、本番変更は未実施。**
 
@@ -60,6 +61,17 @@
 5. SGの過去session・invitation・MSP権限・通知二重防止までStaging E2E PASSとし、Insight側と共通障害/PITR復旧責任者を確認してからProduction Go/No-Go判定。
 
 **2026-11-05のFit/Gap:** 8テーブルの独立baseline、3 principalの分離接続コード、pool max2、専用Migration/ledger、および使い捨てPG16の権限否定テストはSG Draft PR #5に準備済み。**未了:** 本番ソースの低負荷Read-only inventory（ledger/件数/FK/権限）、移行・整合性・rollback計画の実データ適合、Insight側の3主体role/Secret承認、Staging実機接続と負荷/PITR検証。PR #45のGate 1〜4は未承認であり、SG Staging database/role/Secret作成はNo-Goを維持。
+
+## 旧本番DB Read-only inventoryの実行前契約（未実行）
+
+- `scripts/secureGuardSourceInventoryReadOnly.cjs` をSG側の運用者が使う候補とする。**既存ソースDBを開く処理であり、このPRでは実行しない。** Read-onlyであることは、GCP本番接続の自動承認を意味しない。
+- 先にCloud SQLの監視で**現在接続数が20未満**、PPAP/Portalに遅延なし、保守責任者・実行時間・停止判断者を確認する。接続追加後の検査自身も使用接続数が20以上なら**即STOP**。既存最大25・観測ピーク22のため、繁忙時は実行しない。
+- 低権限・本番の既存read-only接続主体を使用する。DBへの `CREATEDB` / `CREATEROLE` / `SUPERUSER` / `REPLICATION` 権限がある主体はスクリプト内で拒否。調査のための新規role、IAM、Secretやnetwork構成の追加は本工程で許可しない。
+- 接続は**VPC内の承認済みCloud SQL Auth Proxyのloopback** `127.0.0.1:<port>`、またはCloud SQL Unix socketのみ。Public IP追加、直接DB接続、SSHトンネルの新設、旧Cloud Run revisionの変更はしない。
+- 本番接続を伴うため `SECURE_GUARD_SOURCE_INVENTORY_APPROVED=true` と `SECURE_GUARD_SOURCE_DB_NAME` / `SECURE_GUARD_SOURCE_EXPECTED_DB_NAME` の一致を明示必須にする。`SECURE_GUARD_SOURCE_DB_USER/PASSWORD`、`SECURE_GUARD_SOURCE_DB_HOST/PORT`または`SECURE_GUARD_SOURCE_DB_SOCKET_PATH`は専用の環境/Secret経由で与え、値を引数・Git・Cloud Loggingに出さない。
+- 実行は `node scripts/secureGuardSourceInventoryReadOnly.cjs`。**1接続のみ**、トランザクションREAD ONLY、SQL 3秒・ロック1秒タイムアウト、処理後切断。出力は旧Ledgerの011/012/014/015、SG関連8テーブルの推定件数/総容量と欠落、FK一覧、DB名/接続上限だけで、顧客名・メール・token/hash・行内容は読み出さない。
+- 調査証跡は制限付きで保全し、結果が現行DDL/想定と異なればSTOP。`reltuples`は参考推定値であり、正確な移行件数やProduction Goには使わない。
+- **Disposable PostgreSQL 16 CI専用の合成テスト**で承認フラグ必須・DB同一性・loopback限定・接続余裕ゲート・SQLメタデータのみ・権限不足の拒否を確認する。これは実本番調査の代替ではない。
 
 **本PRはSG側のオフライン実装準備。SECU:MIE Staging作成や本番切替の許可を代行するものではない。**
 
