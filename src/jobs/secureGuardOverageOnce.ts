@@ -1,5 +1,4 @@
 import type { PoolClient } from 'pg';
-import { loadConfig } from '../config';
 import { readSecureGuardDatabaseSettings, createSecureGuardDatabasePool } from '../db/secureGuardDatabase';
 import { SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
@@ -10,6 +9,26 @@ import { runSecureGuardOverageCheck } from '../services/secureGuardOverageMonito
 // Keep the key stable; use no per-customer/ad hoc locks.
 const monitorLockKey = '6004588700000104';
 
+/** Job-only configuration: never resolve Portal DB, Zabbix, SMTP or staff login secrets. */
+function readOverageJobConfig(env: NodeJS.ProcessEnv): {
+  projectId: string; slackWebhook?: string; managementUrl?: string;
+} {
+  const managementUrl = env.SECURE_GUARD_MANAGEMENT_URL?.trim() || undefined;
+  if (managementUrl) {
+    let url: URL;
+    try { url = new URL(managementUrl); }
+    catch { throw new Error('Invalid Secure Guard management URL'); }
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
+      throw new Error('Invalid Secure Guard management URL');
+    }
+  }
+  return {
+    projectId: env.GCP_PROJECT_ID ?? 'msp-zabbix',
+    slackWebhook: env.SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK || undefined,
+    managementUrl,
+  };
+}
+
 /** One opt-in iteration; no process-level cron, no automatic migration or DNSFilter changes. */
 async function main(): Promise<void> {
   if (process.env.SECURE_GUARD_OVERAGE_JOB_ENABLED !== 'true') {
@@ -17,9 +36,9 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const config = await loadConfig();
+  const config = readOverageJobConfig(process.env);
   // Overage history must not write into the saturated legacy Portal database.
-  const secureGuardSettings = readSecureGuardDatabaseSettings(process.env, 'runtime');
+  const secureGuardSettings = readSecureGuardDatabaseSettings(process.env, 'overage');
   if (!secureGuardSettings) {
     throw new Error('Dedicated Secure Guard database required for overage job');
   }
@@ -36,10 +55,10 @@ async function main(): Promise<void> {
     lockHeld = true;
     const result = await runSecureGuardOverageCheck({
       repo: new SecureGuardRepo(pool),
-      client: new DnsFilterRoamingUsageClient(config.gcpProjectId),
+      client: new DnsFilterRoamingUsageClient(config.projectId),
       store: new SecureGuardOverageStore(pool),
-      slackWebhook: config.slack.webhookSecureGuardOverage,
-      managementUrl: config.portalBaseUrl + '/secure-guard-admin.html',
+      slackWebhook: config.slackWebhook,
+      managementUrl: config.managementUrl,
     });
     // No credentials, Organization names or per-customer payloads in job output.
     console.log(JSON.stringify({ job: 'secure-guard-overage', ...result }));

@@ -11,6 +11,8 @@ const safeTestPort = 55432;
 const targetDatabase = 'secure_guard_ci';
 const migrationUser = 'secure_guard_ci_ddl';
 const runtimeUser = 'secure_guard_ci_runtime';
+const overageUser = 'secure_guard_ci_overage';
+const secuUser = 'secumie_ci_runtime';
 const fixturePassword = 'local_ci_fixture_password_not_a_secret';
 
 function client(database, user, password) {
@@ -53,10 +55,14 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
   try {
     await admin.query(`CREATE ROLE ${migrationUser} LOGIN PASSWORD '${fixturePassword}'`);
     await admin.query(`CREATE ROLE ${runtimeUser} LOGIN PASSWORD '${fixturePassword}'`);
+    await admin.query(`CREATE ROLE ${overageUser} LOGIN PASSWORD '${fixturePassword}'`);
+    await admin.query(`CREATE ROLE ${secuUser} LOGIN PASSWORD '${fixturePassword}'`);
     await admin.query(`CREATE DATABASE ${targetDatabase} OWNER ${migrationUser}`);
     await admin.query('CREATE DATABASE secumie_insight_ci');
     await admin.query('REVOKE CONNECT ON DATABASE secumie_insight_ci FROM PUBLIC');
-    await admin.query(`GRANT CONNECT ON DATABASE ${targetDatabase} TO ${runtimeUser}`);
+    await admin.query(`GRANT CONNECT ON DATABASE secumie_insight_ci TO ${secuUser}`);
+    await admin.query(`REVOKE CONNECT ON DATABASE ${targetDatabase} FROM PUBLIC`);
+    await admin.query(`GRANT CONNECT ON DATABASE ${targetDatabase} TO ${runtimeUser}, ${overageUser}`);
 
     const first = runMigration();
     assert.equal(first.status, 0, `First SG-only migration must pass: ${first.stderr}`);
@@ -93,6 +99,12 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
       await ddl.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${runtimeUser}`);
       await ddl.query(`REVOKE ALL PRIVILEGES ON secure_guard_schema_migrations FROM ${runtimeUser}`);
       await ddl.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${runtimeUser}`);
+      // A separate overage Job login can only read Organization/mapping identifiers
+      // and update alert episodes. It cannot inspect personal identities or audits.
+      await ddl.query(`GRANT USAGE ON SCHEMA public TO ${overageUser}`);
+      await ddl.query(`GRANT SELECT ON customer_organizations, dnsfilter_organization_mappings TO ${overageUser}`);
+      await ddl.query(`GRANT SELECT, INSERT, UPDATE ON secure_guard_overage_alerts TO ${overageUser}`);
+      await ddl.query(`GRANT USAGE, SELECT ON SEQUENCE secure_guard_overage_alerts_id_seq TO ${overageUser}`);
     } finally {
       await ddl.end();
     }
@@ -130,9 +142,43 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
       await runtime.end();
     }
 
+    const overage = client(targetDatabase, overageUser, fixturePassword);
+    await overage.connect();
+    try {
+      const orgs = await overage.query(`SELECT o.id, m.dnsfilter_organization_id
+        FROM customer_organizations o
+        LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id`);
+      assert.equal(orgs.rowCount, 1);
+      const observed = await overage.query(`UPDATE secure_guard_overage_alerts
+        SET notification_status = 'attempting' WHERE allocated_rc_licenses = 1 RETURNING id`);
+      assert.equal(observed.rowCount, 1);
+      await assert.rejects(overage.query('SELECT * FROM portal_users'),
+        (error) => error.code === '42501');
+      await assert.rejects(overage.query(`UPDATE portal_users SET email = 'forbidden@example.invalid'`),
+        (error) => error.code === '42501');
+      await assert.rejects(overage.query('SELECT * FROM secure_guard_audit_events'),
+        (error) => error.code === '42501');
+      await assert.rejects(overage.query('DELETE FROM secure_guard_overage_alerts'),
+        (error) => error.code === '42501');
+      await assert.rejects(overage.query('SELECT * FROM secure_guard_schema_migrations'),
+        (error) => error.code === '42501');
+      await assert.rejects(overage.query('CREATE TABLE overage_ddl_denied (id integer)'),
+        (error) => error.code === '42501');
+    } finally {
+      await overage.end();
+    }
+
     const otherDb = client('secumie_insight_ci', runtimeUser, fixturePassword);
     await assert.rejects(otherDb.connect(), (error) => error.code === '42501');
     await otherDb.end().catch(() => undefined);
+
+    const overageOtherDb = client('secumie_insight_ci', overageUser, fixturePassword);
+    await assert.rejects(overageOtherDb.connect(), (error) => error.code === '42501');
+    await overageOtherDb.end().catch(() => undefined);
+
+    const secuOtherDb = client(targetDatabase, secuUser, fixturePassword);
+    await assert.rejects(secuOtherDb.connect(), (error) => error.code === '42501');
+    await secuOtherDb.end().catch(() => undefined);
 
     const driftDdl = client(targetDatabase, migrationUser, fixturePassword);
     await driftDdl.connect();

@@ -48,6 +48,24 @@ test('SG runtime and migration principals are distinct and have bounded pools', 
   assert.equal(migration.user, 'secure_guard_ddl');
   assert.equal(migration.maxConnections, 1);
   assert.throws(() => readSecureGuardDatabaseSettings(env(), 'migration'), /MIGRATION_DB_USER/);
+
+  const overage = readSecureGuardDatabaseSettings(env({
+    SECURE_GUARD_OVERAGE_DB_USER: 'secure_guard_overage',
+    SECURE_GUARD_OVERAGE_DB_PASSWORD: 'overage-secret-test',
+    SECURE_GUARD_DB_NAME: 'secure_guard_staging',
+  }), 'overage');
+  assert.equal(overage.user, 'secure_guard_overage');
+  assert.equal(overage.name, 'secure_guard_staging');
+  assert.equal(overage.maxConnections, 2);
+  const overagePool = createSecureGuardDatabasePool(overage);
+  assert.equal(overagePool.options.max, 2);
+  await overagePool.end();
+  assert.throws(() => readSecureGuardDatabaseSettings(env(), 'overage'), /OVERAGE_DB_USER/);
+  assert.throws(() => readSecureGuardDatabaseSettings(env({
+    SECURE_GUARD_OVERAGE_DB_USER: 'secure_guard_overage',
+  }), 'overage'), /OVERAGE_DB_PASSWORD/);
+  assert.throws(() => readSecureGuardDatabaseSettings({ DB_NAME: 'legacy_portal' }, 'overage'),
+    /dedicated database required/);
 });
 
 test('SG-only baseline has all domain tables but no legacy customer FK or global schema mutations', () => {
@@ -76,4 +94,12 @@ test('SG-only baseline has all domain tables but no legacy customer FK or global
   assert.match(runner, /SECURE_GUARD_MIGRATION_APPROVED/);
   assert.match(runner, /'migration'/);
   assert.doesNotMatch(runner, /migrations\/runner/);
+});
+
+test('overage Job uses its least-privilege identity without loading Portal business secrets', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'jobs', 'secureGuardOverageOnce.ts'), 'utf8');
+  assert.match(source, /readSecureGuardDatabaseSettings\(process\.env, 'overage'\)/);
+  assert.doesNotMatch(source, /loadConfig|DB_PASSWORD|ZABBIX_API_|SMTP_PASSWORD|STAFF_JWT_SECRET/);
+  assert.match(source, /SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK/);
+  assert.match(source, /SECURE_GUARD_MANAGEMENT_URL/);
 });

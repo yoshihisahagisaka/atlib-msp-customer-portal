@@ -213,9 +213,29 @@ async function main(): Promise<void> {
 
   app.use(express.static(path.join(__dirname, '../public')));
 
-  app.listen(config.port, () => {
+  const listener = app.listen(config.port, () => {
     logger.info(`msp-customer-portal listening on :${config.port}`);
   });
+
+  // Keep the existing Portal-only lifecycle unchanged until the SG cutover.
+  // Once dedicated mode is selected, drain HTTP before closing both distinct pools.
+  if (secureGuardDatabaseSettings) {
+    let stopping = false;
+    const stop = async () => {
+      if (stopping) return;
+      stopping = true;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          listener.close((error) => error ? reject(error) : resolve());
+        });
+      } finally {
+        const results = await Promise.allSettled([secureGuardPool.end(), pool.end()]);
+        if (results.some((result) => result.status === 'rejected')) process.exitCode = 1;
+      }
+    };
+    process.once('SIGTERM', () => { void stop().catch(() => { process.exitCode = 1; }); });
+    process.once('SIGINT', () => { void stop().catch(() => { process.exitCode = 1; }); });
+  }
 }
 
 main().catch((err) => {

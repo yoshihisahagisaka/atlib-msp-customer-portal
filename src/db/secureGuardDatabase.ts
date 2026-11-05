@@ -15,7 +15,7 @@ export interface SecureGuardDatabaseSettings {
   maxConnections: number;
 }
 
-type DatabasePrincipal = 'runtime' | 'migration';
+type DatabasePrincipal = 'runtime' | 'overage' | 'migration';
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
@@ -37,7 +37,7 @@ export function readSecureGuardDatabaseSettings(
     throw new Error('Invalid SECURE_GUARD_DB_MODE');
   }
   if (mode === 'legacy') {
-    if (principal === 'migration' || env.SECURE_GUARD_DB_REQUIRE_DEDICATED === 'true') {
+    if (principal !== 'runtime' || env.SECURE_GUARD_DB_REQUIRE_DEDICATED === 'true') {
       throw new Error('Secure Guard dedicated database required');
     }
     return null;
@@ -59,10 +59,15 @@ export function readSecureGuardDatabaseSettings(
   }
 
   const migration = principal === 'migration';
+  const overage = principal === 'overage';
+  const userKey = migration ? 'SECURE_GUARD_MIGRATION_DB_USER'
+    : overage ? 'SECURE_GUARD_OVERAGE_DB_USER' : 'SECURE_GUARD_DB_USER';
+  const passwordKey = migration ? 'SECURE_GUARD_MIGRATION_DB_PASSWORD'
+    : overage ? 'SECURE_GUARD_OVERAGE_DB_PASSWORD' : 'SECURE_GUARD_DB_PASSWORD';
   return {
     name,
-    user: required(env, migration ? 'SECURE_GUARD_MIGRATION_DB_USER' : 'SECURE_GUARD_DB_USER'),
-    password: required(env, migration ? 'SECURE_GUARD_MIGRATION_DB_PASSWORD' : 'SECURE_GUARD_DB_PASSWORD'),
+    user: required(env, userKey),
+    password: required(env, passwordKey),
     host: tcpHost ?? '',
     port,
     socketPath,

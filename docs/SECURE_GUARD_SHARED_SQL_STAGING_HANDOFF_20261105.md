@@ -4,7 +4,9 @@
 
 - 既決定：案②。SECU:MIE（Insight主管）の新Cloud SQL**インスタンス**へSecure Guardの**独立database/role**を収容。
 - 既存Portal、Sales Tools、PPAP/Secure Send本番DBは不変更。Secure Sendの将来分離は別工程。
-- SECU:MIE Draft PR #42（共通インスタンス設計）、#43（runtime接続分離）、#44（SECU専用Staging構築手順）を継承する。各PRのSECU:MIE単独検証をSGとの共用構成Goとみなさない。
+- SECU:MIE Draft PR #42（基盤設計）、#43（runtime接続分離）、#44（旧SECU専用Staging準備）に加え、**#45（`fee66401619e994f40aeffb497d24f4f1b72b909`、2026-11-05）の共用Cloud SQL設計を現行実行正本**として照合する。PR #44の旧インスタンス作成手順は廃止。各PRのSECU:MIE単独検証をSGとの共用構成Goとみなさない。
+- 共用Stagingは `msp-zabbix` / `asia-northeast1`、`secumie-sg-shared-staging-db`（PostgreSQL 16 Enterprise、ZONAL、2 vCPU / 7.5 GiB、SSD 20 GiB自動拡張、Private IPのみ、backup/PITR 7日、deletion protection）。**2026-11-05時点で未作成**。Private Service Accessは現行default VPCに未設定で、先行する別承認が必要。
+- 共用Productionの候補は `secumie-sg-shared-prod-db`（REGIONAL HA、2 vCPU / 7.5 GiB、SSD 30 GiB）だが、**Production No-Go**。
 - 本文はSecure Guard側の実装候補とInsight側へのインターフェース要求。**Staging作成、DB作成、権限付与、Migration実行、実データ移行、本番変更は未実施。**
 
 ## 責任境界
@@ -17,11 +19,13 @@
 | Migration/データ移行 | 共通Stagingと復旧条件の調整 | 新規SG baseline、旧→新データ整合、切替・切戻し |
 | 障害/復旧 | **インスタンス単位**で初動・PITR統括 | SG側整合性・セッション・監査・通知状態の復旧確認 |
 
-## SG専用database（作成候補、要調整）
+## SG専用database（PR #45との確定契約）
 
-- DB名 `secure_guard`。実際の命名・DB作成者はInsight側と調整。
-- ①`secure_guard_runtime`：SG専用テーブルの必要なDMLのみ。`CREATEDB`、`CREATEROLE`、DDL、他サービスDB権限なし。
-- ②`secure_guard_ddl`：**明示承認された**SG migration時のみ使用。runtimeと別Secret/role。
+- Staging DB名 **`secure_guard_staging`**、Production DB名 **`secure_guard`**。共用インスタンスのInsight用DBは別名 `secumie_insight_staging` / `secumie_insight`。物理ログインroleは環境識別子付きでInsight側が払い出す。
+- ①`runtime`：SG Web/APIの必要DML。`CREATEDB`、`CREATEROLE`、DDL、他サービスDB権限なし。
+- ②`overage`：定期Job専用。`customer_organizations`・`dnsfilter_organization_mappings`の必要SELECT、`secure_guard_overage_alerts`のSELECT/INSERT/UPDATEと必要sequence操作のみ。認証個人情報、MSP権限、監査履歴、Migration ledger、DDL、他DBは不可。
+- ③`migration`：**明示承認された**SG migration時のみ使用。runtime/overageと別Secret/role。CIでは従来の実装名 `secure_guard_ci_ddl` を使用。
+- 3 role / 3 Secretはそれぞれ別のService Accountからのみ参照できることをInsight側と受け入れ確認する。Cloud SQL instance管理者はどのruntime roleとも共用しない。
 - 移設対象は8テーブル（個人認証、Organization、membership、MSP grant、DNSFilter mapping、receipts、audit、overage）。013以前の旧PortalマイグレーションをSG DBに流用しない。
 - SG専用SQL `migrations/secure_guard/001_identity_scope_baseline.sql` と `002_overage_alerts.sql`。独立ledger `secure_guard_schema_migrations`。旧Portal `customers` FKなし。
 - SG専用runner `migrations/secure_guard_runner.ts` は `SECURE_GUARD_MIGRATION_APPROVED=true` と専用migration credentialを必須とし、ledgerとSHA256を検証。**既存の `npm run migrate` をSG専用DBへ向けることを禁止。**
@@ -30,26 +34,32 @@
 
 - 現行Portal側のpool(max 5/instance)は変更せず、SG Repo・Overage Storeにだけ別pool(max **2/instance**)を渡す。Overage JobもSG DBにのみ書込む。
 - `SECURE_GUARD_DB_MODE=dedicated` を明示した場合、別接続先・DB名・runtimeユーザー・passwordをすべて要求。欠落時は例外となり、旧DBへfallbackしない。
+- SG Web/APIは`SECURE_GUARD_DB_USER/PASSWORD`、超過監視Jobは**`SECURE_GUARD_OVERAGE_DB_USER/PASSWORD`**、migrationは`SECURE_GUARD_MIGRATION_DB_USER/PASSWORD`を使用。各principalの設定欠落は必ずエラーとし、他主体の資格情報にfallbackしない。Job pool最大2、migration pool最大1。
+- Overage Jobは従来のPortal `loadConfig()`を利用しない。必要な設定は `GCP_PROJECT_ID`、SG DB接続情報、DNSFilter read-only API Secret、任意の`SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK`、`SECURE_GUARD_MANAGEMENT_URL`（httpsの管理画面URL）だけ。Portal DB、Zabbix、SMTP、スタッフ認証のSecretはJob SAへ割り当てない。
 - 既存サービスの段階移行前は互換性のため`legacy`がデフォルト。**本番切替時は**`SECURE_GUARD_DB_REQUIRE_DEDICATED=true`を設定して、env消失による旧DBへの暗黙復帰を防ぐ。
 - 接続経路は `SECURE_GUARD_DB_SOCKET_PATH`（Cloud SQL socket）か `SECURE_GUARD_DB_HOST`/`SECURE_GUARD_DB_PORT`（TCP）の片方のみ。
 - `SECURE_GUARD_DB_NAME`、`SECURE_GUARD_DB_USER`、`SECURE_GUARD_DB_PASSWORD` はPortalの `DB_*` を使い回さない。Secret値はPR・ログに記録しない。
+- Web/APIはdedicated modeのみSIGTERM/SIGINT時にHTTP drain後、SG poolと既存Portal poolを終了する。既存Portal-only配備の停止処理は変更しない。
 - 新SQLを未接続でもPortal全体の `/healthz` はSGの生存確認にならないため、Stagingでは**SGログイン・権限・管理・監査・Jobの専用E2Eを必須**とする。
 
-## 合計接続予算（未承認）
+## 合計接続予算（PR #45基準、実測は未実施）
 
-SECU:MIE PR #42の**54**はSECU:MIE単独予算。SGの許容上限ではない。SG runtime `R=2`、SG最大Web instance数 `N`、Job並行数 `J`、移行DDL `D=1`を仮定する。
-
-通常のSG追加接続予算候補は `S_normal = 2*N + 2*J`。切替時に旧・新Revisionがともに新SG DBを参照する場合は `S_cutover = 4*N + 2*J + 1` を上限候補として確認する（実際のtraffic分割・最大instance数に合わせて精査）。
-
-**共用インスタンスの許容量は `54 + max(S_normal,S_cutover)` に、必要な内部接続・保守/障害対応の余裕を確保する。** PostgreSQL設定上のmax_connectionsだけでなくCloud SQLの実利用可能枠とメモリを再評価する。将来の利用企業数・API監視頻度・データ量・共通障害影響を含め、1 vCPU / 3.75 GiB を無条件確定しない。
+- SECU:MIE 54接続（OTP 6 + PIRA 6 + 管理 40 + migration 1 + retention 1）。
+- Secure Guard 24接続（Web/API: 最大5 instance × pool 2 × 2 revision = 20、超過監視Job: 1 × pool 2 = 2、migration/cutover: 2）。
+- **総アプリケーション上限78接続**。既存のSG pool(max5)をそのまま共用した場合は最大111接続でNo-Go。SG側専用runtime/Job max2は本PRで実装済み。
+- Stagingの接続予算受入条件は `M = SHOW max_connections`、`R = max(10, ceil(M*0.20), 実測internal/reserved peak+5)`、`M-R >= 78`。目標 **M >= 100** は実測前提であり、設定済みとはみなさない。
+- Sustained 70%で警告、80%で負荷中止。CPU/メモリ、pool wait、5xx、バックアップ失敗、他サービス影響を合わせて判定。上限を増やすだけの設定変更は不可。
+- SG Web max5はProduction容量見積り用、Stagingではタグ付きtest revisionを1つに限定する。旧・新revisionの同時無制御トラフィックを認めない。
 
 ## Staging開始に向けた接続条件
 
-1. Insight側が**新Cloud SQL Stagingインスタンス**の実作成と接続予算を承認し、SG用database/roleの作成可否を明示する。
+1. Insight側が**Private Service Accessのrange/peering**を別承認し、共用Cloud SQL Stagingインスタンスの作成・接続予算・14日/$75の費用上限を承認する。SG用DBはこの段階では作らない。
 2. SG側が空の**SG専用Staging DB**だけへ独立migrationを実施し、再実行・checksum不一致・余分な権限の拒否を検証。
 3. 既存Portal Stagingが存在しなかった点を解消し、legacy DBの仮想/安全なテスト環境を用意してSG dual poolだけを検証。**既存本番Portal DBへテスト負荷を加えない。**
 4. 旧本番のProduction Ledger（011/012/014/015）と対象データの実件数・FKを**低負荷Read-only**で照合した後、全8テーブルのID/関連/監査等を保全する移行スクリプトとRollbackを決める。
 5. SGの過去session・invitation・MSP権限・通知二重防止までStaging E2E PASSとし、Insight側と共通障害/PITR復旧責任者を確認してからProduction Go/No-Go判定。
+
+**2026-11-05のFit/Gap:** 8テーブルの独立baseline、3 principalの分離接続コード、pool max2、専用Migration/ledger、および使い捨てPG16の権限否定テストはSG Draft PR #5に準備済み。**未了:** 本番ソースの低負荷Read-only inventory（ledger/件数/FK/権限）、移行・整合性・rollback計画の実データ適合、Insight側の3主体role/Secret承認、Staging実機接続と負荷/PITR検証。PR #45のGate 1〜4は未承認であり、SG Staging database/role/Secret作成はNo-Goを維持。
 
 **本PRはSG側のオフライン実装準備。SECU:MIE Staging作成や本番切替の許可を代行するものではない。**
 
