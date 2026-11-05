@@ -62,5 +62,6 @@ GitHub Actionsの使い捨てPostgreSQL 16内で、**旧Portal側のSG migration
 - SGの8業務テーブルのみを依存順にtargetへ移し、旧`customers`テーブルをtargetに持ち込まないこと。
 - 移送途中の故障で**target全体がROLLBACK**し、中途半端な所属/監査レコードが残らないこと。
 - 全フィールドの往復相当一致（TIMESTAMPTZのマイクロ秒精度も文字列のまま保持）と、overage BIGSERIALのシーケンス値補正（旧IDの重複防止）。
+- 旧SourceにDraft 015が未適用の場合も、認証・Organization等の7テーブルを移し、新DBの超過監視テーブルを空で開始できること。
 
 **注意：これはCIのfixture-only移送アルゴリズムであり、本番データ移行プログラムやProduction Goではない。** 本番側の実Migration Ledger、正確なデータ件数、旧DBの書込停止方式、認証・監査・通知の切替整合、バックアップとRollbackは未確定。Production接続用コード・権限・手順へ昇格する前に、実機Read-only調査と個別の移行承認を要する。

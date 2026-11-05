@@ -30,7 +30,7 @@ function connect(database, user = 'postgres') {
   return new Client({ host, port, database, user, password, connectionTimeoutMillis: 3000, types: parser });
 }
 
-function migrateTargetBaseline() {
+function migrateTargetBaseline(databaseName = targetName, ddlUser = migrationUser) {
   return spawnSync(process.execPath, ['-r', 'ts-node/register', 'migrations/secure_guard_runner.ts'], {
     cwd: root,
     encoding: 'utf8',
@@ -41,14 +41,60 @@ function migrateTargetBaseline() {
       SECURE_GUARD_DB_HOST: host,
       SECURE_GUARD_DB_PORT: String(port),
       SECURE_GUARD_DB_SOCKET_PATH: '',
-      SECURE_GUARD_DB_NAME: targetName,
-      SECURE_GUARD_MIGRATION_DB_USER: migrationUser,
+      SECURE_GUARD_DB_NAME: databaseName,
+      SECURE_GUARD_MIGRATION_DB_USER: ddlUser,
       SECURE_GUARD_MIGRATION_DB_PASSWORD: password,
       SECURE_GUARD_MIGRATION_APPROVED: 'true',
       DB_NAME: sourceName,
     },
   });
 }
+
+test('Synthetic source without draft 015 still migrates SG identity, leaving overage empty',
+  { timeout: 90000 }, async () => {
+    assert.equal(process.env.CI, 'true');
+    assert.equal(process.env.NODE_ENV, 'test');
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true');
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_HOST, host);
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_PORT, String(port));
+
+    const sourceDatabase = 'secure_guard_legacy_no015_fixture_ci';
+    const targetDatabase = 'secure_guard_target_no015_fixture_ci';
+    const ddlUser = 'secure_guard_no015_ci_ddl';
+    const admin = connect('postgres');
+    await admin.connect();
+    try {
+      await admin.query(`CREATE ROLE ${ddlUser} LOGIN PASSWORD '${password}'`);
+      await admin.query(`CREATE DATABASE ${sourceDatabase}`);
+      await admin.query(`CREATE DATABASE ${targetDatabase} OWNER ${ddlUser}`);
+    } finally { await admin.end(); }
+
+    const source = connect(sourceDatabase);
+    const target = connect(targetDatabase, ddlUser);
+    await source.connect();
+    await target.connect();
+    try {
+      await source.query('CREATE TABLE customers(id uuid PRIMARY KEY, company_name varchar(255) NOT NULL)');
+      for (const migration of ['011_secure_guard_identity_scope.sql', '012_secure_guard_organization_independence.sql']) {
+        await source.query(fs.readFileSync(path.join(root, 'migrations', migration), 'utf8'));
+      }
+      await source.query(`INSERT INTO customer_organizations (organization_name)
+        VALUES ('Synthetic without overage table')`);
+      const baseline = migrateTargetBaseline(targetDatabase, ddlUser);
+      assert.equal(baseline.status, 0, `Target SG baseline: ${baseline.stderr}`);
+      const oldTable = await source.query(`SELECT to_regclass('public.secure_guard_overage_alerts') AS relation`);
+      assert.equal(oldTable.rows[0].relation, null);
+
+      await copySyntheticFixture(source, target);
+      const orgs = await target.query('SELECT count(*)::integer AS n FROM customer_organizations');
+      const episodes = await target.query('SELECT count(*)::integer AS n FROM secure_guard_overage_alerts');
+      assert.equal(orgs.rows[0].n, 1);
+      assert.equal(episodes.rows[0].n, 0);
+    } finally {
+      await source.end();
+      await target.end();
+    }
+  });
 
 // Rehearsal fixture transfer only. Production transfer mechanism remains No-Go pending
 // source schema_migrations ledger, dataset sizing, source write-freeze and rollback approval.
@@ -58,6 +104,13 @@ async function copySyntheticFixture(source, target, failAfterTable) {
   await target.query('BEGIN');
   try {
     for (const table of tables) {
+      const present = await source.query('SELECT to_regclass($1) AS relation', [`public.${table}`]);
+      if (present.rows[0].relation === null) {
+        // Draft 015 was not applied in some source environments: the new DB
+        // still creates the table, but there is no historical episode to copy.
+        if (table === 'secure_guard_overage_alerts') continue;
+        throw new Error('Required synthetic Secure Guard source relation is missing');
+      }
       const sourceRows = await source.query(`SELECT * FROM ${quote(table)} ORDER BY id`);
       const columns = sourceRows.fields.map((field) => field.name);
       const values = columns.map((_column, index) => `$${index + 1}`).join(', ');
