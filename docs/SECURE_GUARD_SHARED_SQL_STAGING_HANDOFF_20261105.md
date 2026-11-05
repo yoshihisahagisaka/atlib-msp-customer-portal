@@ -52,3 +52,15 @@ SECU:MIE PR #42の**54**はSECU:MIE単独予算。SGの許容上限ではない�
 5. SGの過去session・invitation・MSP権限・通知二重防止までStaging E2E PASSとし、Insight側と共通障害/PITR復旧責任者を確認してからProduction Go/No-Go判定。
 
 **本PRはSG側のオフライン実装準備。SECU:MIE Staging作成や本番切替の許可を代行するものではない。**
+
+## 2026-11-05 合成データ移行リハーサル（実DB、Production非接続）
+
+GitHub Actionsの使い捨てPostgreSQL 16内で、**旧Portal側のSG migrations 011→012→015**を適用した合成source databaseと、**SG-only baseline 001→002**を適用したtarget databaseを並置し、次を検証する。
+
+- 旧Portal `customers` FKを使った組織と、Portalに属さないSG独立組織の双方をsourceに用意。
+- 個人ID、session_version、active/pending membership、招待token hash、MSP role、DNSFilter mapping、receipt、audit FK、overage通知状態を保持できること。
+- SGの8業務テーブルのみを依存順にtargetへ移し、旧`customers`テーブルをtargetに持ち込まないこと。
+- 移送途中の故障で**target全体がROLLBACK**し、中途半端な所属/監査レコードが残らないこと。
+- 全フィールドの往復相当一致と、overage BIGSERIALのシーケンス値補正（旧IDの重複防止）。
+
+**注意：これはCIのfixture-only移送アルゴリズムであり、本番データ移行プログラムやProduction Goではない。** 本番側の実Migration Ledger、正確なデータ件数、旧DBの書込停止方式、認証・監査・通知の切替整合、バックアップとRollbackは未確定。Production接続用コード・権限・手順へ昇格する前に、実機Read-only調査と個別の移行承認を要する。
