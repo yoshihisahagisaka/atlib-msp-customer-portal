@@ -85,7 +85,8 @@ test('PostgreSQL 16: source inventory emits metadata only and never needs Portal
       assert.equal(result.relations.length, 2);
       assert.ok(result.missingRelations.includes('portal_users'));
       assert.equal(result.foreignKeys.length, 1);
-      assert.doesNotMatch(JSON.stringify(result), /SYNTHETIC_PRIVATE_CUSTOMER|fixturePassword/);
+      assert.doesNotMatch(JSON.stringify(result), /SYNTHETIC_PRIVATE_CUSTOMER/);
+      assert.equal(JSON.stringify(result).includes(fixturePassword), false);
       await assert.rejects(collectInventory(reader, 'different_database'), /identity/);
       await assert.rejects(reader.query("INSERT INTO customer_organizations VALUES (2, 'should-fail')"),
         (error) => error.code === '42501');
