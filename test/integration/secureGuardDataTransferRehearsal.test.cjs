@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { Client } = require('pg');
+const { Client, types } = require('pg');
 
 // Only disposable synthetic fixtures; NEVER point this test at GCP/Production.
 const host = '127.0.0.1';
@@ -20,7 +20,14 @@ const tables = [
 ];
 
 function connect(database, user = 'postgres') {
-  return new Client({ host, port, database, user, password, connectionTimeoutMillis: 3000 });
+  // Keep PostgreSQL's six-digit timestamp precision; pg's default JS Date parser
+  // discards microseconds and is unsuitable for a migration fidelity assertion.
+  const parser = {
+    getTypeParser: (oid, format) => (oid === 1184 || oid === 1114)
+      ? (value) => value
+      : types.getTypeParser(oid, format),
+  };
+  return new Client({ host, port, database, user, password, connectionTimeoutMillis: 3000, types: parser });
 }
 
 function migrateTargetBaseline() {
@@ -129,9 +136,9 @@ test('Synthetic legacy 011/012/015 -> isolated SG database preserves identity an
         (id,customer_organization_id,dnsfilter_organization_id)
         VALUES ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000011','synthetic-dnsfilter-id')`);
       await source.query(`INSERT INTO secure_guard_receipts
-        (id,customer_organization_id,status,completed_at,plan_hash)
+        (id,customer_organization_id,status,observed_at,completed_at,plan_hash)
         VALUES ('00000000-0000-0000-0000-000000000061','00000000-0000-0000-0000-000000000011',
-                'verified',now(),'synthetic-plan-hash')`);
+                'verified','2026-11-05 04:03:02.123456+00',now(),'synthetic-plan-hash')`);
       await source.query(`INSERT INTO secure_guard_audit_events
         (id,actor_user_id,customer_organization_id,membership_id,action,result,receipt_id)
         VALUES ('00000000-0000-0000-0000-000000000071','00000000-0000-0000-0000-000000000021',
@@ -161,6 +168,9 @@ test('Synthetic legacy 011/012/015 -> isolated SG database preserves identity an
       }
       const noLegacyCustomers = await target.query(`SELECT to_regclass('public.customers') AS table_name`);
       assert.equal(noLegacyCustomers.rows[0].table_name, null);
+      const timestampFidelity = await target.query(`SELECT observed_at FROM secure_guard_receipts
+        WHERE id = '00000000-0000-0000-0000-000000000061'`);
+      assert.match(timestampFidelity.rows[0].observed_at, /04:03:02\.123456/);
 
       const nextEpisode = await target.query(`INSERT INTO secure_guard_overage_alerts
         (customer_organization_id,last_observed_at,allocated_rc_licenses,roaming_clients_in_use,over_by)
