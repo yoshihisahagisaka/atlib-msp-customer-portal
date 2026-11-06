@@ -5,7 +5,7 @@
 - 対象は既存 **`msp-zabbix` / Cloud SQL instance `msp-customer-portal-db`**。共用Staging `secumie-sg-shared-staging-db` ではない。
 - 2026-11-06に運用者が `gcloud.cmd sql users list --project=msp-zabbix --instance=msp-customer-portal-db --format="table(name,type)"` をRead-only実行。返却は `portal_app`、`postgres`、`ppap_app`、`ppap_sso_verify_app`、`sales_tools_app`、`sales_tools_migration`（すべて `BUILT_IN`）。**専用Read-only login候補は一覧から確認できなかった**。これは権限の確定調査ではなく、SQLで作成した非login/group roleや実効grantの不存在を証明しない。
 - **2026-11-06 Read-only実機確定：** Cloud SQL Admin APIでinstanceは`RUNNABLE`、`asia-northeast1`、`POSTGRES_16`。DB一覧は`postgres` / **`msp_customer_portal`** / `ppap_transfer` / `ppap_sso_verify` / `sales_tools`。調査の移行元DB名は`msp_customer_portal`とする。1つのインスタンスに複数のサービスDBがあるため、他DBへのgrantや既存`PUBLIC` grantの変更は一切行わない。
-- `portal_app` / PPAP / Sales Tools / `postgres` の認証情報を調査用に流用しない。調査用の新規roleの**設計準備のみ承認**。本番 `CREATE ROLE`、`GRANT`、パスワード設定、DB接続、Inventory実行、Secret/IAM/Proxy変更は**未承認・未実行**。
+- `portal_app` / PPAP / Sales Tools / `postgres` の認証情報を**Inventory本体のread-only主体として**流用しない。**2026-11-06統括承認：** この文書の事前Gateをすべて満たした場合に限り、`sg_source_inventory_ro_20261106` を **`NOLOGIN` / `PASSWORD NULL`** で作り、`msp_customer_portal`の`CONNECT`、`public`の`USAGE`、`public.schema_migrations`の`SELECT`だけ付与してよい。**本番での作成・grantはまだ未実行**。パスワード設定、`LOGIN`有効化、Inventory実行、Secret/IAM/Proxy変更、本番Migrationは今回のGoに含まれない。
 - SG Draft PR #5の `scripts/secureGuardSourceInventoryReadOnly.cjs` の前提を維持。新roleを作っても、低負荷の本番接続とInventory実行には個別Goが必要。
 
 ## 作成前に必ず満たす条件（1つでも未了ならSTOP）
@@ -20,15 +20,46 @@
 2. **一部完了：** 対象instance・DB名・PostgreSQL versionは確認済み。**未了：** SQL側`public.schema_migrations`の存在、既存role名衝突なし、実効grantを照合。既存の適切なRead-only主体がSQL側で見つかった場合は新規作成案に戻って再判断する。
 3. 保守責任者、低負荷の実行時間、停止判断者、Portal/PPAPの遅延・5xx有無、現在接続数を確認する。既存instanceは最大25接続・直近ピーク22、**接続追加後の値で20未満**を厳守。低負荷判定なしに管理者セッションを張らない。
 4. 既存 `msp-frontend-server` の `cloud-sql-proxy.service`（loopback `127.0.0.1:5432`）など**承認済みの管理経路だけ**を使用。管理用資格情報は既存の正規運用経路で扱い、Git・チャット・コマンド履歴・標準出力に展開しない。管理者接続の方法や権限が未確定ならSTOP。Proxy再起動/追加起動、Public IP、Firewall、IAM、Secretの変更を伴う迂回は禁止。
-5. **本番DBへの限定的なrole新設とgrantについて別途明示承認**を得る。承認前に以下のSQLを実行しない。
+5. **承認済み（ただし上記1〜4の成立条件付き）：** 本番DBへの`NOLOGIN` role新設と上記3 grantのみ。保守日時・低負荷・管理経路・SQL側の所有者とrole候補の照合が未了なら、この承認があっても実行不可。障害/接続数の上昇時は直ちにSTOP。
 
-## 作成SQL案（未実行・DB名は確定、期限/接続Gateは未確定）
+### 実行順序（現時点はPreflight待ち）
 
-以下は**レビュー用テンプレート**。DB名は実機確認した`msp_customer_portal`を指定済み。`<APPROVED_EXPIRY_JST>`を実行承認日時に沿って確定し、旧本番の対象DBに接続していることを`SELECT current_database()`で確認してから、権限を持つ運用者が低負荷時間に実施する。未承認のまま実行しない。
+1. 実行責任者・日時（低負荷時間帯）・停止判断者・Portal/PPAPの5xx/遅延・Cloud Monitoringの**現在の本番DB接続数**を運用者が確認する。管理者接続1本を追加しても「20未満」であるため、保守的に**接続前18以下**を目安とし、メトリクスの遅延や増加傾向があればSTOP。実測にはGoogle Cloud ConsoleのCloud SQL該当instanceのConnectionsチャートを用いる。7日ピーク22という過去値は実行Goの根拠にならない。
+2. 既存の `msp-frontend-server` の正規管理経路と既存 `cloud-sql-proxy.service` の稼働状態・loopback先を**Read-only**で確認。Proxyの追加起動・再起動・管理Secretの読み出しやアプリ資格情報の流用はしない。管理者のDB接続方法を特定できなければSTOP。
+3. 認可済み管理DBセッション1本で、まず下記の**Read-only SQL**を実行し、`msp_customer_portal` / PG16 / ledgerの名前・所有者 / 全role / **接続追加後20未満** / 既存read-only候補とgrantを運用者がレビューする。`SELECT`結果に想定外があればSTOP。特に既存の適切なread-only主体が判明したら新roleの作成は中断し、統括へ差分を戻す。
+4. すべてPASSした場合に限り、レビュー済み `scripts/secureGuardSourceInventoryRoleBootstrap.sql` を**同じ承認済み経路**で `psql -X -v ON_ERROR_STOP=1` により適用する。実行ファイルの配布方法が未承認ならSTOP（Gitから本番VMへの未承認配置を行わない）。ファイル自身にも期待DB・PG16・ledger・同名role不在・接続余裕の**トランザクション内Gate**があり、違反時は作成前に失敗する。途中エラー時は `ROLLBACK` と結果確認を優先し、繰り返し実行しない。
+5. 作成後に `rolcanlogin=false`、grant 3件、DML/DDL/role membership無しを検証し、操作日時・role名・承認範囲・結果のみを制限付き記録する。**そこで終了**。Inventory用パスワード設定・LOGIN切替・Inventory本体は別Goであり実施しない。
+
+```sql
+-- Read-only SQL preflight: credentials/passwords/application row data are not returned.
+SELECT current_database() AS source_db,
+       current_setting('server_version') AS postgres_version,
+       current_setting('max_connections')::integer AS max_connections,
+       (SELECT count(*)::integer FROM pg_stat_activity
+         WHERE backend_type = 'client backend') AS used_connections_including_this_session;
+SELECT n.nspname AS schema_name, c.relname AS ledger_name,
+       pg_get_userbyid(c.relowner) AS ledger_owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relname = 'schema_migrations' AND c.relkind IN ('r','p');
+SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+       rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;
+SELECT r.rolname,
+       has_database_privilege(r.oid, current_database(), 'CONNECT') AS db_connect,
+       has_database_privilege(r.oid, current_database(), 'CREATE') AS db_create,
+       has_schema_privilege(r.oid, 'public', 'USAGE') AS schema_usage,
+       has_schema_privilege(r.oid, 'public', 'CREATE') AS schema_create,
+       has_table_privilege(r.oid, 'public.schema_migrations', 'SELECT') AS ledger_select
+FROM pg_roles r WHERE r.rolcanlogin AND r.rolname !~ '^pg_' ORDER BY r.rolname;
+```
+
+## 作成SQL（本番未実行・条件付き承認済み）
+
+実行正本は **`scripts/secureGuardSourceInventoryRoleBootstrap.sql`**。以下は権限範囲を示す抜粋であり、**抜粋だけを手作業で実行しない**。実行正本では、同じトランザクションで接続先・ledger・接続数・role衝突を検査し、作成後にロール属性と実効書込み権限を検証してからcommitする。パスワード期限は**今回の作成段階では設定しない**（別承認のLOGIN有効化時にだけ指定）。
 
 ```sql
 -- PRE: current_database() = 'msp_customer_portal' を運用者が確認。
--- PRE: pg_rolesに同名のroleがないことを確認。実施には別途Goが必要。
+-- PRE: pg_rolesに同名のroleがなく、SQL側の所有者・接続GateがPASS。
 BEGIN;
 CREATE ROLE sg_source_inventory_ro_20261106 WITH
   NOLOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE
@@ -83,4 +114,4 @@ ALTER ROLE sg_source_inventory_ro_20261106
 
 ## このPRでの状態
 
-**準備のみ。** `msp-customer-portal-db` の**DB名`msp_customer_portal`・PostgreSQL 16・RUNNABLEはRead-only実測済み**。一方、SQL側のrole/ledger/実効grant、管理者経路、保守時間、接続余裕は未確認。Read-only principalの新設も旧Production Source Inventoryも未実施。既存Portal/PPAP、SG Staging database/role/Secret、Migration/Trafficは変更しない。**Production No-Go / PR Draft維持。**
+**条件付き作成Goは取得済み・未実行。** `msp-customer-portal-db` の**DB名`msp_customer_portal`・PostgreSQL 16・RUNNABLEはRead-only実測済み**。SQL側のrole/ledger/実効grant、管理者経路、保守日時、接続余裕は依然として未確認。使い捨てPostgreSQL 16のbootstrap否定テストは本番Gateの代替ではない。専用roleの本番作成も旧Production Source Inventoryも未実施。既存Portal/PPAP、SG Staging database/role/Secret、Migration/Trafficは変更しない。**Production No-Go / PR Draft維持。**
