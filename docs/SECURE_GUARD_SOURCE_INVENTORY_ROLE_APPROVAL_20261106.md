@@ -24,7 +24,7 @@
 
 ### 実行順序（現時点はPreflight待ち）
 
-1. 実行責任者・日時（低負荷時間帯）・停止判断者・Portal/PPAPの5xx/遅延・Cloud Monitoringの**現在の本番DB接続数**を運用者が確認する。管理者接続1本を追加しても「20未満」であるため、保守的に**接続前18以下**を目安とし、メトリクスの遅延や増加傾向があればSTOP。実測にはGoogle Cloud ConsoleのCloud SQL該当instanceのConnectionsチャートを用いる。7日ピーク22という過去値は実行Goの根拠にならない。
+1. 実行責任者・日時（低負荷時間帯）・停止判断者・Portal/PPAPの5xx/遅延・Cloud Monitoringの**直近本番DB接続数**を運用者が確認する。対象はPostgreSQL専用メトリクス **`cloudsql.googleapis.com/database/postgresql/num_backends`**（PostgreSQL Connections）。**`database`ラベルごとの表示値は5 DB合計**で判断する。`database/network/connections`はPostgreSQL用ではない。測定は60秒間隔、公開まで最大165秒遅延するため「瞬時の現在値」と扱わない。管理者接続1本を追加しても「20未満」であるため、保守的に**接続前18以下**を目安とし、メトリクスの遅延や増加傾向があればSTOP。最終判定は**接続後の`pg_stat_activity`**でも確認する。7日ピーク22という過去値は実行Goの根拠にならない。
 2. 既存の `msp-frontend-server` の正規管理経路と既存 `cloud-sql-proxy.service` の稼働状態・loopback先を**Read-only**で確認。Proxyの追加起動・再起動・管理Secretの読み出しやアプリ資格情報の流用はしない。管理者のDB接続方法を特定できなければSTOP。
 3. 認可済み管理DBセッション1本で、まず下記の**Read-only SQL**を実行し、`msp_customer_portal` / PG16 / ledgerの名前・所有者 / 全role / **接続追加後20未満** / 既存read-only候補とgrantを運用者がレビューする。`SELECT`結果に想定外があればSTOP。特に既存の適切なread-only主体が判明したら新roleの作成は中断し、統括へ差分を戻す。
 4. すべてPASSした場合に限り、レビュー済み `scripts/secureGuardSourceInventoryRoleBootstrap.sql` を**同じ承認済み経路**で `psql -X -v ON_ERROR_STOP=1` により適用する。実行ファイルの配布方法が未承認ならSTOP（Gitから本番VMへの未承認配置を行わない）。ファイル自身にも期待DB・PG16・ledger・同名role不在・接続余裕の**トランザクション内Gate**があり、違反時は作成前に失敗する。途中エラー時は `ROLLBACK` と結果確認を優先し、繰り返し実行しない。
