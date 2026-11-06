@@ -65,6 +65,14 @@ jobs:
           SECURE_GUARD_DB_E2E_ENABLED: 'true'
           SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
           SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy Source Inventory NOLOGIN role bootstrap on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryRoleBootstrap.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
       - name: Synthetic legacy-to-SG data transfer rehearsal
         run: npm run test:secure-guard-transfer-rehearsal
         env:
