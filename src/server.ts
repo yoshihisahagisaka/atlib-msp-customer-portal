@@ -5,6 +5,7 @@ import pinoHttp from 'pino-http';
 import pino from 'pino';
 import { loadConfig } from './config';
 import { createPool } from './db/pool';
+import { readSecureGuardDatabaseSettings, createSecureGuardDatabasePool } from './db/secureGuardDatabase';
 import { CustomerRepo } from './services/customerRepo';
 import { Mailer } from './services/mailer';
 import { AuthService } from './services/authService';
@@ -54,6 +55,10 @@ async function main(): Promise<void> {
   const logger = pino({ level: config.nodeEnv === 'production' ? 'info' : 'debug' });
 
   const pool = createPool(config);
+  const secureGuardDatabaseSettings = readSecureGuardDatabaseSettings();
+  const secureGuardPool = secureGuardDatabaseSettings
+    ? createSecureGuardDatabasePool(secureGuardDatabaseSettings)
+    : pool;
   const customerRepo = new CustomerRepo(pool);
   const mailer = new Mailer(config.smtp);
   const authService = new AuthService(pool, customerRepo, mailer, config);
@@ -64,8 +69,8 @@ async function main(): Promise<void> {
   const monthlyReportRepo = new MonthlyReportRepo(pool);
   const reportStorage = new ReportStorage(config.monthlyReport.storageBucket);
   const settingsRepo = new SettingsRepo(pool);
-  const secureGuardRepo = new SecureGuardRepo(pool);
-  const secureGuardOverageStore = new SecureGuardOverageStore(pool);
+  const secureGuardRepo = new SecureGuardRepo(secureGuardPool);
+  const secureGuardOverageStore = new SecureGuardOverageStore(secureGuardPool);
   const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
   // Deployment supplies this only to the server process. No browser route can read it.
   const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
@@ -208,9 +213,29 @@ async function main(): Promise<void> {
 
   app.use(express.static(path.join(__dirname, '../public')));
 
-  app.listen(config.port, () => {
+  const listener = app.listen(config.port, () => {
     logger.info(`msp-customer-portal listening on :${config.port}`);
   });
+
+  // Keep the existing Portal-only lifecycle unchanged until the SG cutover.
+  // Once dedicated mode is selected, drain HTTP before closing both distinct pools.
+  if (secureGuardDatabaseSettings) {
+    let stopping = false;
+    const stop = async () => {
+      if (stopping) return;
+      stopping = true;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          listener.close((error) => error ? reject(error) : resolve());
+        });
+      } finally {
+        const results = await Promise.allSettled([secureGuardPool.end(), pool.end()]);
+        if (results.some((result) => result.status === 'rejected')) process.exitCode = 1;
+      }
+    };
+    process.once('SIGTERM', () => { void stop().catch(() => { process.exitCode = 1; }); });
+    process.once('SIGINT', () => { void stop().catch(() => { process.exitCode = 1; }); });
+  }
 }
 
 main().catch((err) => {

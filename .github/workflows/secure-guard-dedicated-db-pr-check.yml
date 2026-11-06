@@ -1,0 +1,83 @@
+name: Secure Guard dedicated database offline checks
+
+on:
+  pull_request:
+    branches:
+      - feat/secure-guard-allocation-snapshot-20261104
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'package.json'
+      - 'tsconfig.secure-guard-migration.json'
+      - '.github/workflows/secure-guard-dedicated-db-pr-check.yml'
+  push:
+    branches:
+      - feat/secure-guard-shared-sql-db-prep-20261105
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local_ci_fixture_password_not_a_secret
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile and run offline tests
+        run: npm test
+      - name: Typecheck SG dedicated migration runner
+        run: npm run typecheck:secure-guard-migration
+      - name: Secure Guard isolated PostgreSQL 16 integration
+        run: npm run test:secure-guard-db-e2e
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy SG read-only inventory guard on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryReadOnly.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy Source Inventory NOLOGIN role bootstrap on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryRoleBootstrap.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Synthetic legacy-to-SG data transfer rehearsal
+        run: npm run test:secure-guard-transfer-rehearsal
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
