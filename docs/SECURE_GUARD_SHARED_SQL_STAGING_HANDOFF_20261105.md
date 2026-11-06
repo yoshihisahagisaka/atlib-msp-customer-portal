@@ -72,8 +72,8 @@
 
 ## 旧本番DB Read-only inventoryの実行前契約（未実行）
 
-- **2026-11-06 追記：** 運用者のCloud SQL users list結果では、既存の6アカウント（Portal/PPAP/Sales Tools/`postgres`）のみが表示され、専用Read-only主体を確認できなかった。既存アプリprincipalを流用せず、**新規一時roleの設計準備のみ**を `docs/SECURE_GUARD_SOURCE_INVENTORY_ROLE_APPROVAL_20261106.md` に記載。SQL側権限・低負荷時間・管理者経路と作成/有効化の個別承認は未了。本番role作成・InventoryはNo-Go。
-- **同日追加確認：** Cloud SQL Admin APIで対象instanceは`RUNNABLE`/`POSTGRES_16`/`asia-northeast1`、本番Portal DB名は`msp_customer_portal`と確定。他DBは`postgres`/`ppap_transfer`/`ppap_sso_verify`/`sales_tools`。SQL側role/ledger実効権限・接続余裕・本番role作成Goは未了。
+- **2026-11-06 追記：** 運用者のCloud SQL users list結果では、既存の6アカウント（Portal/PPAP/Sales Tools/`postgres`）のみが表示され、専用Read-only主体を確認できなかった。既存アプリprincipalを流用せず、`docs/SECURE_GUARD_SOURCE_INVENTORY_ROLE_APPROVAL_20261106.md`に一時roleを記録。**後続の統括承認により**、事前Gate成立時に限る `NOLOGIN` / `PASSWORD NULL` roleの新設と最低3 grantだけはGo。SQL側権限・低負荷時間・管理者経路が未確認のため**実行は保留**。LOGIN有効化・Inventory本体は未承認。本番role未作成・InventoryはNo-Go。
+- **同日追加確認：** Cloud SQL Admin APIで対象instanceは`RUNNABLE`/`POSTGRES_16`/`asia-northeast1`、本番Portal DB名は`msp_customer_portal`と確定。他DBは`postgres`/`ppap_transfer`/`ppap_sso_verify`/`sales_tools`。SQL側role/ledger実効権限・接続余裕は未確認。条件付きrole作成Goは取得済みだが未実施。
 - `scripts/secureGuardSourceInventoryReadOnly.cjs` をSG側の運用者が使う候補とする。**既存ソースDBを開く処理であり、このPRでは実行しない。** Read-onlyであることは、GCP本番接続の自動承認を意味しない。
 - 先にCloud SQLの監視で**現在接続数が20未満**、PPAP/Portalに遅延なし、保守責任者・実行時間・停止判断者を確認する。接続追加後の検査自身も使用接続数が20以上なら**即STOP**。既存最大25・観測ピーク22のため、繁忙時は実行しない。
 - 低権限・本番の既存read-only接続主体を使用する。`CREATEDB` / `CREATEROLE` / `SUPERUSER` / `REPLICATION` / `BYPASSRLS` の属性だけでなく、**継承・PUBLICを含む実効権限**でDB/非system schemaの`CREATE`、非system tableの`INSERT` / `UPDATE` / `DELETE` / `TRUNCATE` がある場合もスクリプトで拒否する。BEGIN READ ONLYによる一時的な書込み防止だけでは、write権限のあるruntime主体をread-only調査主体とみなさない。調査のための新規role、IAM、Secretやnetwork構成の追加は本工程で許可しない。
