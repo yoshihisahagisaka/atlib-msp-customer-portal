@@ -74,7 +74,7 @@
 
 - `scripts/secureGuardSourceInventoryReadOnly.cjs` をSG側の運用者が使う候補とする。**既存ソースDBを開く処理であり、このPRでは実行しない。** Read-onlyであることは、GCP本番接続の自動承認を意味しない。
 - 先にCloud SQLの監視で**現在接続数が20未満**、PPAP/Portalに遅延なし、保守責任者・実行時間・停止判断者を確認する。接続追加後の検査自身も使用接続数が20以上なら**即STOP**。既存最大25・観測ピーク22のため、繁忙時は実行しない。
-- 低権限・本番の既存read-only接続主体を使用する。DBへの `CREATEDB` / `CREATEROLE` / `SUPERUSER` / `REPLICATION` 権限がある主体はスクリプト内で拒否。調査のための新規role、IAM、Secretやnetwork構成の追加は本工程で許可しない。
+- 低権限・本番の既存read-only接続主体を使用する。`CREATEDB` / `CREATEROLE` / `SUPERUSER` / `REPLICATION` / `BYPASSRLS` の属性だけでなく、**継承・PUBLICを含む実効権限**でDB/非system schemaの`CREATE`、非system tableの`INSERT` / `UPDATE` / `DELETE` / `TRUNCATE` がある場合もスクリプトで拒否する。BEGIN READ ONLYによる一時的な書込み防止だけでは、write権限のあるruntime主体をread-only調査主体とみなさない。調査のための新規role、IAM、Secretやnetwork構成の追加は本工程で許可しない。
 - 接続は**VPC内の承認済みCloud SQL Auth Proxyのloopback** `127.0.0.1:<port>`、またはCloud SQL Unix socketのみ。Public IP追加、直接DB接続、SSHトンネルの新設、旧Cloud Run revisionの変更はしない。
 - 本番接続を伴うため `SECURE_GUARD_SOURCE_INVENTORY_APPROVED=true` と `SECURE_GUARD_SOURCE_DB_NAME` / `SECURE_GUARD_SOURCE_EXPECTED_DB_NAME` の一致を明示必須にする。`SECURE_GUARD_SOURCE_DB_USER/PASSWORD`、`SECURE_GUARD_SOURCE_DB_HOST/PORT`または`SECURE_GUARD_SOURCE_DB_SOCKET_PATH`は専用の環境/Secret経由で与え、値を引数・Git・Cloud Loggingに出さない。
 - 実行は `node scripts/secureGuardSourceInventoryReadOnly.cjs`。**1接続のみ**、トランザクションREAD ONLY、SQL 3秒・ロック1秒タイムアウト、処理後切断。出力は旧Ledgerの011/012/014/015、SG関連8テーブルの推定件数/総容量と欠落、FK一覧、DB名/接続上限だけで、顧客名・メール・token/hash・行内容は読み出さない。

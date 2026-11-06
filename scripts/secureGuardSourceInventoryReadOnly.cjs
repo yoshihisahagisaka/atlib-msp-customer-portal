@@ -65,10 +65,30 @@ async function collectInventory(client, expectedDatabase) {
     if (!connectionGate(identity.used_connections, identity.max_connections)) {
       throw new Error('STOP: insufficient source connection headroom');
     }
-    const role = (await client.query(`SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication
+    const role = (await client.query(`SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
       FROM pg_roles WHERE rolname = current_user`)).rows[0];
-    if (!role || role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolreplication) {
+    if (!role || role.rolsuper || role.rolcreatedb || role.rolcreaterole
+      || role.rolreplication || role.rolbypassrls) {
       throw new Error('STOP: read-only inventory requires a non-privileged principal');
+    }
+    // A writable application role is not an approved inventory identity, even if
+    // BEGIN READ ONLY would block accidental writes in this particular session.
+    // Check effective grants (including inherited and PUBLIC permissions) over
+    // metadata only; never inspect application rows to determine privileges.
+    const writable = (await client.query(`SELECT
+      has_database_privilege(current_user, current_database(), 'CREATE') AS database_create,
+      EXISTS (SELECT 1 FROM pg_namespace n
+        WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+          AND has_schema_privilege(current_user, n.oid, 'CREATE')) AS schema_create,
+      EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p') AND n.nspname <> 'information_schema'
+          AND n.nspname !~ '^pg_'
+          AND (has_table_privilege(current_user, c.oid, 'INSERT')
+            OR has_table_privilege(current_user, c.oid, 'UPDATE')
+            OR has_table_privilege(current_user, c.oid, 'DELETE')
+            OR has_table_privilege(current_user, c.oid, 'TRUNCATE'))) AS table_write`)).rows[0];
+    if (!writable || writable.database_create || writable.schema_create || writable.table_write) {
+      throw new Error('STOP: source inventory requires a strictly read-only principal');
     }
     const ledgerExists = (await client.query(
       "SELECT to_regclass('public.schema_migrations') IS NOT NULL AS exists",

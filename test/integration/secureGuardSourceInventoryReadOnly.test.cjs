@@ -90,5 +90,23 @@ test('PostgreSQL 16: source inventory emits metadata only and never needs Portal
       await assert.rejects(collectInventory(reader, 'different_database'), /identity/);
       await assert.rejects(reader.query("INSERT INTO customer_organizations VALUES (2, 'should-fail')"),
         (error) => error.code === '42501');
+      // A normal non-superuser can still have DML or DDL grants. Either must
+      // fail before collecting inventory, even though the transaction is RO.
+      const grantsAdmin = new Client({ host, port, user: 'postgres', database, password: fixturePassword });
+      await grantsAdmin.connect();
+      try {
+        await grantsAdmin.query(`GRANT INSERT ON customer_organizations TO ${readerRole}`);
+        await assert.rejects(collectInventory(reader, database), /strictly read-only principal/);
+        await grantsAdmin.query(`REVOKE INSERT ON customer_organizations FROM ${readerRole}`);
+
+        await grantsAdmin.query(`GRANT CREATE ON SCHEMA public TO ${readerRole}`);
+        await assert.rejects(collectInventory(reader, database), /strictly read-only principal/);
+        await grantsAdmin.query(`REVOKE CREATE ON SCHEMA public FROM ${readerRole}`);
+
+        await grantsAdmin.query(`GRANT CREATE ON DATABASE ${database} TO ${readerRole}`);
+        await assert.rejects(collectInventory(reader, database), /strictly read-only principal/);
+        await grantsAdmin.query(`REVOKE CREATE ON DATABASE ${database} FROM ${readerRole}`);
+        assert.equal((await collectInventory(reader, database)).readOnly, true);
+      } finally { await grantsAdmin.end(); }
     } finally { await reader.end(); }
   });
