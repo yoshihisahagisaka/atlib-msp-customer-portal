@@ -4,12 +4,19 @@
 
 - 既決定：案②。SECU:MIE（Insight主管）の新Cloud SQL**インスタンス**へSecure Guardの**独立database/role**を収容。
 - 既存Portal、Sales Tools、PPAP/Secure Send本番DBは不変更。Secure Sendの将来分離は別工程。
-- SECU:MIE Draft PR #42（基盤設計）、#43（runtime接続分離）、#44（旧SECU専用Staging準備）に加え、**#45（共用仕様 `fee66401619e994f40aeffb497d24f4f1b72b909`、直前Preflight `cfb4c104ae96b554a2ab72457bc7bfc4132e7b4a`、PSA実行記録 `a001155049238899584f73d9c9972752c4c7daf5`）を現行実行正本**として照合する。PR #44の旧インスタンス作成手順は廃止。各PRのSECU:MIE単独検証をSGとの共用構成Goとみなさない。
-- 共用Stagingは `msp-zabbix` / `asia-northeast1`、`secumie-sg-shared-staging-db`（PostgreSQL 16 Enterprise、ZONAL、2 vCPU / 7.5 GiB、SSD 20 GiB自動拡張、Private IPのみ、backup/PITR 7日、deletion protection）。**2026-11-05 15:02 JST時点で未作成**。作成にはPR #45第12.5・12.7節に基づく**インスタンス単位の別承認**が必要。
+- SECU:MIE Draft PR #42（基盤設計）、#43（runtime接続分離）、#44（旧SECU専用Staging準備）に加え、**#45（共用仕様 `fee66401619e994f40aeffb497d24f4f1b72b909`、直前Preflight `cfb4c104ae96b554a2ab72457bc7bfc4132e7b4a`、PSA実行記録 `a001155049238899584f73d9c9972752c4c7daf5`、Staging作成記録 `2a2f8a9f78e69cfe15b08e34f6747ac4ee3015e4`）を現行実行正本**として照合する。PR #44の旧インスタンス作成手順は廃止。各PRのSECU:MIE単独検証をSGとの共用構成Goとみなさない。
+- 共用Stagingは `msp-zabbix` / `asia-northeast1`、`secumie-sg-shared-staging-db`（PostgreSQL 16 Enterprise、ZONAL、2 vCPU / 7.5 GiB、SSD 20 GiB自動拡張、Private IPのみ、backup/PITR 7日、deletion protection）。**2026-11-06 10:12:12 JSTに作成完了、RUNNABLE**。作成内容・単発CREATE operationはPR #45第12.10節に記録済み。これは**インスタンス作成のみのGo**であり、DB初期化やSG移行の承認ではない。
 - **PSAは完了**：SECU PR #45の実行記録 `a001155049238899584f73d9c9972752c4c7daf5` によれば、`default` VPCに `google-managed-services-default` / `172.20.0.0/16`（RESERVED）を確保し、Service Networking peering `servicenetworking-googleapis-com` は `ACTIVE`。既存Cloud Run・Cloud SQL・subnet・Firewall・VPN・trafficは変更されていない。PSAは共通network資産としてStaging instance cleanup時に自動削除しない。
-- Staging zoneは `asia-northeast1-c`、新規SECU runtime向けProxy v2 sidecarのloopbackは `127.0.0.1:5432`。既存SG Portalは現状のConnectorを維持し、**SG専用DB接続/Proxy追加と新Revisionは別途承認**。Direct VPCのOrganization Policy/Cloud SQL固有quota・tierは実行前Gateのまま。
+- Staging zoneは実測 `asia-northeast1-c`、新規SECU runtime向けProxy v2 sidecarのloopbackは `127.0.0.1:5432`。既存SG Portalは現状のConnectorを維持し、**SG専用DB接続/Proxy追加と新Revisionは別途承認**。Cloud SQL固有作成Gateは通過済みだが、後続Direct VPC Cloud Run/Job配備のOrganization Policy確認は未了。
 - 共用Productionの候補は `secumie-sg-shared-prod-db`（REGIONAL HA、2 vCPU / 7.5 GiB、SSD 30 GiB）だが、**Production No-Go**。
-- 本文はSecure Guard側の実装候補とInsight側へのインターフェース要求。**Staging作成、DB作成、権限付与、Migration実行、実データ移行、本番変更は未実施。**
+- 本文はSecure Guard側の実装候補とInsight側へのインターフェース要求。**Stagingインスタンスのみ作成済み**。DB作成、権限付与、Migration実行、実データ移行、本番変更は未実施。
+
+### 2026-11-06 インスタンス構築後の運用期限と未確認値
+
+- **Cleanup期限：2026-11-20 10:12:12 JST**（作成完了から14 calendar days）。`$75`の費用上限も継続。削除保護の解除とインスタンス削除は経営者の最終承認後のみ実行する。
+- 初回backupは作成直後に自動開始し、記録時点で`RUNNING`・エラーなし。**backup完了・復元可能性の検証は未了**。
+- `SHOW max_connections`、内部/予約接続ピーク、接続予算`M-R >= 78`、CPU・メモリ負荷、復旧試験は**未実測**。`RUNNABLE`だけでSGの接続容量Goとはしない。
+- 既存Portal・PPAP・Sales ToolsのCloud Run/DB、PSA、SGのDB/role/Secretには変更なし。SG側はインスタンスのみを参照し、追加作成は別Gateを通す。
 
 ## 責任境界
 
@@ -55,13 +62,13 @@
 
 ## Staging開始に向けた接続条件
 
-1. **完了：** Insight側がPSA range/peeringを別承認で構築し、`ACTIVE`/`RESERVED`を記録済み。**未了：** Cloud SQL固有quota/tier、Direct VPCのOrganization Policy、運用/cleanup担当と14日/$75の費用上限を直前照合し、共用Cloud SQL Staging**インスタンス1件の個別承認**を得る。SG用DBはこの段階では作らない。
-2. SG側が空の**SG専用Staging DB**だけへ独立migrationを実施し、再実行・checksum不一致・余分な権限の拒否を検証。
+1. **完了：** Insight側がPSA range/peeringを別承認で構築し、共用Stagingインスタンス1件を作成・Read-only検証済み（PR #45 `2a2f8a9`）。**未了：** 初回backup完了・`SHOW max_connections`/予約接続/接続予算の実測、後続Direct VPCのOrganization Policy確認。SG用DBはこの段階では作っていない。
+2. **SG用database/3 role/3 Secretの作成は別Gate：** SG独立baseline・pool実装の合成CIはPASS済みだが、旧本番ソースの低負荷Read-only inventoryとその受入レビュー、独立権限設計・移行/切り戻し計画の承認を先に完了させる。条件成立後にInsight側が空の`secure_guard_staging`と分離principalを払い出し、SG側が専用migrationを別承認で実施し、再実行・checksum不一致・余分な権限の拒否を検証する。
 3. 既存Portal Stagingが存在しなかった点を解消し、legacy DBの仮想/安全なテスト環境を用意してSG dual poolだけを検証。**既存本番Portal DBへテスト負荷を加えない。**
 4. 旧本番のProduction Ledger（011/012/014/015）と対象データの実件数・FKを**低負荷Read-only**で照合した後、全8テーブルのID/関連/監査等を保全する移行スクリプトとRollbackを決める。
 5. SGの過去session・invitation・MSP権限・通知二重防止までStaging E2E PASSとし、Insight側と共通障害/PITR復旧責任者を確認してからProduction Go/No-Go判定。
 
-**2026-11-06のFit/Gap:** 8テーブルの独立baseline、3 principalの分離接続コード、pool max2、専用Migration/ledger、および使い捨てPG16の権限否定テストはSG Draft PR #5に準備済み。**PSAのみ実行済み**（2026-11-05 15:02 JST、SECU PR #45 `a0011550`）。**未了:** Staging instanceの個別承認と実作成、本番ソースの低負荷Read-only inventory（ledger/件数/FK/権限）、移行・整合性・rollback計画の実データ適合、Insight側の3主体role/Secret承認、Staging実機接続と負荷/PITR検証。**PSA成功はInstance/SG database/role/Secret/Migration作成の承認に拡張しない。** SG Staging database/role/Secret作成およびProductionはNo-Goを維持。
+**2026-11-06のFit/Gap:** 8テーブルの独立baseline、3 principalの分離接続コード、pool max2、専用Migration/ledger、および使い捨てPG16の権限否定テストはSG Draft PR #5に準備済み。**PSAと共用Staging instanceは作成済み**（SECU PR #45 `a0011550` / `2a2f8a9`）。**未了:** 初回backup完了/実測接続予算、本番ソースの低負荷Read-only inventory（ledger/件数/FK/権限）、移行・整合性・rollback計画の実データ適合、Insight側の3主体role/Secret承認、Staging実機接続と負荷/PITR検証。**インスタンス作成成功はSG database/role/Secret/Migration作成の承認に拡張しない。** SG Staging database/role/Secret作成およびProductionはNo-Goを維持。
 
 ## 旧本番DB Read-only inventoryの実行前契約（未実行）
 
