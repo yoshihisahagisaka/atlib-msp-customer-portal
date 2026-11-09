@@ -114,7 +114,7 @@ ALTER ROLE sg_source_inventory_ro_20261106
 
 ## このPRでの状態
 
-**条件付き作成Goは取得済み・未実行。** `msp-customer-portal-db` の**DB名`msp_customer_portal`・PostgreSQL 16・RUNNABLEはRead-only実測済み**。SQL側のrole/ledger/実効grant、管理者経路、保守日時、接続余裕は依然として未確認。使い捨てPostgreSQL 16のbootstrap否定テストは本番Gateの代替ではない。専用roleの本番作成も旧Production Source Inventoryも未実施。既存Portal/PPAP、SG Staging database/role/Secret、Migration/Trafficは変更しない。**Production No-Go / PR Draft維持。**
+**条件付き作成Goは取得済み・未実行。** `msp-customer-portal-db` の**DB名`msp_customer_portal`・PostgreSQL 16・RUNNABLEはRead-only実測済み**。2026-11-09にSQL側のrole/ledger/実効grant、管理者経路、接続余裕をRead-only確認した（下記記録）。ただしrole作成直前の保守日時・責任者・サービス正常性・接続余裕の再Gateと、統括の実行判断は別途必要。使い捨てPostgreSQL 16のbootstrap否定テストは本番Gateの代替ではない。専用roleの本番作成も旧Production Source Inventoryも未実施。既存Portal/PPAP、SG Staging database/role/Secret、Migration/Trafficは変更しない。**Production No-Go / PR Draft維持。**
 
 ## 2026-11-09 共用Cloud SQL管理者資格情報の復旧実績
 
@@ -126,3 +126,14 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - 事後確認：Cloud SQLは`RUNNABLE`、PortalとSales Toolsの正式healthはHTTP 200、Portal / Sales Tools / PPAP 3サービスの直近30分5xxは各0件、5サービスはReady。変更後のCloud SQL CPU利用率は約10.39%、PostgreSQL connection数は2。Cloud Run再起動・再デプロイ、既存アプリSecret変更は0件。
 - 今後のローテーションまたは緊急再設定は、最新backup/PITR、競合Operation、接続数・CPU、Portal/PPAP/Sales Tools、Secret保護Tag/Deny、`postgres`依存の不在を再Gateし、既存Secretへ新Versionを1件登録してから対話式`set-password`を1回だけ実行する。結果不明時はOperationを照合してSTOPし、自動再試行・旧値推測・追加Version作成をしない。接続試験とサービス正常性確認後、旧Versionの扱いは別承認で決定する。
 - この復旧は管理者接続経路を確立した事実だけを示す。`sg_source_inventory_ro_20261106`の作成、SQL preflight、GRANT、Inventory、Migrationを承認または実行したものではない。これらは引き続き**No-Go**で、本文の個別Gateと統括承認を要する。
+
+## 2026-11-09 旧本番SQLメタデータRead-only調査
+
+- 実行前Gate：Cloud SQLは`RUNNABLE`、競合Operation 0、既存Proxyは`active` / `enabled`。Portal / Sales Tools / PPAP 3サービスはReady、直近30分5xxは各0件。PostgreSQL接続数は実行前最新2・30分最大5、CPUは最新約9.95%・30分最大約13.49%。
+- 管理者セッション1本を既存Proxy経由で使用し、`BEGIN TRANSACTION READ ONLY`から`COMMIT`までメタデータだけを照合した。接続先`msp_customer_portal`、PostgreSQL `16.14`、`max_connections=25`、セッションを含むclient connection数`4`。
+- `public.schema_migrations`は通常テーブル（`relkind=r`）として存在し、所有roleは`portal_app`。対象Ledgerの存在・種別はBootstrap SQLの前提と一致する。
+- 候補名`sg_source_inventory_ro_20261106`は存在せず、同名衝突なし。
+- 既存の非system login主体に、再利用可能な専用Read-only主体は確認できなかった。`portal_app`は対象public 23テーブルすべてにSELECT/INSERT/UPDATE/DELETE/TRUNCATEを持ち、DB/Schema CREATEとLedger SELECTも持つため不適格。他のアプリ主体は別サービス資格情報であり、複数が`cloudsqlsuperuser` membership、DB/Schema CREATE等の管理権限を持つ。対象23テーブルへの権限が0件の主体もLedger SELECTを持たず、別サービスまたはCloud SQL管理用roleであるため流用しない。
+- membership実測では`portal_app`、`postgres`、`ppap_app`、`ppap_sso_verify_app`、`sales_tools_app`等が`cloudsqlsuperuser`のmember。既存権限は今回変更しないが、専用Read-only主体を既存アプリ資格情報から分離する必要性を裏付ける。
+- 新roleを`NOLOGIN` / `NOINHERIT` / `PASSWORD NULL`、role membershipなしで作成し、明示的な`CONNECT`（対象DB）、`USAGE`（public schema）、`SELECT`（`public.schema_migrations`）だけを付与する既存案は、調査対象のLedgerメタデータ参照に対して最小。LOGIN有効化前は接続主体にならず、業務23テーブルのDML/DDL、DB/Schema CREATE、他role membershipを付与しない既存否定検査を維持する。
+- 調査ではCREATE ROLE、ALTER ROLE、GRANT/REVOKE、DDL/DML、Inventory、Migrationを実施していない。本番変更0件。role作成・3 GRANT・LOGIN有効化・Inventoryは引き続き**No-Go**で、作成直前Gateと別の実行承認を要する。
