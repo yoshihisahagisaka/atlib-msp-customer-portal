@@ -32,6 +32,18 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sg_source_inventory_ro_20261106') THEN
     RAISE EXCEPTION 'STOP: source inventory role already exists';
   END IF;
+  IF NOT has_database_privilege(
+    current_user, 'msp_customer_portal', 'CONNECT WITH GRANT OPTION') THEN
+    RAISE EXCEPTION 'STOP: CONNECT grant option missing';
+  END IF;
+  IF NOT has_schema_privilege(
+    current_user, 'public', 'USAGE WITH GRANT OPTION') THEN
+    RAISE EXCEPTION 'STOP: USAGE grant option missing';
+  END IF;
+  IF NOT has_table_privilege(
+    current_user, 'public.schema_migrations', 'SELECT WITH GRANT OPTION') THEN
+    RAISE EXCEPTION 'STOP: ledger SELECT grant option missing';
+  END IF;
 
   SELECT count(*)::integer INTO used_connections
     FROM pg_stat_activity WHERE backend_type = 'client backend';

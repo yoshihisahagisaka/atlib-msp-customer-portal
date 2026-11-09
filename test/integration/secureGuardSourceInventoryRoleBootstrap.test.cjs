@@ -15,8 +15,32 @@ const base = {
   connectionTimeoutMillis: 3000,
 };
 const reader = 'sg_source_inventory_ro_20261106';
+const executor = 'sg_bootstrap_executor';
+const ledgerOwner = 'sg_bootstrap_ledger_owner';
 
-test('PostgreSQL 16: Source Inventory role bootstrap is atomic, bounded and NOLOGIN',
+async function aclSnapshot(client) {
+  return (await client.query(`SELECT
+    (SELECT datacl::text FROM pg_database WHERE datname=current_database()) AS database_acl,
+    (SELECT nspacl::text FROM pg_namespace WHERE nspname='public') AS public_schema_acl,
+    (SELECT relacl::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relname='schema_migrations') AS ledger_acl`)).rows[0];
+}
+
+async function configureGrantOptions(client, options) {
+  await client.query(`
+    REVOKE CONNECT ON DATABASE msp_customer_portal FROM ${executor};
+    REVOKE USAGE ON SCHEMA public FROM ${executor};
+    REVOKE SELECT ON TABLE public.schema_migrations FROM ${executor};
+  `);
+  if (options.connect) await client.query(
+    `GRANT CONNECT ON DATABASE msp_customer_portal TO ${executor} WITH GRANT OPTION`);
+  if (options.usage) await client.query(
+    `GRANT USAGE ON SCHEMA public TO ${executor} WITH GRANT OPTION`);
+  if (options.select) await client.query(
+    `GRANT SELECT ON TABLE public.schema_migrations TO ${executor} WITH GRANT OPTION`);
+}
+
+test('PostgreSQL 16: non-superuser bootstrap requires all three grant options before DDL',
   { timeout: 30000 }, async () => {
     assert.equal(process.env.CI, 'true');
     assert.equal(process.env.NODE_ENV, 'test');
@@ -24,39 +48,73 @@ test('PostgreSQL 16: Source Inventory role bootstrap is atomic, bounded and NOLO
     assert.equal(process.env.SECURE_GUARD_DB_E2E_HOST, base.host);
     assert.equal(process.env.SECURE_GUARD_DB_E2E_PORT, String(base.port));
 
-    // Refuse the incorrect database before creating even a cluster-wide role.
-    const wrongDb = new Client({ ...base, database: 'postgres' });
-    await wrongDb.connect();
-    try {
-      await assert.rejects(wrongDb.query(bootstrapSql), /wrong Source Inventory database/);
-    } finally { await wrongDb.end(); }
-
     const setup = new Client({ ...base, database: 'postgres' });
     await setup.connect();
     try {
       assert.equal((await setup.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [reader])).rowCount, 0);
+      await setup.query(`CREATE ROLE ${ledgerOwner} NOLOGIN`);
+      await setup.query(`CREATE ROLE ${executor} LOGIN CREATEROLE NOSUPERUSER
+        NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '${fixturePassword}'`);
       await setup.query('CREATE DATABASE msp_customer_portal');
     } finally { await setup.end(); }
 
-    const source = new Client({ ...base, database: 'msp_customer_portal' });
+    const executorConfig = { ...base, database: 'msp_customer_portal', user: executor };
+    const wrongDb = new Client({ ...executorConfig, database: 'postgres' });
+    await wrongDb.connect();
+    try {
+      await assert.rejects(wrongDb.query(bootstrapSql), /wrong Source Inventory database/);
+      await wrongDb.query('ROLLBACK');
+    } finally { await wrongDb.end(); }
+
+    const admin = new Client({ ...base, database: 'msp_customer_portal' });
+    const source = new Client(executorConfig);
+    await admin.connect();
     await source.connect();
     try {
+      const executorAttributes = (await admin.query(`SELECT rolsuper, rolcreaterole
+        FROM pg_roles WHERE rolname=$1`, [executor])).rows[0];
+      assert.deepEqual(executorAttributes, { rolsuper: false, rolcreaterole: true });
+
       // No ledger: even the correct database must abort before role creation.
       await assert.rejects(source.query(bootstrapSql), /legacy migration ledger absent/);
       await source.query('ROLLBACK');
-      assert.equal((await source.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [reader])).rowCount, 0);
+      assert.equal((await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [reader])).rowCount, 0);
 
-      await source.query('CREATE TABLE public.schema_migrations(filename text PRIMARY KEY)');
-      await source.query('CREATE TABLE public.customer_organizations(id bigint PRIMARY KEY)');
+      await admin.query(`CREATE TABLE public.schema_migrations(filename text PRIMARY KEY)`);
+      await admin.query(`ALTER TABLE public.schema_migrations OWNER TO ${ledgerOwner}`);
+      await admin.query(`CREATE TABLE public.customer_organizations(id bigint PRIMARY KEY)`);
+      await admin.query(`ALTER TABLE public.customer_organizations OWNER TO ${ledgerOwner}`);
+
+      async function expectPreDdlStop(options, pattern) {
+        await configureGrantOptions(admin, options);
+        const beforeAcl = await aclSnapshot(admin);
+        await assert.rejects(source.query(bootstrapSql), pattern);
+        await source.query('ROLLBACK');
+        assert.equal((await admin.query(
+          'SELECT 1 FROM pg_roles WHERE rolname=$1', [reader])).rowCount, 0);
+        assert.deepEqual(await aclSnapshot(admin), beforeAcl);
+      }
+
+      await expectPreDdlStop(
+        { connect: false, usage: false, select: false },
+        /CONNECT grant option missing/);
+      await expectPreDdlStop(
+        { connect: true, usage: false, select: false },
+        /USAGE grant option missing/);
+      await expectPreDdlStop(
+        { connect: true, usage: true, select: false },
+        /ledger SELECT grant option missing/);
+
+      await configureGrantOptions(admin, { connect: true, usage: true, select: true });
       await source.query(bootstrapSql);
 
-      const role = (await source.query(`SELECT rolcanlogin, rolsuper, rolinherit,
+      const role = (await admin.query(`SELECT rolcanlogin, rolsuper, rolinherit,
         rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
         FROM pg_roles WHERE rolname = $1`, [reader])).rows[0];
       assert.ok(role);
       assert.ok(Object.values(role).every((value) => value === false));
 
-      const grants = (await source.query(`SELECT
+      const grants = (await admin.query(`SELECT
         has_database_privilege($1, current_database(), 'CONNECT') AS db_connect,
         has_database_privilege($1, current_database(), 'CREATE') AS db_create,
         has_schema_privilege($1, 'public', 'USAGE') AS public_usage,
@@ -72,10 +130,26 @@ test('PostgreSQL 16: Source Inventory role bootstrap is atomic, bounded and NOLO
         business_read: false, business_write: false,
       });
 
+      // PostgreSQL 16 can give a CREATEROLE executor management membership in
+      // the role it creates. That reverse direction must not make the reader a
+      // member of the executor (or of any other role).
+      assert.equal((await admin.query(`SELECT 1 FROM pg_auth_members
+        WHERE member=(SELECT oid FROM pg_roles WHERE rolname=$1)`, [reader])).rowCount, 0);
+      const creatorManagement = (await admin.query(`SELECT admin_option
+        FROM pg_auth_members
+        WHERE roleid=(SELECT oid FROM pg_roles WHERE rolname=$1)
+          AND member=(SELECT oid FROM pg_roles WHERE rolname=$2)`,
+      [reader, executor])).rows;
+      assert.ok(creatorManagement.length <= 1);
+      if (creatorManagement.length === 1) assert.equal(creatorManagement[0].admin_option, true);
+
       // Never silently reuse or extend an existing cluster-wide role.
       await assert.rejects(source.query(bootstrapSql), /source inventory role already exists/);
       await source.query('ROLLBACK');
-      const roleAfter = (await source.query('SELECT rolcanlogin FROM pg_roles WHERE rolname=$1', [reader])).rows[0];
+      const roleAfter = (await admin.query('SELECT rolcanlogin FROM pg_roles WHERE rolname=$1', [reader])).rows[0];
       assert.equal(roleAfter.rolcanlogin, false);
-    } finally { await source.end(); }
+    } finally {
+      await source.end();
+      await admin.end();
+    }
   });

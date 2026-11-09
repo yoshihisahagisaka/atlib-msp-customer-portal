@@ -149,3 +149,11 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - 仕様根拠：PostgreSQL 16公式の[CREATE ROLE](https://www.postgresql.org/docs/16/sql-createrole.html)、[Role Membership](https://www.postgresql.org/docs/16/role-membership.html)、[Client Connection Defaults](https://www.postgresql.org/docs/16/runtime-config-client.html)、[GRANT](https://www.postgresql.org/docs/16/sql-grant.html)。
 - 最小是正候補は、DDL前Gateに3つの`WITH GRANT OPTION`検査を追加し、不足時はrole作成前に固定STOPすること、および非SUPERUSER CREATEROLE実行者と別Ledger所有者を用いる合成回帰試験を追加すること。Ledger権限の取得方法は未決定であり、`portal_app`資格情報流用、membership付与、`SET ROLE`、所有者変更、権限拡張を独自に行わない。
 - 解消には「Ledger所有者または正規にGrant Optionを持つ別の承認済み実行主体・手順」の決定が必要。設計変更と本番権限変更は別承認とする。role作成、GRANT、LOGIN有効化、Inventory、Migrationは引き続き**No-Go**。
+
+### 2026-11-09 DDL前Gateと非SUPERUSER CIの最小是正
+
+- `scripts/secureGuardSourceInventoryRoleBootstrap.sql`の既存DDL前Gateへ、Database CONNECT、public Schema USAGE、Ledger SELECTの各`WITH GRANT OPTION`検査を追加した。いずれかが不足する場合は、それぞれ固定STOPコードで`CREATE ROLE`前に終了する。fallback、別roleへの切替、自動権限拡張は追加していない。
+- 使い捨てPostgreSQL 16試験を、非SUPERUSERかつCREATEROLEの実行者と、別role所有のLedgerを用いるfixtureへ変更した。3つのGrant Optionを個別に不足させ、各ケースでDDL前STOP、候補role不在、ACL不変を確認。3つすべてを付与した合成正常系ではBootstrapがPASSした。
+- PostgreSQL 16が作成者へ与え得る新roleの管理用membershipは逆方向として扱い、新role自身が他roleのmemberにならないことを検証した。正常作成後のNOLOGIN / NOINHERIT / PASSWORD NULL相当属性、DB/Schema CREATEなし、Ledger以外の業務表権限なし、DMLなしも既存どおりPASS。
+- 検証結果：非SUPERUSER Bootstrap統合試験 1 PASS / 0 FAIL、通常TypeScript buildと既存テスト 62 PASS / 0 FAIL、Secure Guard migration typecheck PASS。GCP・本番DB接続、role作成、GRANT、Inventory、Migrationは0件。
+- このオフライン実装・CI合格は、本番BootstrapのGoを意味しない。本番`postgres`はLedger SELECT Grant Optionを持たず、正規の付与主体・承認済み手順は未決定。**Production No-Go / PR Draftを維持する。**
