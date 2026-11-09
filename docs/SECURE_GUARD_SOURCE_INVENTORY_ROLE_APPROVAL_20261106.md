@@ -157,3 +157,56 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - PostgreSQL 16が作成者へ与え得る新roleの管理用membershipは逆方向として扱い、新role自身が他roleのmemberにならないことを検証した。正常作成後のNOLOGIN / NOINHERIT / PASSWORD NULL相当属性、DB/Schema CREATEなし、Ledger以外の業務表権限なし、DMLなしも既存どおりPASS。
 - 検証結果：非SUPERUSER Bootstrap統合試験 1 PASS / 0 FAIL、通常TypeScript buildと既存テスト 62 PASS / 0 FAIL、Secure Guard migration typecheck PASS。GCP・本番DB接続、role作成、GRANT、Inventory、Migrationは0件。
 - このオフライン実装・CI合格は、本番BootstrapのGoを意味しない。本番`postgres`はLedger SELECT Grant Optionを持たず、正規の付与主体・承認済み手順は未決定。**Production No-Go / PR Draftを維持する。**
+
+## 2026-11-09 Ledger SELECT付与経路のFit/Gap
+
+### 確定事項と推奨候補
+
+- PostgreSQL 16では、object所有者は対象objectの全Grant Optionを暗黙に持つ。実測済み所有者`portal_app`は、`sg_source_inventory_ro_20261106`へLedger SELECTだけを直接付与できる仕様上の主体である。`postgres`はLedger SELECT Grant Optionを持たず、`portal_app`のmemberでもSET可能でもないため、現行の単一主体Bootstrapは実行不能。
+- 現時点の推奨候補は、**所有者による直接GRANTを含む二段階方式**。ただし`portal_app`資格情報の安全な管理操作経路は未確認であり、方式Goではない。既存アプリ資格情報をInventoryのログイン主体として流用せず、所有者として1文のLedger GRANTを行うことについても、正規経路・担当者・監査・資格情報非露出を別承認する。
+- 所有者以外の正規Grant Option保有主体は未確定。追加の実環境確認が許可された場合は、`pg_class.relacl`を`aclexplode()`し、`public.schema_migrations`のSELECTを`is_grantable=true`で保持するgrantee・grantorだけをRead-only列挙する。該当候補はrole属性、LOGIN、membership、管理責任、認証経路を別途照合し、Cloud SQL内部roleや他サービス主体を自動採用しない。
+
+### 二段階の最小実行契約案（実装・本番実行は未承認）
+
+1. **Stage A（承認済みrole管理主体、候補`postgres`）**：単一トランザクションで全既存Gateを確認し、`NOLOGIN / NOINHERIT / PASSWORD NULL`の専用roleを作成。Database CONNECTとpublic Schema USAGEだけを付与し、Ledger SELECT・業務表権限・DML/DDL・他roleからの継承がないことを検証してcommitする。
+2. **Stage B（Ledger所有者または正規Grant Option主体）**：別トランザクションで、対象DB・PG16・Ledger所有者・候補role名と厳格なrole属性・Stage Aの2権限・業務表権限なしを再検査した後、`GRANT SELECT ON TABLE public.schema_migrations TO sg_source_inventory_ro_20261106`だけを実行する。直後にLedger SELECTあり、Ledger書込みなし、業務表権限なしを検証してcommitする。
+3. **Final verify（Read-only）**：role属性、3権限、業務表DML/DDLなし、候補roleが他roleのmemberでないこと、grantorを照合して終了する。ここではLOGIN・password・Inventoryを有効化しない。
+4. LOGIN有効化、期限付きpassword、Inventory本体は従来どおり別Gate・別承認とする。
+
+### 中断・結果不明・復旧
+
+- Stage Aのトランザクション失敗は全体ROLLBACK。Stage A commit後に停止した場合、NOLOGIN roleとCONNECT/USAGEだけが残る。ログイン不能でLedger・業務表の参照権限を持たないためfail-closedだが、自動継続・自動削除はしない。
+- Stage Bの結果不明時は再GRANTせず、先にRead-onlyでLedger SELECTの有無とACL上のgrantorを確認する。GRANT 1文はトランザクション単位だが、観測不能を成功扱いしない。
+- 廃止復旧は逆順で、Ledgerの正規grantorがLedger SELECTをREVOKEし、Stage A実行主体がSchema USAGEとDatabase CONNECTをREVOKEする。その後、依存権限0件とNOLOGINを確認して候補roleだけをDROPする。`DROP OWNED`、`REASSIGN OWNED`、既存PUBLIC権限変更は行わない。Stage B未実行ならLedger REVOKEは不要だが、Read-onlyで不存在を確認する。
+- 復旧に必要な各主体・資格情報・操作も別承認とし、片方の主体で権限を迂回しない。
+
+### 使い捨てPostgreSQL 16合成検証
+
+- 非SUPERUSER / CREATEROLEのStage A主体と、別roleのLedger所有者で検証。Stage A commit後の中断状態は`rolcanlogin=false`、Ledger SELECT=false、業務表SELECT=false。
+- 所有者によるStage B後はCONNECT=true、USAGE=true、Ledger SELECT=true、業務表SELECT=false、Ledger INSERT=false。最小3権限だけが成立した。
+- 所有者がLedger SELECTをREVOKEし、Stage A主体がUSAGE/CONNECTをREVOKEした後、Stage A主体の管理用ADMIN権限で候補roleをDROPでき、role残存0件を確認した。
+- これはオフラインでの方式適合確認であり、本番の所有者認証経路、ACL上の他Grant Option主体、実行者、監査方法を証明しない。
+
+### 実装Fit/Gapと未確認事項
+
+- 現行Bootstrapは3つのGrant Optionを単一主体へ要求するため、二段階方式とは不整合。方式選定後にStage A、Stage B、Final verifyを責任主体別の明示スクリプトへ最小分割し、各段階の固定Gate・中断・結果不明・復旧試験を追加する必要がある。現時点では本番スクリプトを変更しない。
+- 追加Read-only確認候補：Ledger ACLのgrantable grantee/grantor、`portal_app`を所有者として使用する既存の正規管理経路、資格情報を表示せず対話・実行できる方法、実行責任者、監査記録先。値の取得や既存アプリ接続への流用は行わない。
+- Ledger ACLの追加調査は、業務行を読まず次のメタデータだけを対象とする。結果に現れたroleをそのまま採用せず、正規管理主体かを別途審査する。
+
+  ```sql
+  SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC'
+              ELSE pg_get_userbyid(acl.grantee) END AS grantee,
+         pg_get_userbyid(acl.grantor) AS grantor,
+         acl.privilege_type,
+         acl.is_grantable
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(
+    COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
+  WHERE n.nspname = 'public'
+    AND c.relname = 'schema_migrations'
+    AND acl.privilege_type = 'SELECT'
+  ORDER BY grantee, grantor;
+  ```
+
+- 二段階方式の実装、`portal_app`または別grantorによる本番GRANT、復旧操作、role作成はいずれも未承認。**Production No-Go / PR Draftを維持する。**
