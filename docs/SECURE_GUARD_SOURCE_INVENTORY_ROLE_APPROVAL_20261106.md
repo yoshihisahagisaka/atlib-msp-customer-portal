@@ -115,3 +115,14 @@ ALTER ROLE sg_source_inventory_ro_20261106
 ## このPRでの状態
 
 **条件付き作成Goは取得済み・未実行。** `msp-customer-portal-db` の**DB名`msp_customer_portal`・PostgreSQL 16・RUNNABLEはRead-only実測済み**。SQL側のrole/ledger/実効grant、管理者経路、保守日時、接続余裕は依然として未確認。使い捨てPostgreSQL 16のbootstrap否定テストは本番Gateの代替ではない。専用roleの本番作成も旧Production Source Inventoryも未実施。既存Portal/PPAP、SG Staging database/role/Secret、Migration/Trafficは変更しない。**Production No-Go / PR Draft維持。**
+
+## 2026-11-09 共用Cloud SQL管理者資格情報の復旧実績
+
+- 実行責任者・停止判断者：萩坂。対象は`msp-zabbix` / `msp-customer-portal-db`の`postgres`のみ。
+- 既存の無効化済み`portal-db-root-password`は再利用せず、管理者専用Secret `msp-customer-portal-db-postgres-admin-password` のVersion `1`を新規登録した。Version `1`は`ENABLED`。パスワード値および復元可能な情報はGit・チャット・実行ログへ記録していない。
+- Secretは保護Tag `msp-zabbix/admin-secret-protection=protected` とIAM Deny Policy `portal-admin-secret-protection`の対象である。アプリケーションService Accountへ管理者Secretを配布しない。管理責任者は萩坂。
+- `gcloud sql users set-password postgres --project=msp-zabbix --instance=msp-customer-portal-db --prompt-for-password`を対話入力で1回実行。Cloud SQL Operation `3ce2f0f5-09c4-435b-8341-83690000002b`（`UPDATE_USER`）は2026-11-09 10:21:00 JSTに`DONE`、エラーなし。
+- 既存`msp-frontend-server`の`cloud-sql-proxy.service`（`active` / `enabled`、`127.0.0.1:5432`）経由でRead-only接続確認を実施。`current_user=postgres`、`current_database=msp_customer_portal`、PostgreSQL `16.14`、確認時client connection数`4`を確認した。業務テーブル参照、DDL、DML、role/grant変更、Migrationは実施していない。
+- 事後確認：Cloud SQLは`RUNNABLE`、PortalとSales Toolsの正式healthはHTTP 200、Portal / Sales Tools / PPAP 3サービスの直近30分5xxは各0件、5サービスはReady。変更後のCloud SQL CPU利用率は約10.39%、PostgreSQL connection数は2。Cloud Run再起動・再デプロイ、既存アプリSecret変更は0件。
+- 今後のローテーションまたは緊急再設定は、最新backup/PITR、競合Operation、接続数・CPU、Portal/PPAP/Sales Tools、Secret保護Tag/Deny、`postgres`依存の不在を再Gateし、既存Secretへ新Versionを1件登録してから対話式`set-password`を1回だけ実行する。結果不明時はOperationを照合してSTOPし、自動再試行・旧値推測・追加Version作成をしない。接続試験とサービス正常性確認後、旧Versionの扱いは別承認で決定する。
+- この復旧は管理者接続経路を確立した事実だけを示す。`sg_source_inventory_ro_20261106`の作成、SQL preflight、GRANT、Inventory、Migrationを承認または実行したものではない。これらは引き続き**No-Go**で、本文の個別Gateと統括承認を要する。
