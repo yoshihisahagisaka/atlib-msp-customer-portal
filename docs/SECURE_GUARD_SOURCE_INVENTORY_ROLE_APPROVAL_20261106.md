@@ -210,3 +210,28 @@ ALTER ROLE sg_source_inventory_ro_20261106
   ```
 
 - 二段階方式の実装、`portal_app`または別grantorによる本番GRANT、復旧操作、role作成はいずれも未承認。**Production No-Go / PR Draftを維持する。**
+
+## 2026-11-09 二段階Bootstrapのオフライン実装・検証
+
+### 実装した責任境界
+
+- 既存の単一主体Bootstrapは、本番実行正本として置き換えず、そのまま保持した。
+- `scripts/secureGuardSourceInventoryRoleStageA.sql`を追加した。`postgres`相当の非SUPERUSER / CREATEROLE主体を想定し、対象DB、PostgreSQL 16、Ledgerと所有者、接続余裕、同名role不存在、CONNECT / USAGE Grant OptionをDDL前に検査する。単一トランザクションで`NOLOGIN / NOINHERIT / PASSWORD NULL`のroleを作成し、Database CONNECTとSchema USAGEだけを付与する。Ledger SELECT、業務表権限、DML / DDL、readerから他roleへのmembershipがないことを確認してcommitする。
+- `scripts/secureGuardSourceInventoryRoleStageB.sql`を追加した。Stage A完了状態、Ledger所有者、実行主体、Ledger SELECT Grant Option、既存SELECT不存在、不要権限不存在をDDL前に検査する。実行主体はLedger所有者自身に限定し、Ledger SELECTだけを単一トランザクションで付与する。既にSELECTがある場合は、結果不明後の再実行として固定STOPし、自動再GRANTしない。
+- `scripts/secureGuardSourceInventoryRoleFinalVerify.sql`を追加した。Read-onlyトランザクションで、role属性、CONNECT / USAGE / Ledger SELECT、Ledger grantor、業務表・DML・DDL権限なし、readerから他roleへのmembershipなしを最終確認する。LOGIN有効化、password設定、Inventory実行は含まない。
+- 各Stageにfallback、別roleへの自動切替、権限拡張、自動再試行、自動削除を追加していない。想定外の所有者・role・ACL・権限は固定STOPとする。
+
+### PostgreSQL 16統合試験
+
+- 使い捨てPostgreSQL 16で、非SUPERUSER / CREATEROLEのStage A主体と、別roleのLedger所有者を再現した。
+- Stage A正常系、Stage Aの検証失敗時ROLLBACK、Stage A後中断、Stage A再実行STOP、Stage B実行主体不正STOP、Stage B Grant Option不足STOP、Stage B正常系、Stage Bトランザクション失敗時のStage A状態維持、Stage B再実行STOP、Final verify正常系、想定外業務表権限STOP、逆順復旧を確認した。
+- 復旧リハーサルでは、所有者によるLedger SELECT REVOKE、Stage A主体によるUSAGE / CONNECT REVOKE、明示ACL依存0件、候補role DROP、role残存0件を確認した。これは本番復旧の実行承認ではない。
+- 統合試験結果：既存単一主体Bootstrap 1 PASS / 0 FAIL、二段階Bootstrap 1 PASS / 0 FAIL。通常回帰試験 62 PASS / 0 FAIL、Secure Guard migration typecheck PASS。
+- GitHub Actionsの既存PostgreSQL 16 Jobへ二段階統合試験を追加した。既存単一主体試験と二段階試験は同一の使い捨てservice上で順次実行し、相互に残存role / DBを残さない。
+
+### PASSWORD NULL検査と残る本番Gate
+
+- PostgreSQL 16では、非SUPERUSERが`pg_roles.rolpassword`を参照すると、実際にpasswordがNULLでもマスク値`********`として観測される。したがってStage A / Bで`pg_roles.rolpassword IS NULL`を真偽判定に使用しない。
+- PASSWORD NULLは、権限のある最終検証主体が`pg_authid.rolpassword IS NULL`で確認する。参照権限がない場合、Final verifyは固定STOPし、推測で完了扱いしない。Cloud SQL本番でFinal verifyを行う正規主体・経路は別途確認と承認が必要である。
+- `portal_app`の正規管理経路と資格情報非露出の実行方法は未確認であり、Stage Bの本番実行主体は確立していない。オフラインCIの合格は、本番role作成、GRANT、LOGIN有効化、Source InventoryのGoを意味しない。
+- GCP・本番Cloud SQLへの接続または変更は0件。**Production No-Go / PR Draftを維持する。**

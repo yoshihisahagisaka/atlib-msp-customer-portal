@@ -152,4 +152,13 @@ test('PostgreSQL 16: non-superuser bootstrap requires all three grant options be
       await source.end();
       await admin.end();
     }
+
+    const cleanup = new Client({ ...base, database: 'postgres' });
+    await cleanup.connect();
+    try {
+      await cleanup.query('DROP DATABASE msp_customer_portal WITH (FORCE)');
+      await cleanup.query(`DROP ROLE ${reader}`);
+      await cleanup.query(`DROP ROLE ${executor}`);
+      await cleanup.query(`DROP ROLE ${ledgerOwner}`);
+    } finally { await cleanup.end(); }
   });
