@@ -135,5 +135,17 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - 候補名`sg_source_inventory_ro_20261106`は存在せず、同名衝突なし。
 - 既存の非system login主体に、再利用可能な専用Read-only主体は確認できなかった。`portal_app`は対象public 23テーブルすべてにSELECT/INSERT/UPDATE/DELETE/TRUNCATEを持ち、DB/Schema CREATEとLedger SELECTも持つため不適格。他のアプリ主体は別サービス資格情報であり、複数が`cloudsqlsuperuser` membership、DB/Schema CREATE等の管理権限を持つ。対象23テーブルへの権限が0件の主体もLedger SELECTを持たず、別サービスまたはCloud SQL管理用roleであるため流用しない。
 - membership実測では`portal_app`、`postgres`、`ppap_app`、`ppap_sso_verify_app`、`sales_tools_app`等が`cloudsqlsuperuser`のmember。既存権限は今回変更しないが、専用Read-only主体を既存アプリ資格情報から分離する必要性を裏付ける。
-- 新roleを`NOLOGIN` / `NOINHERIT` / `PASSWORD NULL`、role membershipなしで作成し、明示的な`CONNECT`（対象DB）、`USAGE`（public schema）、`SELECT`（`public.schema_migrations`）だけを付与する既存案は、調査対象のLedgerメタデータ参照に対して最小。LOGIN有効化前は接続主体にならず、業務23テーブルのDML/DDL、DB/Schema CREATE、他role membershipを付与しない既存否定検査を維持する。
+- 新roleを`NOLOGIN` / `NOINHERIT` / `PASSWORD NULL`で作成し、新roleを他roleのmemberにせず、明示的な`CONNECT`（対象DB）、`USAGE`（public schema）、`SELECT`（`public.schema_migrations`）だけを付与する既存案は、調査対象のLedgerメタデータ参照に対して最小。LOGIN有効化前は接続主体にならず、業務23テーブルのDML/DDL、DB/Schema CREATE、他roleからの権限継承を拒否する既存否定検査を維持する。
 - 調査ではCREATE ROLE、ALTER ROLE、GRANT/REVOKE、DDL/DML、Inventory、Migrationを実施していない。本番変更0件。role作成・3 GRANT・LOGIN有効化・Inventoryは引き続き**No-Go**で、作成直前Gateと別の実行承認を要する。
+
+## 2026-11-09 Bootstrap実行権限の最終Read-only確認
+
+- 実行前Gate：Cloud SQLは`RUNNABLE`、競合Operation 0、既存Proxyは`active` / `enabled`。Portal / Sales Tools / PPAP 3サービスはReady、直近30分5xxは各0件。PostgreSQL接続数は最新2・30分最大5、CPUは最新約9.61%・30分最大約13.88%。
+- 既存Proxy経由の管理者セッション1本で、`BEGIN TRANSACTION READ ONLY`、statement timeout 3秒、lock timeout 1秒を設定してGrant Optionだけを実測し、`COMMIT`した。本番変更0件。
+- 実行主体`postgres`、Ledger所有者`portal_app`。`postgres`はDatabase `CONNECT WITH GRANT OPTION=true`、Schema `USAGE WITH GRANT OPTION=true`だが、`public.schema_migrations`の`SELECT WITH GRANT OPTION=false`。また`portal_app`のmemberではなく、`SET ROLE portal_app`も不可。
+- よって既存Bootstrapの最初の2 GRANTは実行可能だが、3つ目のLedger SELECT GRANTは実行不能。現行スクリプトは単一トランザクションのため失敗時に永続的な途中role/grantは残さない設計だが、実行不能と判明したスクリプトを本番で試行しない。**現行BootstrapはNo-Go**。
+- PostgreSQL 16公式仕様では、`NOLOGIN`は初期セッション主体としてのログインを禁止し、`PASSWORD NULL`はパスワード認証を常に失敗させる。PG16の`NOINHERIT`は、そのroleが他roleのmemberに追加される際のmembership inheritance既定値に作用する。membership自体を作る指定ではない。
+- 非SUPERUSERの`CREATEROLE`主体は、作成したroleに対する管理用`ADMIN OPTION`を暗黙に持ち、`createrole_self_grant`設定により作成者が新roleをINHERIT/SET可能なmembershipを自動取得し得る。これは「作成者が新roleを管理・利用できる」方向であり、「新roleが別roleのmemberとなり権限継承する」方向ではない。Bootstrapの`pg_auth_members.member = reader`否定検査は後者を拒否しており、目的に整合する。ただし既存CIは通常PostgreSQL 16のbootstrap superuserで実行しており、Cloud SQLの非SUPERUSER `postgres`とLedger別所有者・Grant Option不足を再現していない。
+- 仕様根拠：PostgreSQL 16公式の[CREATE ROLE](https://www.postgresql.org/docs/16/sql-createrole.html)、[Role Membership](https://www.postgresql.org/docs/16/role-membership.html)、[Client Connection Defaults](https://www.postgresql.org/docs/16/runtime-config-client.html)、[GRANT](https://www.postgresql.org/docs/16/sql-grant.html)。
+- 最小是正候補は、DDL前Gateに3つの`WITH GRANT OPTION`検査を追加し、不足時はrole作成前に固定STOPすること、および非SUPERUSER CREATEROLE実行者と別Ledger所有者を用いる合成回帰試験を追加すること。Ledger権限の取得方法は未決定であり、`portal_app`資格情報流用、membership付与、`SET ROLE`、所有者変更、権限拡張を独自に行わない。
+- 解消には「Ledger所有者または正規にGrant Optionを持つ別の承認済み実行主体・手順」の決定が必要。設計変更と本番権限変更は別承認とする。role作成、GRANT、LOGIN有効化、Inventory、Migrationは引き続き**No-Go**。
