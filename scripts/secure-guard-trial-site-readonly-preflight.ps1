@@ -13,6 +13,15 @@ $organizationId = '10222523'
 $expectedMspId = '11473'
 $apiKey = $null
 $headers = $null
+$stopStage = 'SECRET_ACCESS'
+$completedGetCount = 0
+
+function Write-SafeRecord {
+  param($Record)
+  # Write one complete JSON line immediately, even if a later stage exits with code 1.
+  [Console]::Out.WriteLine(($Record | ConvertTo-Json -Compress -Depth 4))
+  [Console]::Out.Flush()
+}
 
 function Get-ReadOnlyDnsFilter {
   param([string]$Path)
@@ -42,7 +51,10 @@ try {
   Remove-Variable rawKey -ErrorAction SilentlyContinue
   $headers = @{ Authorization = "Bearer $apiKey"; Accept = 'application/json' }
 
+  $stopStage = 'ORGANIZATION_GET'
   $organization = Get-ReadOnlyDnsFilter -Path "/v1/organizations/$organizationId?include_current_mrr=true"
+  $completedGetCount++
+  $stopStage = 'ORGANIZATION_VALIDATE'
   if ($null -eq $organization.data -or [string]$organization.data.id -ne $organizationId -or
       [string]$organization.data.attributes.managed_by_msp_id -ne $expectedMspId) {
     throw 'ORGANIZATION_MSP_MISMATCH'
@@ -52,21 +64,30 @@ try {
       $null -ne $organization.data.relationships.subscription) {
     $subscription = if ($null -eq $organization.data.relationships.subscription.data) { 'NULL' } else { 'PRESENT_NOT_VALIDATED' }
   }
-  Write-Output ([pscustomobject]@{ Check='Organization'; Id=$organizationId; MspMatch=$true; Subscription=$subscription })
+  Write-SafeRecord ([pscustomobject]@{ Check='Organization'; Id=$organizationId; MspMatch=$true; Subscription=$subscription })
 
   foreach ($check in @(
     @{ Name='Policy'; Path="/v1/policies?organization_id=$organizationId&include_global_policies=true" },
     @{ Name='BlockPage'; Path="/v1/block_pages?organization_id=$organizationId" },
     @{ Name='Site'; Path="/v1/networks?organization_id=$organizationId" }
   )) {
+    $stagePrefix = switch ($check.Name) {
+      'Policy' { 'POLICY' }
+      'BlockPage' { 'BLOCK_PAGE' }
+      'Site' { 'SITE' }
+      default { throw 'UNEXPECTED_CHECK' }
+    }
+    $stopStage = "${stagePrefix}_GET"
     $response = Get-ReadOnlyDnsFilter -Path $check.Path
+    $completedGetCount++
+    $stopStage = "${stagePrefix}_VALIDATE"
     if ($null -eq $response -or $response.data -isnot [array]) { throw "UNEXPECTED_$($check.Name)_SHAPE" }
     $complete = $null -ne $response.links -and
       $null -ne $response.links.PSObject.Properties['next'] -and $null -eq $response.links.next
-    Write-Output ([pscustomobject]@{
+    Write-SafeRecord ([pscustomobject]@{
       Check=$check.Name
       RecordCount=@($response.data).Count
-      Pagination=if ($complete) { 'COMPLETE' } else { 'UNKNOWN_STOP' }
+      Pagination=$(if ($complete) { 'COMPLETE' } else { 'UNKNOWN_STOP' })
     })
     if (-not $complete) { throw "INCOMPLETE_$($check.Name)_PAGINATION" }
 
@@ -77,7 +98,7 @@ try {
       $ownerId = Get-OrganizationReference -Item $item
       $global = if ($check.Name -eq 'Policy' -and $item.attributes.is_global_policy -eq $true) { 'GLOBAL_CANDIDATE' } else { 'NO_GLOBAL_EVIDENCE' }
       $applies = if ($ownerId -eq $organizationId) { 'OWNED' } elseif ($global -eq 'GLOBAL_CANDIDATE') { 'GLOBAL_NEEDS_VERIFICATION' } else { 'UNKNOWN_STOP' }
-      Write-Output ([pscustomobject]@{
+      Write-SafeRecord ([pscustomobject]@{
         Check="$($check.Name)Candidate"
         Id=[string]$item.id
         Name=[string]$item.attributes.name
@@ -88,14 +109,15 @@ try {
     }
   }
 
-  Write-Output ([pscustomobject]@{
+  Write-SafeRecord ([pscustomobject]@{
     Check='Gate'
     Result='INFORMATION_ONLY_SITE_POST_STOP'
     Note='Global Policy/Block Page applicability, Site duplicate name, SKU and billing terms require separate confirmation. POST remains STOP.'
   })
 } catch {
-  # Deliberately omit exception messages and raw HTTP bodies: they are not evidence for retry.
-  Write-Output ([pscustomobject]@{ Check='Gate'; Result='UNKNOWN_STOP'; Note='No POST/DELETE attempted. Inspect current state manually; do not auto-retry.' })
+  # Only fixed stage codes and a GET count are emitted. No exception/HTTP body/secret.
+  [Console]::Out.WriteLine('{"Check":"Gate","Result":"UNKNOWN_STOP","Stage":"' + $stopStage + '","CompletedGetCount":' + $completedGetCount + '}')
+  [Console]::Out.Flush()
   exit 1
 } finally {
   Remove-Variable apiKey,rawKey,headers,organization,response -ErrorAction SilentlyContinue

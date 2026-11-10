@@ -54,6 +54,22 @@ test('trial Site preflight is restricted to one known Organization and GET-only 
   assert.doesNotMatch(ps, /(Write-Output|Write-Host)\s+\$\s*(apiKey|headers|organization|response)/i);
 });
 
+test('trial Site preflight emits fixed failure stage without leaking HTTP errors or secrets', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const ps = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'secure-guard-trial-site-readonly-preflight.ps1'), 'utf8');
+  for (const stage of ['SECRET_ACCESS', 'ORGANIZATION_GET', 'ORGANIZATION_VALIDATE', 'POLICY', 'BLOCK_PAGE', 'SITE']) {
+    assert.match(ps, new RegExp(stage));
+  }
+  assert.match(ps, /\$completedGetCount\+\+/);
+  assert.match(ps, /"CompletedGetCount":/);
+  assert.match(ps, /\[Console\]::Out\.Flush\(\)/);
+  assert.match(ps, /ConvertTo-Json -Compress -Depth 4/);
+  assert.match(ps, /Pagination=\$\(if \(\$complete\)/);
+  assert.doesNotMatch(ps, /Pagination=if\s*\(/);
+  assert.doesNotMatch(ps, /\$_\.(Exception|ErrorDetails|InvocationInfo)/);
+  assert.doesNotMatch(ps, /(Write-Output|Write-Host)\s+\$\s*(apiKey|headers|organization|response)/i);
+});
+
 test('the management HTML requires both a Secure Guard session and an explicit MSP grant', async () => {
   const identity = { verifySession: () => ({ userId: 'user-1', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'user-1', status: 'active', sessionVersion: 1 }) };
   for (const [cookie, grant, expected] of [[undefined, true, 401], ['secure_guard_session=test', false, 403], ['secure_guard_session=test', true, 200]]) {

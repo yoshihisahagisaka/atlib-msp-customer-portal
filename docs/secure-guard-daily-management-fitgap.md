@@ -287,3 +287,9 @@ try {
 - Organization、Policy、Block Page、Siteの実測結果を取得できなかったため、Site作成に必要なPolicy ID、Block Page ID、既存Site重複、適用可能性は未解決のまま。Site POSTはSTOPを維持する。
 
 再開には、秘密を出力せずに固定STOPコードを確実に標準出力へ同期出力でき、Secret取得失敗と各GET境界を区別できる最小修正のレビューが必要である。修正版の実行は新たな1回として統括承認を得る。
+
+### 2026-11-10 preflight停止段階の診断修正（実機未実行）
+
+- PowerShell 5.1の構文曖昧性を避けるため、Hashtable内の条件分岐を `$(if (...) {...} else {...})` に変更した。前回無出力の原因は未確定であり、この修正を原因確定とは扱わない。
+- 成功途中と失敗時の結果をコンソールへJSON 1行ずつ同期出力する。失敗結果は固定 `Stage`（Secret取得／Organization GET・検証／Policy・Block Page・Site GET・検証）と `CompletedGetCount` のみを含み、キー、URLパラメータの秘密、HTTP本文、例外詳細は出さない。
+- **実機再実行は未承認・未実施。** 次回はWindows PowerShell 5.1のオフライン構文解析PASSとCommit照合の後、統括の新たな1回承認がある場合のみ実行。API再試行、Site POST、Allow List変更、DELETEはSTOPを維持する。
