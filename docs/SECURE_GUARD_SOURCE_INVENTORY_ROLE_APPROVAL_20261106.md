@@ -333,6 +333,14 @@ ALTER ROLE sg_source_inventory_ro_20261106
 3. TrivyをCommit固定のActionで実行し、実行イメージのOS/ライブラリの`CRITICAL,HIGH`を`ignore-unfixed=false`でFail-closedにする。スキャンが成功するまで脆弱性Gateは未解除とする。
 4. 既存の通常回帰・Migration型検査・PostgreSQL 16統合試験・Source Inventory否定試験・合成移送試験を維持する。
 
+### 初回CI受入証跡
+
+- Runtime Hardening Commit `36570d75e14623d585385d0f4b1151d7189753f7`、[GitHub Actions run 42745482133](https://github.com/yoshihisahagisaka/atlib-msp-customer-portal/actions/runs/42745482133)はSUCCESS。
+- 既存build / offline tests / migration型検査 / PostgreSQL16 E2E / Source Inventory権限否定 / 二段階Bootstrap / 合成移送：全ステップPASS。
+- Node.js 24 Distroless image Build、実行UID=65532、不要ライブラリ不存在、`--network none`でのsynthetic 0444 Secretファイルmount・固定STOP・本文非出力：PASS。
+- Trivy v0.70.0の実行イメージOS / Node依存スキャンはCRITICAL=0、HIGH=0（`ignore-unfixed=false`、`exit-code=1`）。検証時にv0.76.2が公開されていたため、CIのscanner versionをv0.76.2へ明示固定して再試験する。再試験結果が確定するまでは当該追加Gateは未確定。
+- ローカルのrunner単体試験は6 PASS。ローカルフル`npm test`は`tsc`バイナリ不在、専用`npm ci --offline`はtarball cache不足で未実行とし、GitHub Actions実行結果と混同しない。
+
 ### 本番境界と残存Gate
 
 - Docker CIイメージのBuild成功と脆弱性検査合格は、本番Artifact RegistryへのBuild/Push、専用SA/Secret IAM/Cloud SQL Client、Job作成、Job実行の承認を意味しない。
