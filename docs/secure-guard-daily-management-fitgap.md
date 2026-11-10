@@ -293,3 +293,14 @@ try {
 - PowerShell 5.1の構文曖昧性を避けるため、Hashtable内の条件分岐を `$(if (...) {...} else {...})` に変更した。前回無出力の原因は未確定であり、この修正を原因確定とは扱わない。
 - 成功途中と失敗時の結果をコンソールへJSON 1行ずつ同期出力する。失敗結果は固定 `Stage`（Secret取得／Organization GET・検証／Policy・Block Page・Site GET・検証）と `CompletedGetCount` のみを含み、キー、URLパラメータの秘密、HTTP本文、例外詳細は出さない。
 - **実機再実行は未承認・未実施。** 次回はWindows PowerShell 5.1のオフライン構文解析PASSとCommit照合の後、統括の新たな1回承認がある場合のみ実行。API再試行、Site POST、Allow List変更、DELETEはSTOPを維持する。
+
+### 2026-11-10 修正版preflight 1回実行結果
+
+- 統括承認済みCommit `e27f060785b746b6d9a85871bc0da0c720e8ede5` を既存worktreeとは別のdetached worktreeへ取得した。
+- Commit内スクリプトと隔離worktree上のファイルはGit object hash `67e41b3849a6c297d21acb6f5a0b811f4027f177` で一致した。
+- Windows PowerShell `5.1.26100.9711`によるオフライン構文解析はエラー0件でPASSした。
+- 上記3 GateのPASS後、GET専用preflightを1回だけ実行した。終了コードは1、固定診断は `Gate=UNKNOWN_STOP`、`Stage=ORGANIZATION_GET`、`CompletedGetCount=0`。
+- Organization GETは正常完了していないため、Policy、Block Page、Siteの取得には到達していない。候補ID、名称、所有Organization、既存Site件数はすべて未取得であり、推測で補完しない。
+- 自動再試行は0回。Site POST、Allow List変更、Organization DELETE、Slack送信、GCP／DB変更は0件。Production No-Goを維持する。
+
+未解決事項は、Organization GETが完了しなかった原因の安全な切り分け、およびPolicy／Block Page／Site候補のRead-only取得である。今回の結果をSite作成承認とは扱わず、Site POSTはSTOPを維持する。
