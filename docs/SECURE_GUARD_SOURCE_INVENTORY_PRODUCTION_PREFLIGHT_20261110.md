@@ -15,7 +15,7 @@
 | Gate | 審査対象 | 今回の状態 | 解除に必要な個別承認 |
 |---|---|---|---|
 | P0 | 実装・使い捨てPG16統合・専用イメージ脆弱性CI | **PASS**（PR #5で証跡あり） | 新しいHEADのCIを再確認 |
-| P1 | 監査可視性、依存/接続余裕、バックアップ・復旧経路、担当割当 | **未検証**（過去の実測は現在値を保証しない） | Read-only証跡の二者照合 |
+| P1 | 監査可視性、依存/接続余裕、バックアップ・復旧経路、担当割当 | **STOP**（2026-11-10のRead-only構成/Backup/Operationsは観測済み。DB文監査未成立） | 監査B案の正式な別承認またはpgAudit設計変更承認、残余リスク受容、実行直前再測定・二者照合 |
 | P2 | 専用SA/IAM、正式Build/Push、Digest固定、Cloud Run Jobの**作成のみ** | **未承認・未実施** | 本番GCP変更の対象/権限/差分/実行者を明記した承認 |
 | P3 | Stage Aのrole作成、CONNECT/USAGE | **未承認・未実施** | P1/P2後、最新DB GateとStage A操作を指定した承認 |
 | P4 | Stage BのJob**1回実行**、Ledger SELECT | **未承認・未実施** | Stage A結果・Job export/IAM再照合・実行者/時刻を指定した別承認 |
@@ -117,7 +117,7 @@ password_null_assurance=STAGE_A_DDL_AND_POSTGRESQL16_CI
 
 | 項目 | 記録すべき値 | 現状 |
 |---|---|---|
-| P1監査 | flag/extension/effective `pgaudit.log`、Data Accessログ可視性、照合日時 | **未取得** |
+| P1監査 | flag/extension/effective `pgaudit.log`、Data Accessログ可視性、照合日時 | **STOP**：`settings.databaseFlags`不表示、pgAudit有効の証拠なし。B案は提案のみ・未承認 |
 | P1正常性 | Backup/PITR、Operation、接続/CPU、Ready/5xx、接続予算 | **実行直前に再測定** |
 | 実装基準 | PR #5 HEAD SHA、CI URL、Docker scanner summary | **P2前に再照合** |
 | P2対象 | SA email、Artifact Registry path、`@sha256:`、Job export SHA、timeout秒、IAM差分 | **未確定** |
@@ -126,7 +126,17 @@ password_null_assurance=STAGE_A_DDL_AND_POSTGRESQL16_CI
 | P4承認 | Job操作者/承認者/復旧責任者/実行時刻/IAM再照合 | **未取得** |
 | P5判定 | direct結果/間接保証区分/ACL/Cloud Run Execution ID/監査ID | **未実施** |
 
-**結論：P0のみ実装・CI上PASS。P1のRead-only証拠、P2〜P4の個別承認、P5の本番実測は未成立。Production No-Goを維持する。**
+**結論：P0のみ実装・CI上PASS。P1の構成・Backup・Operationsの一部はRead-only観測済みだが、DB文監査と実行直前Gateが未成立でSTOP。P2〜P4の個別承認、P5の本番実測は未成立。Production No-Goを維持する。**
+
+## 7. 2026-11-10 運用者Read-only確認とB案の提案（監査契約未変更）
+
+- `gcloud.cmd sql instances describe`：`POSTGRES_16` / `RUNNABLE`。`settings.databaseFlags`は返却JSONに現れず、`cloudsql.enable_pgaudit=on`の証拠なし。**DB文単位監査GateはSTOP**。pgAuditのDB内extension・`pgaudit.log`・ログ配送は本確認だけでは立証できない。
+- 構成：`availabilityType=ZONAL`、Backup enabled、保持30件、PITR enabled、transaction log保持7日、10 GiB、storageAutoResize true、storageAutoResizeLimit=0。
+- `gcloud.cmd sql backups list --limit=5`：直近5件すべて`AUTOMATED / SUCCESSFUL`。最新は2026-11-09 20:02:48.226 UTCに完了。復元の実証ではない。
+- `gcloud.cmd sql operations list --limit=10`：表示された直近10件は全件`DONE`。実行直前の同時操作不存在の保証ではない。
+- pgAudit設定変更はDB再起動を伴うため、共有本番ZONALインスタンスでの無断有効化を禁止。**本番フラグ変更・再起動・監査要件の暗黙変更を行わない。**
+- 代替監査B案は[専用提案書](SECURE_GUARD_SOURCE_INVENTORY_ALTERNATIVE_AUDIT_PROPOSAL_20261110.md)を参照。Stage A管理経路記録とStage B固定Job/Executionログ、承認ID、固定SQL SHA、ACL before/after、独立Final verifyを連結する案。ただし**実行SQL文単位の直接監査とは同等ではない**。
+- **承認の意味**：B案の設計・証跡文書作成のみ。正式採用、残余リスク受容、P1解除、P2〜P6の操作承認は含まない。担当/二者レビュー/保持先/保存期間も未確定。**P1=STOP・Production No-Go・Draft維持**。
 
 ### 公式参考（閲覧用）
 
