@@ -369,3 +369,11 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - 詳細：[本番Bootstrap代替監査B案（2026-11-10）](SECURE_GUARD_SOURCE_INVENTORY_ALTERNATIVE_AUDIT_PROPOSAL_20261110.md)。Stage Aの管理操作記録とDB ACL before/after、Stage Bの固定SQL SHA / Job export / image digest / Execution / platform audit、独立Final verifyを連結する。**DBで実際に流れたSQL文を直接証明せず、他管理操作の不存在も保証しない。**
 - 正式採用には、適用範囲を本Bootstrapの一回限りとした監査契約の変更、証跡の責任者・原本/保持期間・二者レビュー、残余リスクの承認者、実行直前Gateが必要。その後もP2（資産作成のみ）、P3（Stage A）、P4（Stage B単発）、P5（独立検証）、P6（LOGIN/Inventory等）は別承認。
 - 今回は**Git文書更新のみ**。本番GCP/DB/Cloud Run/Secret/IAM/Stage A・B/Final verify/Source Inventory/Migration変更なし。**Production No-Go / Draft PR #5を維持**。
+
+## 2026-11-10 Decision：代替監査B案の一回限り正式採用
+
+- **正式決定ID：** `SG-SOURCE-INV-AUDIT-B-20261110`。[決定記録](DECISION_SECURE_GUARD_SOURCE_INVENTORY_AUDIT_B_20261110.md)を正本とする。
+- 直前の監査方式B案決裁票で提示した3点（SQL文の直接監査なし、他経路での同時SQL不存在を完全に証明できない、Cloud Run Jobの再実行防止を人的統制に依存）の残余リスクについて、統括・萩坂が2026-11-10に「承認します」と明示した。
+- **監査契約の限定例外**：`msp-customer-portal-db / msp_customer_portal / sg_source_inventory_ro_20261106`の初期Bootstrap、Stage A role作成・CONNECT/USAGEとStage B Ledger SELECT 1件の一回限りにB案を正式採用。pgAuditのDB文監査と同等でないことを受容し、固定SQL/Job/管理経路/ACL before-after/独立検証の証跡突合を必須とする。
+- この決定は上記「提案のみ」時点の記述を**監査方式に限って**更新するものであり、P1の実行前停止条件を解除しない。担当者・二者照合・証跡原本/保持場所/期間・復旧担当/戻し先・最新DB/Portal/PPAP正常性の確認が未了で**P1=STOP**。
+- P2 専用SA/IAM/Job作成、P3 Stage A、P4 Stage B単発、P5 Final verify、P6 LOGIN/Source Inventory/Migration/後処理は**各個別承認**。本番Cloud SQL/Cloud Run/Secret/IAM変更、Role作成、GRANT、Job実行、DB再起動は本決裁の対象外。**Production No-Go / Draft PR #5維持**。
