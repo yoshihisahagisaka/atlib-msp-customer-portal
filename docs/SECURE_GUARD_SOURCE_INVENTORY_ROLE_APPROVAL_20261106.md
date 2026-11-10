@@ -235,3 +235,32 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - PASSWORD NULLは、権限のある最終検証主体が`pg_authid.rolpassword IS NULL`で確認する。参照権限がない場合、Final verifyは固定STOPし、推測で完了扱いしない。Cloud SQL本番でFinal verifyを行う正規主体・経路は別途確認と承認が必要である。
 - `portal_app`の正規管理経路と資格情報非露出の実行方法は未確認であり、Stage Bの本番実行主体は確立していない。オフラインCIの合格は、本番role作成、GRANT、LOGIN有効化、Source InventoryのGoを意味しない。
 - GCP・本番Cloud SQLへの接続または変更は0件。**Production No-Go / PR Draftを維持する。**
+
+## 2026-11-10 Stage B管理経路・Final verify主体のRead-only調査
+
+### 実行前Gate
+
+- PR #5のlocal / remote HEADは`4ea05c47cc3e16e877d2a1f711921785d9e1bd03`で一致した。
+- Cloud SQL `msp-customer-portal-db`は`RUNNABLE`、PostgreSQL 16.14、競合中Operation 0件。既存`msp-frontend-server`はRUNNING、既存`cloud-sql-proxy.service`はactive / enabled。
+- PortalとSales Toolsの承認済みhealth endpointはHTTP 200。Portal、Sales Tools、PPAP download / upload / virus-scanの5サービスはReadyで、直近30分のHTTP 5xxは各0件。
+- 直近30分のCloud SQL CPUは最新11.93%、最大13.17%。5つのDBを合算したclient connection数は最新6、最大6で、管理者セッション追加後も20未満のGateを満たした。
+
+### SQLメタデータ実測
+
+- 既存Proxy経由の`postgres`セッション1本で、`BEGIN TRANSACTION READ ONLY`、statement timeout 3秒、lock timeout 1秒を設定した。接続先は`msp_customer_portal`、serverはPostgreSQL 16.14、当該セッションを含むclient connection数は4。全照会後に`COMMIT`した。
+- `public.schema_migrations`の所有者は`portal_app`。ACLのSELECT行はgrantee=`portal_app`、grantor=`portal_app`、`is_grantable=false`の1行だけだった。所有者以外の明示的なSELECT Grant Option主体は確認されなかった。object所有者が持つ暗黙のgrant権限は、この明示ACLの`is_grantable=false`とは区別する。
+- `postgres`に対する`has_table_privilege(current_user, 'pg_catalog.pg_authid', 'SELECT')`はfalse。`pg_authid`のrecordまたは`rolpassword`は取得していない。`pg_roles.rolpassword`のマスク値もPASSWORD NULLの証拠として使用していない。
+
+### `portal_app`管理経路のFit/Gap
+
+- Secret Managerの`portal-db-password`はVersion 1がenabled。Cloud Run `msp-customer-portal`は`DB_USER=portal_app`、対象DB / Cloud SQL socket、`portal-db-password:latest`を使用している。Secret payloadは取得していない。
+- Secret単位のAccessorはPortal Runtime SA、monthly report SA、Compute Engine default SA。萩坂はProject Ownerとして上位IAMを持つ。直近30日の対象Secret AccessSecretVersion監査記録は取得結果0件だったため、人間による既存のStage B実行実績または専用監査経路の証拠にはならない。
+- 既存VM / Proxy / Git管理外`.env`を用いるmigration運用はCanonicalにあるが、これはアプリケーション接続の運用である。アプリ資格情報を表示せず、Ledger所有者として1文のGRANTだけを実行し、誰が承認・実行・監査するかを定めたStage B専用手順は未確立。
+- したがって、仕様上の正規grantor候補はLedger所有者`portal_app`に限定できたが、正規の管理実行経路は**Gap**。Secret取得や`portal_app`ログインは今回実施しておらず、別承認なしに既存アプリ資格情報を使用しない。
+
+### Final verifyのFit/Gapと判定
+
+- 現行`secureGuardSourceInventoryRoleFinalVerify.sql`はPASSWORD NULLを`pg_authid`で確定する。Cloud SQLの`postgres`はSELECT権限を持たないため、現行スクリプトは固定STOPとなり、本番で完走できない。
+- `portal_app`もPASSWORD NULL検証主体として承認・立証されていない。権限付与、SET ROLE、別カタログのマスク値、認証試行による迂回は採用しない。
+- Stage Bには、`portal_app`を使う専用の資格情報非露出手順、実行責任者、監査方法、結果不明時の照合を別承認する必要がある。Final verifyには、PASSWORD NULLを権限拡張なしで証明する承認済み方式、または検証契約の設計変更とオフライン回帰試験が必要である。
+- 今回はrole作成、GRANT / REVOKE、DDL / DML、`portal_app`接続、Secret payload取得、Stage A / B / Final verify、Inventory、Migrationを実施していない。本番DBのRead-only transaction以外の変更0件、GCP変更0件。**Production No-Go / PR Draftを維持する。**
