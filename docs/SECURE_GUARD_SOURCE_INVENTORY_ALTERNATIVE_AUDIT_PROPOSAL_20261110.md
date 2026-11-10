@@ -69,3 +69,42 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 - **今回実施：文書上のB案提案と2026-11-10のRead-only観測値の記録のみ。**
 - **今回実施しない：pgAuditフラグ変更、DB再起動、`CREATE EXTENSION`、本番DB書込み、`CREATE ROLE`/GRANT/REVOKE、IAM/Secret/Cloud Run Job/Artifact変更、Stage A/B/Final verify、Source Inventory、Migration、PR merge。**
 - **結論：代替監査B案はReview待ち。P1=STOP / P2〜P6=No-Go / Production No-Go / Draft PR #5維持。**
+
+## 7. 正式採用決裁欄（2026-11-10・判断待ち）
+
+### 統括が判断する監査契約の限定変更
+
+**提案する決定文：** `msp-customer-portal-db / msp_customer_portal`の`sg_source_inventory_ro_20261106`を初期作成する**Stage Aと、Ledger SELECT 1件を付与するStage Bの一回限り**に、pgAudit文監査の代替として本書のBefore/実行中/After証跡突合を採用する。次の残余リスクを承知して受容し、証跡条件が未達なら即時STOPとする。これはDB監査一般の免除ではなく、LOGIN化・Source Inventory・Migration・復旧には波及しない。
+
+**受容を要する残余リスク（いずれもB案では解消しない）：**
+
+1. DBが実行した`CREATE ROLE` / `GRANT` SQL本文の直接監査ログはなく、実行した文とGit固定SQLの同一性は間接的にしか説明できない。
+2. Stage Aの管理経路やStage B Job以外による同時/第三者SQL操作を、B案の証跡だけで完全には否定できない。
+3. Cloud Run Jobの実行権限は「一回限り」の技術的強制ではなく、運用上の別承認・事後権限回収に依存する。DB変更の結果不明、時刻窓の欠損、ログ保存失敗で実行経過を再構成できなくなる可能性がある。
+
+### 採用後にも必須となる確認（条件未達ならP1=STOP）
+
+| 分類 | 採用前・実行前に確定すべきもの | 現状 |
+|---|---|---|
+| 人的統制 | 監査方式の受容責任者、P1二者照合者、Stage A実行者、Stage B配置担当/実行担当、復旧責任者 | **未指定** |
+| 原本証跡 | 承認IDとUTC/JST、PR HEAD/SQL SHA、Stage A管理経路の操作記録、ACL before/after、Stage B Job export hash/image digest/Execution ID/定型log、Cloud Audit Logs参照と原本保全 | **保全場所・閲覧権限未確定** |
+| 保持 | 証跡保存先、保持期間、原本ハッシュ/改変防止、アクセス権、証跡の欠損時STOP | **未確定** |
+| 復旧 | Backup/PITRの最新成功と承認された復旧先・担当・手順。復元試験未実施の限界を記録 | **復元能力は未実証** |
+| 本番正常性 | 実行直前のDB操作、接続余裕/CPU、Portal/PPAP/Sales Tools Ready/5xx、変更凍結ウィンドウ | **再測定待ち** |
+
+- 原本ログの機密値をGitへ貼らない。PRにはSecretを含まない要約、各原本の参照ID・ハッシュ、確認者/時刻を記録する。既存の保全先と権限が使えるかをP1で確認する。**新規Bucket/Logging設定の作成を本承認に含めない。**
+- Stage AとStage Bの承認IDを分離し、互いに代用しない。独立のFinal verifyによるDirect結果とPASSWORD NULL間接保証を併記して初めて完了候補とする。
+- これらが整わなければ、B案を形式上採用しても**P1=STOP**のまま。P2以降は個別の本番変更承認が必要。
+
+### 決裁記録（未記入＝未承認）
+
+| 項目 | 記録 |
+|---|---|
+| 採用可否 | **未承認（統括の明示的な残余リスク受容待ち）** |
+| 適用範囲 | 上記一回限りのStage A / Stage Bの初期Bootstrapのみ |
+| 受容する残余リスク | 上記3点。DB文監査と同等ではない |
+| 決裁者・決裁日時・決裁ID | **未記入** |
+| 証跡保持場所・期間・二者レビュー担当 | **未記入（P1停止条件）** |
+| 実行権限 | **0件。この決裁はP2〜P6の実行を許可しない** |
+
+**次の必要な判断：** 統括が「この一回限りのBootstrapについて、上記3点の残余リスクを受容し、B案を正式採用する」ことを明示的に承認するか。正式採用後もP1の人的統制・証跡/復旧/稼働状態の未充足を解消するまで、Production No-Goを維持する。
