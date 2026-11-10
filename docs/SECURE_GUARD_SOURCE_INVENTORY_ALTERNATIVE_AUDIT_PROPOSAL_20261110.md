@@ -1,6 +1,6 @@
-# Secure Guard Source Inventory｜本番Bootstrap代替監査 B案（2026-11-10・提案）
+# Secure Guard Source Inventory｜本番Bootstrap代替監査 B案（2026-11-10・限定採用）
 
-> **状態：設計案の作成のみ承認。監査要件の正式変更は未承認。P1=STOP、Production No-Go、Draft PR #5を維持。**
+> **状態：監査方式B案を2026-11-10に今回一回限りで正式採用（Decision `SG-SOURCE-INV-AUDIT-B-20261110`）。ただしP1=STOP、Production No-Go、Draft PR #5を維持。**
 > 本書はDB再起動を避けるための代替監査の審査資料であり、Stage A/B、Cloud Run Jobの配備・実行、IAM/Secret/DB変更の実行許可ではない。
 
 ## 1. 正本と適用範囲
@@ -29,7 +29,7 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 [Cloud SQL pgAudit](https://cloud.google.com/sql/docs/postgres/pg-audit)。
 現在のP1にある「実効ROLE文監査」をPASSにする証拠はないため、**P1はSTOPのまま**。
 
-## 3. B案の監査証跡契約（直接SQL文監査の代替候補）
+## 3. B案の監査証跡契約（今回一回限りの採用契約）
 
 | 境界 | 実行前（保全） | 実行中（保全） | 実行後（独立照合） |
 |---|---|---|---|
@@ -55,28 +55,28 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 
 **B案はpgAuditと同等の監査ではない。** 管理操作ログやJobログにDB文そのものが自動記録されると誤記しない。正式採用するなら「単発Bootstrap限定の代替保証」「SQL文単位の証跡がない残余リスク」「受容責任者」を明示した監査契約の変更承認が必要。
 
-## 5. 正式採用に向けた判断Gate（現在はすべて未解除）
+## 5. 採用後にも必要なGate（P1〜P6は未解除）
 
-1. **監査方式の別承認**：P1の「DB statement audit必須」を、**当該単発Bootstrapだけ**B案に置き換えるか統括が判断。承認者、対象期間、残余リスク、証跡保持先と期間を確定する。**本書の作成承認はこの承認を兼ねない。**
+1. **監査方式の限定採用：承認済み**。決定は[Decision `SG-SOURCE-INV-AUDIT-B-20261110`](DECISION_SECURE_GUARD_SOURCE_INVENTORY_AUDIT_B_20261110.md)。対象は当該一回限りのBootstrapだけ。証跡保持先・期間・二者レビューはP1残存Gateであり、採用決定だけではP1は解除されない。
 2. **P1再審査**：監査方式承認後も、接続/CPU/負荷、Backup/PITRと復旧経路、Portal/PPAP/Sales Toolsの正常性、担当・二者レビュー・証跡保持を実行時点で検証。未達ならSTOP。
 3. **P2別承認**：専用SA/IAM、Image Build/Push、Cloud Run Jobの**作成のみ**。Secret payload取得、Job実行なし。
 4. **P3別承認**：Stage Aのrole作成/CONNECT/USAGEを対象・時刻・担当固定で承認。
 5. **P4別承認**：Stage B Jobを別途1回だけ承認。結果不明は再実行禁止。
 6. **P5独立確認**：ACL / role attributesのDirect確認。PASSWORD NULLはIndirect/Not directly verifiedを併記。P6のLOGIN・Inventory・Migrationは別途No-Go。
 
-## 6. 今回の変更範囲・決定待ち
+## 6. 2026-11-10 設計提案時点の記録（履歴）
 
 - **今回実施：文書上のB案提案と2026-11-10のRead-only観測値の記録のみ。**
 - **今回実施しない：pgAuditフラグ変更、DB再起動、`CREATE EXTENSION`、本番DB書込み、`CREATE ROLE`/GRANT/REVOKE、IAM/Secret/Cloud Run Job/Artifact変更、Stage A/B/Final verify、Source Inventory、Migration、PR merge。**
-- **結論：代替監査B案はReview待ち。P1=STOP / P2〜P6=No-Go / Production No-Go / Draft PR #5維持。**
+- **当時の結論：代替監査B案はReview待ちだった。その後、同日付Decisionで今回一回限りの採用が承認された。P1=STOP / P2〜P6=No-Go / Production No-Go / Draft PR #5維持は変わらない。**
 
-## 7. 正式採用決裁欄（2026-11-10・判断待ち）
+## 7. 正式採用決裁欄（2026-11-10・監査方式のみ承認済み）
 
 ### 統括が判断する監査契約の限定変更
 
-**提案する決定文：** `msp-customer-portal-db / msp_customer_portal`の`sg_source_inventory_ro_20261106`を初期作成する**Stage Aと、Ledger SELECT 1件を付与するStage Bの一回限り**に、pgAudit文監査の代替として本書のBefore/実行中/After証跡突合を採用する。次の残余リスクを承知して受容し、証跡条件が未達なら即時STOPとする。これはDB監査一般の免除ではなく、LOGIN化・Source Inventory・Migration・復旧には波及しない。
+**承認された決定文：** `msp-customer-portal-db / msp_customer_portal`の`sg_source_inventory_ro_20261106`を初期作成する**Stage Aと、Ledger SELECT 1件を付与するStage Bの一回限り**に、pgAudit文監査の代替として本書のBefore/実行中/After証跡突合を採用する。次の残余リスクを承知して受容し、証跡条件が未達なら即時STOPとする。これはDB監査一般の免除ではなく、LOGIN化・Source Inventory・Migration・復旧には波及しない。
 
-**受容を要する残余リスク（いずれもB案では解消しない）：**
+**受容済みの残余リスク（いずれもB案では解消しない）：**
 
 1. DBが実行した`CREATE ROLE` / `GRANT` SQL本文の直接監査ログはなく、実行した文とGit固定SQLの同一性は間接的にしか説明できない。
 2. Stage Aの管理経路やStage B Job以外による同時/第三者SQL操作を、B案の証跡だけで完全には否定できない。
@@ -84,7 +84,7 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 
 ### 採用後にも必須となる確認（条件未達ならP1=STOP）
 
-| 分類 | 採用前・実行前に確定すべきもの | 現状 |
+| 分類 | 実行前に確定すべきもの | 現状 |
 |---|---|---|
 | 人的統制 | 監査方式の受容責任者、P1二者照合者、Stage A実行者、Stage B配置担当/実行担当、復旧責任者 | **未指定** |
 | 原本証跡 | 承認IDとUTC/JST、PR HEAD/SQL SHA、Stage A管理経路の操作記録、ACL before/after、Stage B Job export hash/image digest/Execution ID/定型log、Cloud Audit Logs参照と原本保全 | **保全場所・閲覧権限未確定** |
@@ -96,15 +96,15 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 - Stage AとStage Bの承認IDを分離し、互いに代用しない。独立のFinal verifyによるDirect結果とPASSWORD NULL間接保証を併記して初めて完了候補とする。
 - これらが整わなければ、B案を形式上採用しても**P1=STOP**のまま。P2以降は個別の本番変更承認が必要。
 
-### 決裁記録（未記入＝未承認）
+### 決裁記録（採用決定済み、実行承認なし）
 
 | 項目 | 記録 |
 |---|---|
-| 採用可否 | **未承認（統括の明示的な残余リスク受容待ち）** |
+| 採用可否 | **ACCEPTED：今回一回限りの監査方式B案のみ** |
 | 適用範囲 | 上記一回限りのStage A / Stage Bの初期Bootstrapのみ |
 | 受容する残余リスク | 上記3点。DB文監査と同等ではない |
-| 決裁者・決裁日時・決裁ID | **未記入** |
+| 決裁者・決裁日時・決裁ID | 萩坂（統括）／2026-11-10／`SG-SOURCE-INV-AUDIT-B-20261110` |
 | 証跡保持場所・期間・二者レビュー担当 | **未記入（P1停止条件）** |
 | 実行権限 | **0件。この決裁はP2〜P6の実行を許可しない** |
 
-**次の必要な判断：** 統括が「この一回限りのBootstrapについて、上記3点の残余リスクを受容し、B案を正式採用する」ことを明示的に承認するか。正式採用後もP1の人的統制・証跡/復旧/稼働状態の未充足を解消するまで、Production No-Goを維持する。
+**次の工程：** 監査方式は正式採用済み。P1の人的統制・証跡の保全先/期間・復旧/稼働状態の未充足をRead-onlyで確認し、二者照合を準備する。条件が揃うまでProduction No-Goを維持し、P2〜P6は別承認する。
