@@ -42,6 +42,18 @@ test('MSP Site form keeps verified Global Policy candidates available for the pr
   assert.match(js, /適用可否の事前確認必須/);
 });
 
+test('trial Site preflight is restricted to one known Organization and GET-only requests', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const ps = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'secure-guard-trial-site-readonly-preflight.ps1'), 'utf8');
+  assert.match(ps, /\$organizationId = '10222523'/);
+  assert.match(ps, /\$expectedMspId = '11473'/);
+  assert.match(ps, /Invoke-RestMethod -Method GET/);
+  assert.match(ps, /-MaximumRedirection 0/);
+  assert.match(ps, /INCOMPLETE_\$\(\$check\.Name\)_PAGINATION/);
+  assert.doesNotMatch(ps, /-Method\s+(POST|PUT|PATCH|DELETE)/i);
+  assert.doesNotMatch(ps, /(Write-Output|Write-Host)\s+\$\s*(apiKey|headers|organization|response)/i);
+});
+
 test('the management HTML requires both a Secure Guard session and an explicit MSP grant', async () => {
   const identity = { verifySession: () => ({ userId: 'user-1', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'user-1', status: 'active', sessionVersion: 1 }) };
   for (const [cookie, grant, expected] of [[undefined, true, 401], ['secure_guard_session=test', false, 403], ['secure_guard_session=test', true, 200]]) {
