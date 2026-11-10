@@ -14,7 +14,22 @@ export interface Membership extends CustomerScope {
   status: 'pending' | 'active' | 'revoked';
 }
 
-export interface ManagedOrganization { id: string; organizationName: string; status: 'active' | 'suspended'; dnsfilterOrganizationId: string | null; mappingStatus: 'active' | 'disabled' | null; }
+export interface ManagedOrganization {
+  id: string;
+  organizationName: string;
+  status: 'active' | 'suspended';
+  dnsfilterOrganizationId: string | null;
+  mappingStatus: 'active' | 'disabled' | null;
+  allocatedLicenses: number | null;
+  licenseSnapshotUpdatedAt: string | null;
+}
+export interface LicenseAlertState {
+  organizationId: string;
+  organizationName: string;
+  dnsfilterOrganizationId: string;
+  allocatedLicenses: number | null;
+  licenseSnapshotUpdatedAt: string | null;
+}
 export interface ManagedMembership { id: string; email: string; role: CustomerRole; status: 'pending' | 'active' | 'revoked'; isInitialAdmin: boolean; }
 export interface AuditEvent { id: string; organizationName: string | null; action: string; result: 'success' | 'denied' | 'failed'; createdAt: string; }
 
@@ -73,9 +88,10 @@ export class SecureGuardRepo {
   }
 
   async listManagedOrganizations(): Promise<ManagedOrganization[]> {
-    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status, m.dnsfilter_organization_id, m.status AS mapping_status
+    const { rows } = await this.pool.query(`SELECT o.id, o.organization_name, o.status, m.dnsfilter_organization_id, m.status AS mapping_status,
+      o.dnsfilter_allocated_rc_licenses_snapshot, o.license_snapshot_updated_at
       FROM customer_organizations o LEFT JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id ORDER BY o.organization_name`);
-    return rows.map((r) => ({ id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: r.dnsfilter_organization_id === null ? null : String(r.dnsfilter_organization_id), mappingStatus: r.mapping_status === null ? null : r.mapping_status as ManagedOrganization['mappingStatus'] }));
+    return rows.map((r) => this.mapManagedOrganization(r));
   }
 
   async createManagedOrganization(actorUserId: string, organizationName: string, dnsfilterOrganizationId?: string): Promise<ManagedOrganization> {
@@ -88,7 +104,7 @@ export class SecureGuardRepo {
       if (dnsfilterOrganizationId) await client.query(`INSERT INTO dnsfilter_organization_mappings (customer_organization_id, dnsfilter_organization_id, status) VALUES ($1, $2, 'active')`, [row.id, dnsfilterOrganizationId]);
       await this.insertAudit(client, actorUserId, String(row.id), null, 'organization.created', 'success');
       await client.query('COMMIT');
-      return { id: String(row.id), organizationName: String(row.organization_name), status: 'active', dnsfilterOrganizationId: dnsfilterOrganizationId ?? null, mappingStatus: dnsfilterOrganizationId ? 'active' : null };
+      return { id: String(row.id), organizationName: String(row.organization_name), status: 'active', dnsfilterOrganizationId: dnsfilterOrganizationId ?? null, mappingStatus: dnsfilterOrganizationId ? 'active' : null, allocatedLicenses: null, licenseSnapshotUpdatedAt: null };
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
@@ -96,7 +112,7 @@ export class SecureGuardRepo {
     const { rows } = await this.pool.query(`INSERT INTO customer_organizations (organization_name, status) VALUES ($1, 'suspended') RETURNING id, organization_name`, [organizationName]);
     const row = rows[0]; if (!row) throw new SecureGuardConflictError('CUSTOMER_ORGANIZATION_NOT_FOUND');
     await this.recordSystemAudit(actorUserId, 'organization.provisioning.started', 'success');
-    return { id: String(row.id), organizationName: String(row.organization_name), status: 'suspended', dnsfilterOrganizationId: null, mappingStatus: null };
+    return { id: String(row.id), organizationName: String(row.organization_name), status: 'suspended', dnsfilterOrganizationId: null, mappingStatus: null, allocatedLicenses: null, licenseSnapshotUpdatedAt: null };
   }
 
   async finalizeProvisioning(actorUserId: string, organizationId: string, dnsfilterOrganizationId: string): Promise<ManagedOrganization | null> {
@@ -118,7 +134,7 @@ export class SecureGuardRepo {
       const mapping = await client.query(`SELECT dnsfilter_organization_id, status FROM dnsfilter_organization_mappings WHERE customer_organization_id = $1`, [organizationId]);
       await client.query('COMMIT');
       const r = updated.rows[0]!; const m = mapping.rows[0];
-      return { id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: m ? String(m.dnsfilter_organization_id) : null, mappingStatus: m ? m.status as ManagedOrganization['mappingStatus'] : null };
+      return { id: String(r.id), organizationName: String(r.organization_name), status: r.status as ManagedOrganization['status'], dnsfilterOrganizationId: m ? String(m.dnsfilter_organization_id) : null, mappingStatus: m ? m.status as ManagedOrganization['mappingStatus'] : null, allocatedLicenses: null, licenseSnapshotUpdatedAt: null };
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
 
@@ -163,6 +179,80 @@ export class SecureGuardRepo {
     );
     const organizationId = rows[0]?.dnsfilter_organization_id;
     return typeof organizationId === 'string' && /^\d+$/.test(organizationId) ? organizationId : null;
+  }
+
+  async getLicenseAlertState(customerOrganizationId: string): Promise<LicenseAlertState | null> {
+    const { rows } = await this.pool.query(
+      `SELECT o.id, o.organization_name, o.dnsfilter_allocated_rc_licenses_snapshot, o.license_snapshot_updated_at,
+              m.dnsfilter_organization_id
+       FROM customer_organizations o
+       JOIN dnsfilter_organization_mappings m ON m.customer_organization_id = o.id AND m.status = 'active'
+       WHERE o.id = $1 AND o.status = 'active'`,
+      [customerOrganizationId],
+    );
+    const row = rows[0];
+    if (!row || typeof row.dnsfilter_organization_id !== 'string' || !/^\d+$/.test(row.dnsfilter_organization_id)) return null;
+    return {
+      organizationId: String(row.id),
+      organizationName: String(row.organization_name),
+      dnsfilterOrganizationId: row.dnsfilter_organization_id,
+      allocatedLicenses: row.dnsfilter_allocated_rc_licenses_snapshot === null ? null : Number(row.dnsfilter_allocated_rc_licenses_snapshot),
+      licenseSnapshotUpdatedAt: row.license_snapshot_updated_at === null ? null : new Date(row.license_snapshot_updated_at).toISOString(),
+    };
+  }
+
+  async updateLicenseAllocation(actorUserId: string, customerOrganizationId: string, allocatedLicenses: number): Promise<LicenseAlertState | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query(
+        `UPDATE customer_organizations o
+         SET dnsfilter_allocated_rc_licenses_snapshot = $1,
+             license_snapshot_updated_at = now(), license_snapshot_updated_by = $2, updated_at = now()
+         WHERE o.id = $3 AND o.status = 'active'
+           AND EXISTS (SELECT 1 FROM dnsfilter_organization_mappings m WHERE m.customer_organization_id = o.id AND m.status = 'active')
+         RETURNING o.id, o.organization_name, o.dnsfilter_allocated_rc_licenses_snapshot, o.license_snapshot_updated_at`,
+        [allocatedLicenses, actorUserId, customerOrganizationId],
+      );
+      if (!updated.rows[0]) { await client.query('ROLLBACK'); return null; }
+      await this.insertAudit(client, actorUserId, customerOrganizationId, null, 'license.allocation.snapshot.updated', 'success');
+      const mapping = await client.query(`SELECT dnsfilter_organization_id FROM dnsfilter_organization_mappings WHERE customer_organization_id = $1 AND status = 'active'`, [customerOrganizationId]);
+      await client.query('COMMIT');
+      const row = updated.rows[0];
+      return { organizationId: String(row.id), organizationName: String(row.organization_name), dnsfilterOrganizationId: String(mapping.rows[0]!.dnsfilter_organization_id), allocatedLicenses: Number(row.dnsfilter_allocated_rc_licenses_snapshot), licenseSnapshotUpdatedAt: new Date(row.license_snapshot_updated_at).toISOString() };
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async claimLicenseAlert(customerOrganizationId: string, overage: number, token: string): Promise<'claimed' | 'duplicate' | 'pending' | 'missing'> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(`SELECT license_alert_last_sent_overage, license_alert_pending_token FROM customer_organizations WHERE id = $1 FOR UPDATE`, [customerOrganizationId]);
+      if (!locked.rows[0]) { await client.query('ROLLBACK'); return 'missing'; }
+      if (Number(locked.rows[0].license_alert_last_sent_overage) === overage) { await client.query('ROLLBACK'); return 'duplicate'; }
+      if (locked.rows[0].license_alert_pending_token !== null) { await client.query('ROLLBACK'); return 'pending'; }
+      await client.query(`UPDATE customer_organizations SET license_alert_pending_overage = $1, license_alert_pending_token = $2, license_alert_pending_at = now() WHERE id = $3`, [overage, token, customerOrganizationId]);
+      await client.query('COMMIT'); return 'claimed';
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async completeLicenseAlert(actorUserId: string, customerOrganizationId: string, token: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(`UPDATE customer_organizations SET license_alert_last_sent_overage = license_alert_pending_overage, license_alert_last_sent_at = now(), license_alert_pending_overage = NULL, license_alert_pending_token = NULL, license_alert_pending_at = NULL WHERE id = $1 AND license_alert_pending_token = $2`, [customerOrganizationId, token]);
+      if (result.rowCount !== 1) { await client.query('ROLLBACK'); return false; }
+      await this.insertAudit(client, actorUserId, customerOrganizationId, null, 'license.overage.slack.sent', 'success');
+      await client.query('COMMIT'); return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
+  async failLicenseAlert(customerOrganizationId: string, token: string): Promise<void> {
+    await this.pool.query(`UPDATE customer_organizations SET license_alert_pending_overage = NULL, license_alert_pending_token = NULL, license_alert_pending_at = NULL WHERE id = $1 AND license_alert_pending_token = $2`, [customerOrganizationId, token]);
+  }
+
+  async clearResolvedLicenseAlert(customerOrganizationId: string): Promise<void> {
+    await this.pool.query(`UPDATE customer_organizations SET license_alert_last_sent_overage = NULL, license_alert_last_sent_at = NULL WHERE id = $1 AND license_alert_pending_token IS NULL`, [customerOrganizationId]);
   }
 
   async createInvitation(input: {
@@ -491,6 +581,18 @@ export class SecureGuardRepo {
       customerOrganizationId: String(row.customer_organization_id),
       organizationName: String(row.organization_name),
       role: row.role as CustomerRole,
+    };
+  }
+
+  private mapManagedOrganization(row: Record<string, unknown>): ManagedOrganization {
+    return {
+      id: String(row.id),
+      organizationName: String(row.organization_name),
+      status: row.status as ManagedOrganization['status'],
+      dnsfilterOrganizationId: row.dnsfilter_organization_id === null ? null : String(row.dnsfilter_organization_id),
+      mappingStatus: row.mapping_status === null ? null : row.mapping_status as ManagedOrganization['mappingStatus'],
+      allocatedLicenses: row.dnsfilter_allocated_rc_licenses_snapshot === null || row.dnsfilter_allocated_rc_licenses_snapshot === undefined ? null : Number(row.dnsfilter_allocated_rc_licenses_snapshot),
+      licenseSnapshotUpdatedAt: row.license_snapshot_updated_at === null || row.license_snapshot_updated_at === undefined ? null : new Date(row.license_snapshot_updated_at as string | Date).toISOString(),
     };
   }
 }

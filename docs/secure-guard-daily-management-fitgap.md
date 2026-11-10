@@ -247,3 +247,32 @@ try {
 - Site／Organization削除、依存物の順序、Portal mappingと権限失効、課金停止のE2Eは**未完了**。既存C2/PR #44の安全ゲート・別承認を維持。
 - 顧客管理画面の「アンインストール＆削除」実装・HAは未完了。端末登録のみ削除を通常UIに公開しない。
 - この記録追加は文書更新のみ。DNSFilter／Cloud Run／DB／IAM／Secret／本番トラフィックの変更を伴わない。
+
+## 2026-11-10｜試用期間内の実機検証準備（Organization 10222523）
+
+### Subscription・SKU・割当・課金
+
+- 既存Read-only実測ではOrganizationのSubscription relationshipはnullであり、公開APIからCore／Plus、割当数量、課金終了条件を確定できていない。
+- 利用数量候補の `/v1/metrics/organization_usage_detailed/{id}` も、検証済みの `roaming_client_count` が欠落またはnullである。`user_count`やAgent件数で補完しない。
+- 割当数量は、APIで正規の値を取得できる場合はそれを優先する。取得できない現在の状態ではDNSFilter公式画面の値をMSP管理者が参照用スナップショットとして転記する。請求数量・請求額の正本にはしない。
+- 試用期間中に必要なのは、公式Billing画面またはDNSFilterの正式回答によるSKU、割当、使用、課金開始・停止条件の確認である。推測したPATCH／POSTは行わない。
+
+### 固定Policy・Block Pageを使うSite作成
+
+- 既存PoCで確認した作成形状は `name`、`organization_id`、`external_id`、`policy_ids`、`block_page_id` である。
+- PR #3の現行クライアントは `name`、`organization_id`、`policy_ids` だけを送るため、固定Block Pageまで含む実機試験条件を満たさない。対象Organization 10222523について、現在のPolicy／Block Pageの一覧と所属をGETで照合し、正確なID、Site名、`external_id`、作成後GETの期待値を固定するまでPOSTはSTOPする。
+- 過去に別Organizationで使ったPolicy ID／Block Page IDを10222523へ流用しない。送信は個別承認後に1回、自動再試行なしとし、HTTP結果が不明なら同名Siteを再作成しない。
+
+### Allow List
+
+- 公式ヘルプではPolicy単位のAllow Listと、MSP全体へ作用するUniversal Allow Listが区別されている。顧客別試験にUniversal Allow Listを使用しない。
+- 現時点で公開APIの追加・解除endpoint、request shape、read-back契約を公式資料または既存OpenAPIから確定できていないため、API実機変更はSTOPする。
+- 実機試験前に、対象Policy、他で使われていない試験用domain、追加前状態、追加request、read-back、解除request、解除後read-backを固定する。結果不明時は再送しない。
+
+### 個別承認が必要な正確な操作
+
+1. Organization `10222523`へのSite作成POST 1回。事前にSite名、`external_id`、対象Organizationに適用可能なPolicy ID、Block Page IDを確定し、作成後GETを行う。
+2. Organization `10222523`の対象Policyへの試験用domain Allow追加1回と解除1回。公式API契約とrollbackが確定した場合だけ実施し、Universal Allow Listは対象外とする。
+3. DNSFilter Organization `10222523`のDELETE 1回。直前のMSP所属、Site／Agent／Subscription、Portal mapping、課金停止条件、C2 DryRunとUNKNOWN時の復旧を全て確認してから別承認を得る。
+
+以上はいずれも準備のみであり、2026-11-10の作業ではDNSFilterへの追加GET・変更要求、DB変更、Slack実送信を行っていない。

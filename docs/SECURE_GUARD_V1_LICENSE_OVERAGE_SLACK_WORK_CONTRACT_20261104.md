@@ -60,3 +60,14 @@ Canonical: `DECISION_SECURE_GUARD_DNSFILTER_API_BILLING_UPDATE_20261104.md` 4A�
 - Slackチャンネル未提供でもCのAdapter/モックテストまでは可能。本物のWebhookの作成・送信、DNSFilterの課金PATCH、DB実migration、Cloud Runデプロイ、Scheduler有効化は**行わない**。
 - 成果物は変更ファイル一覧、TypeScript build/test実行結果、既存テストの回帰、現行APIデータソースの根拠、STOP/残Gap、Commit SHA、Draft PRリンク。実装できなかった部分は明示する。
 
+## 5. 2026-11-10 実装・オフライン検証結果
+
+- `customer_organizations` に、DNSFilter公式画面から転記する割当数量、転記日時・実行者、Slack重複抑止状態を保持する加算migration 013を追加した。既存レコードは補完せず、未設定はnullのままとする。
+- MSP管理者専用の割当数量更新API、割当・使用・超過・確認日時を表示する管理画面を追加した。割当更新はDNSFilterへの書込みを発生させない。
+- 利用数量は `/v1/metrics/organization_usage_detailed/{id}` の検証済みフィールド `roaming_client_count` が非負整数で返った場合だけ採用する。欠落・null・型不正・GET失敗時は `UNKNOWN` とし、`user_count`、Agent一覧件数、保護状態件数で補完しない。
+- `SECURE_GUARD_LICENSE_ALERT_SLACK_WEBHOOK` 専用Adapterを追加した。未設定時は送信0件、失敗時は通知済みにせず、同一超過の重複通知を抑止する。既存Slack Webhookは流用しない。
+- Slack実送信、Scheduler、migration適用、Cloud Run配置、DNSFilter変更APIは実施していない。
+- TypeScript buildおよび全52件の自動試験はPASS（0 FAIL／0 SKIP）。従来42件を維持し、利用数形状、UNKNOWN、MSP限定割当、Slack未設定・失敗・重複抑止を追加検証した。
+
+現時点の実API記録では `roaming_client_count` が欠落またはnullであり、超過判定は `UNKNOWN` となる。したがって管理画面の割当参照値は利用可能だが、実APIによる超過通知の本番有効化は引き続きSTOPとする。
+

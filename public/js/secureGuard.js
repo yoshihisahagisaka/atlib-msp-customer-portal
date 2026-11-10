@@ -126,6 +126,13 @@ if (adminOrganizationList) {
       for (const org of organizationData.organizations) {
         const row = document.createElement('div'); row.className = 'card';
         row.append(adminText(`${org.organizationName} / ${org.status} / DNSFilter: ${org.dnsfilterOrganizationId ?? '未設定'} / ID: ${org.id}`));
+        const licenseStatus = adminText(`割当数: ${org.allocatedLicenses ?? '未設定'} / 使用数: 未確認 / 判定: UNKNOWN${org.licenseSnapshotUpdatedAt ? ` / 転記: ${new Date(org.licenseSnapshotUpdatedAt).toLocaleString('ja-JP')}` : ''}`);
+        const allocation = document.createElement('input'); allocation.type = 'number'; allocation.min = '0'; allocation.step = '1'; allocation.value = org.allocatedLicenses ?? ''; allocation.placeholder = 'DNSFilter画面の割当数';
+        const saveAllocation = document.createElement('button'); saveAllocation.type = 'button'; saveAllocation.className = 'btn btn-small'; saveAllocation.textContent = '割当数を転記';
+        saveAllocation.onclick = async () => { const value = Number(allocation.value); if (!Number.isSafeInteger(value) || value < 0) { licenseStatus.textContent = '割当数は0以上の整数で入力してください。'; return; } try { await adminFetch(`/organizations/${org.id}/license-allocation`, { method: 'PATCH', body: JSON.stringify({ allocatedLicenses: value }) }); await renderAdmin(); } catch { licenseStatus.textContent = '割当数を保存できませんでした。'; } };
+        const checkLicense = document.createElement('button'); checkLicense.type = 'button'; checkLicense.className = 'btn btn-small'; checkLicense.textContent = '使用数・超過を確認';
+        checkLicense.onclick = async () => { licenseStatus.textContent = 'ライセンス状態を確認中です。'; try { const value = await adminFetch(`/organizations/${org.id}/license-status`); licenseStatus.textContent = `割当数: ${value.allocation.value ?? '未設定'} / 使用数: ${value.usage.value ?? '取得不可'} / 判定: ${value.status}${value.overage === null ? '' : ` / 超過: ${value.overage}`} / 確認: ${new Date(value.usage.checkedAt).toLocaleString('ja-JP')}`; } catch { licenseStatus.textContent = '割当数: 未確認 / 使用数: 取得不可 / 判定: UNKNOWN'; } };
+        row.append(licenseStatus, allocation, saveAllocation, checkLicense);
         const stop = document.createElement('button'); stop.className = 'btn btn-small'; stop.textContent = org.status === 'active' ? '停止' : '有効化';
         stop.onclick = async () => { try { await adminFetch(`/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify({ status: org.status === 'active' ? 'suspended' : 'active' }) }); await renderAdmin(); } catch { adminErrorMessage(); } };
         row.append(stop); organizations.append(row); scope.append(new Option(org.organizationName, org.id));

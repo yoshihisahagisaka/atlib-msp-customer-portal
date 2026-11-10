@@ -54,6 +54,17 @@ export class DnsFilterManagementClient {
   async createOrganization(name: string): Promise<{ id: string; name: string }> {
     const body = await this.request('/v1/organizations', { method: 'POST', body: JSON.stringify({ organization: { name, managed_by_msp_id: Number(this.mspId) } }) }); const data = object(body.data); const attributes = object(data.attributes); const created = id(data.id); if (id(attributes.managed_by_msp_id) !== this.mspId || typeof attributes.name !== 'string') throw new DnsFilterManagementError('DNSFILTER_CREATE_OUTCOME_UNKNOWN'); return { id: created, name: attributes.name };
   }
+  async getOrganizationLicenseUsage(organizationId: string): Promise<{ usage: number | null; checkedAt: string }> {
+    if (!/^\d+$/.test(organizationId)) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN');
+    const checkedAt = new Date().toISOString();
+    const body = await this.request(`/v1/metrics/organization_usage_detailed/${encodeURIComponent(organizationId)}`, { method: 'GET' });
+    const data = object(body.data);
+    if (data.organization_id !== undefined && id(data.organization_id) !== organizationId) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN');
+    const value = data.roaming_client_count;
+    if (value === null || value === undefined) return { usage: null, checkedAt };
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN');
+    return { usage: value, checkedAt };
+  }
   async listPolicies(organizationId: string): Promise<Array<{ id: string; name: string; global: boolean }>> {
     const body = await this.request(`/v1/policies?organization_id=${encodeURIComponent(organizationId)}&include_global_policies=true`, { method: 'GET' }); const data = body.data; if (!Array.isArray(data)) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN'); return data.map((v) => { const r = object(v); const a = object(r.attributes); if (typeof a.name !== 'string') throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN'); return { id: id(r.id), name: a.name, global: a.is_global_policy === true }; });
   }

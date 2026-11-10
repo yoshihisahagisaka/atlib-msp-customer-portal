@@ -44,6 +44,7 @@ import { SecureGuardIdentityService } from './services/secureGuardIdentityServic
 import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
 import { createSecureGuardRouter } from './routes/secureGuard';
+import { SecureGuardLicenseSlack } from './services/secureGuardLicenseSlack';
 import { DnsFilterManagementClient } from './services/dnsFilterManagementClient';
 import { safeHttpLogRedactions, safeHttpLogSerializers } from './lib/httpLog';
 
@@ -122,6 +123,7 @@ async function main(): Promise<void> {
       mailer,
       portalBaseUrl: config.portalBaseUrl,
       managementClient: dnsFilterManagementClient,
+      licenseAlertSlack: new SecureGuardLicenseSlack(config.slack.webhookSecureGuardLicenseAlert),
     }),
   );
 

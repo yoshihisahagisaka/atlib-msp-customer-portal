@@ -24,3 +24,20 @@ test('rejects a listed Organization managed by a different MSP', async () => {
   const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async () => ({ ok: true, json: async () => ({ data: [{ id: '2001', attributes: { name: 'Other', managed_by_msp_id: '99999' } }], links: { next: null } }) }));
   await assert.rejects(() => client.listOrganizations(), DnsFilterManagementError);
 });
+
+test('uses only the verified roaming_client_count for license usage', async () => {
+  const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async () => ({ ok: true, json: async () => ({ data: { organization_id: '10222523', roaming_client_count: 3, user_count: 99 } }) }));
+  const result = await client.getOrganizationLicenseUsage('10222523');
+  assert.equal(result.usage, 3);
+  assert.match(result.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('keeps license usage UNKNOWN when the verified field is absent', async () => {
+  const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async () => ({ ok: true, json: async () => ({ data: { organization_id: '10222523', user_count: 1 } }) }));
+  assert.equal((await client.getOrganizationLicenseUsage('10222523')).usage, null);
+});
+
+test('rejects invalid license usage instead of counting Agent records', async () => {
+  const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async () => ({ ok: true, json: async () => ({ data: { organization_id: '10222523', roaming_client_count: '3', agents: [{}, {}, {}] } }) }));
+  await assert.rejects(() => client.getOrganizationLicenseUsage('10222523'), DnsFilterManagementError);
+});

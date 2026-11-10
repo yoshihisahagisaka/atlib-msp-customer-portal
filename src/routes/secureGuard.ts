@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CustomerRole } from '../domain/secureGuard';
 import {
@@ -12,6 +13,7 @@ import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secu
 import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
 import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
+import type { SecureGuardLicenseSlack } from '../services/secureGuardLicenseSlack';
 
 const membershipRoleSchema = z.enum(['org_admin', 'operator', 'viewer']);
 const invitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -28,6 +30,7 @@ const provisioningSchema = z.object({ organizationName: z.string().trim().min(1)
 const importSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const networkSchema = z.object({ name: z.string().trim().min(1).max(255), policyIds: z.array(z.string().regex(/^\d+$/)).max(10) });
 const recoverySchema = z.object({ dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
+const licenseAllocationSchema = z.object({ allocatedLicenses: z.number().int().min(0).max(10_000_000) });
 
 function toError(error: unknown, res: { status: (code: number) => { json: (value: unknown) => void } }): boolean {
   if (!(error instanceof SecureGuardConflictError)) return false;
@@ -47,6 +50,7 @@ export function createSecureGuardRouter(input: {
   mailer: Mailer;
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
+  licenseAlertSlack?: SecureGuardLicenseSlack;
 }): Router {
   const router = Router();
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
@@ -85,6 +89,68 @@ export function createSecureGuardRouter(input: {
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try { const updated = await input.repo.updateManagedOrganization(req.secureGuardUserId!, req.params.organizationId!, parsed.data); if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(updated); }
     catch (error) { res.status(isUniqueViolation(error) ? 409 : 500).json({ error: isUniqueViolation(error) ? 'ORGANIZATION_CONFLICT' : 'ORGANIZATION_UNAVAILABLE' }); }
+  });
+  router.patch('/admin/organizations/:organizationId/license-allocation', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const parsed = licenseAllocationSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+      const updated = await input.repo.updateLicenseAllocation(req.secureGuardUserId!, req.params.organizationId!, parsed.data.allocatedLicenses);
+      if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_OR_MAPPING_NOT_FOUND' });
+      res.json({ allocation: { value: updated.allocatedLicenses, updatedAt: updated.licenseSnapshotUpdatedAt, source: 'dnsfilter_console_snapshot' } });
+    } catch { res.status(500).json({ error: 'LICENSE_ALLOCATION_UNAVAILABLE' }); }
+  });
+  const licenseStatus = async (organizationId: string) => {
+    const state = await input.repo.getLicenseAlertState(organizationId);
+    if (!state) return null;
+    try {
+      const usage = await management().getOrganizationLicenseUsage(state.dnsfilterOrganizationId);
+      const unknown = state.allocatedLicenses === null || usage.usage === null;
+      const overage = unknown ? null : Math.max(0, usage.usage! - state.allocatedLicenses!);
+      return {
+        state,
+        response: {
+          allocation: { value: state.allocatedLicenses, updatedAt: state.licenseSnapshotUpdatedAt, source: 'dnsfilter_console_snapshot' },
+          usage: { value: usage.usage, checkedAt: usage.checkedAt, source: 'dnsfilter_api_roaming_client_count' },
+          status: unknown ? 'UNKNOWN' as const : overage! > 0 ? 'OVERAGE' as const : 'OK' as const,
+          overage,
+        },
+      };
+    } catch {
+      return {
+        state,
+        response: {
+          allocation: { value: state.allocatedLicenses, updatedAt: state.licenseSnapshotUpdatedAt, source: 'dnsfilter_console_snapshot' },
+          usage: { value: null, checkedAt: new Date().toISOString(), source: 'dnsfilter_api_roaming_client_count' },
+          status: 'UNKNOWN' as const,
+          overage: null,
+        },
+      };
+    }
+  };
+  router.get('/admin/organizations/:organizationId/license-status', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const result = await licenseStatus(req.params.organizationId!);
+    if (!result) return void res.status(404).json({ error: 'ORGANIZATION_OR_MAPPING_NOT_FOUND' });
+    res.json(result.response);
+  });
+  router.post('/admin/organizations/:organizationId/license-alerts/check', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const result = await licenseStatus(req.params.organizationId!);
+    if (!result) return void res.status(404).json({ error: 'ORGANIZATION_OR_MAPPING_NOT_FOUND' });
+    if (result.response.status === 'UNKNOWN') return void res.json({ ...result.response, notification: 'not_sent_unknown' });
+    if (result.response.status === 'OK') {
+      await input.repo.clearResolvedLicenseAlert(req.params.organizationId!);
+      return void res.json({ ...result.response, notification: 'not_needed' });
+    }
+    if (!input.licenseAlertSlack?.isConfigured()) return void res.json({ ...result.response, notification: 'not_configured' });
+    const token = randomUUID();
+    const claim = await input.repo.claimLicenseAlert(req.params.organizationId!, result.response.overage!, token);
+    if (claim !== 'claimed') return void res.json({ ...result.response, notification: claim === 'duplicate' ? 'duplicate_suppressed' : 'pending' });
+    const delivery = await input.licenseAlertSlack.send({ organizationName: result.state.organizationName, usage: result.response.usage.value!, allocation: result.response.allocation.value!, overage: result.response.overage!, checkedAt: result.response.usage.checkedAt, portalUrl: `${input.portalBaseUrl}/secure-guard-admin.html` });
+    if (delivery !== 'sent') {
+      await input.repo.failLicenseAlert(req.params.organizationId!, token);
+      return void res.json({ ...result.response, notification: delivery });
+    }
+    if (!await input.repo.completeLicenseAlert(req.secureGuardUserId!, req.params.organizationId!, token)) return void res.status(409).json({ error: 'LICENSE_ALERT_STATE_CHANGED' });
+    res.json({ ...result.response, notification: 'sent' });
   });
   router.get('/admin/organizations/:organizationId/memberships', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     res.json({ memberships: await input.repo.listManagedMemberships(req.params.organizationId!) });
