@@ -341,6 +341,13 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - Trivy v0.70.0の実行イメージOS / Node依存スキャンはCRITICAL=0、HIGH=0（`ignore-unfixed=false`、`exit-code=1`）。検証時にv0.76.2が公開されていたため、CIのscanner versionをv0.76.2へ明示固定して再試験する。再試験結果が確定するまでは当該追加Gateは未確定。
 - ローカルのrunner単体試験は6 PASS。ローカルフル`npm test`は`tsc`バイナリ不在、専用`npm ci --offline`はtarball cache不足で未実行とし、GitHub Actions実行結果と混同しない。
 
+### 最終CI受入証跡（Trivy v0.76.2）
+
+- Scanner明示固定Commit `3146be728db54b6677e46fcd6b5a71c3fa614b4c`の[GitHub Actions run 42745881636](https://github.com/yoshihisahagisaka/atlib-msp-customer-portal/actions/runs/42745881636)は全ステップSUCCESS。
+- Node.js 24 Distroless image Build、非root UID 65532・`pg`のみの依存確認、合成0444 Secret mount・接続結果不明時固定STOP・Secret非出力、PostgreSQL 16二段階回帰、旧Portal回帰・合成移送はいずれもPASS。
+- Trivy v0.76.2（OS + Node library、`CRITICAL,HIGH`、`ignore-unfixed=false`、`exit-code=1`）のReport Summaryは各対象の脆弱性0件。**Stage B専用ランタイムの脆弱性GateはPASS**。これは通常Portal全体のnpm依存監査結果とは別評価であり、Portal本体の脆弱性を解消したとの意味ではない。
+- 実環境Secret、Cloud SQL、IAM、Jobの配備・実行は一切試していない。**Production No-Go継続**。
+
 ### 本番境界と残存Gate
 
 - Docker CIイメージのBuild成功と脆弱性検査合格は、本番Artifact RegistryへのBuild/Push、専用SA/Secret IAM/Cloud SQL Client、Job作成、Job実行の承認を意味しない。
