@@ -34,6 +34,14 @@ test('management screen never contains an API-key input or secret API route', ()
   assert.doesNotMatch(html, /type="password"/); assert.doesNotMatch(routes, /dnsfilter-key/);
 });
 
+test('MSP Site form keeps verified Global Policy candidates available for the prior PoC configuration', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'secureGuard.js'), 'utf8');
+  assert.match(js, /select\.replaceChildren\(\.\.\.policies\.policies\.map\(/);
+  assert.doesNotMatch(js, /policies\.policies\.filter\(\(p\) => !p\.global\)/);
+  assert.match(js, /適用可否の事前確認必須/);
+});
+
 test('the management HTML requires both a Secure Guard session and an explicit MSP grant', async () => {
   const identity = { verifySession: () => ({ userId: 'user-1', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'user-1', status: 'active', sessionVersion: 1 }) };
   for (const [cookie, grant, expected] of [[undefined, true, 401], ['secure_guard_session=test', false, 403], ['secure_guard_session=test', true, 200]]) {
