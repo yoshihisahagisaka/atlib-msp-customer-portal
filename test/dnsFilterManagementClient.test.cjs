@@ -41,3 +41,43 @@ test('rejects invalid license usage instead of counting Agent records', async ()
   const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async () => ({ ok: true, json: async () => ({ data: { organization_id: '10222523', roaming_client_count: '3', agents: [{}, {}, {}] } }) }));
   await assert.rejects(() => client.getOrganizationLicenseUsage('10222523'), DnsFilterManagementError);
 });
+
+test('creates a Site with fixed Policy, Block Page, external ID and verifies GET without leaking its secret key', async () => {
+  const calls = [];
+  const input = { name: 'Secure Guard Trial Site', policyIds: ['301'], blockPageId: '402', externalId: 'sg-trial-10222523-1' };
+  const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async (url, init) => {
+    calls.push({ url, method: init.method, body: init.body });
+    if (init.method === 'POST') return { ok: true, json: async () => ({ data: { id: '501', attributes: { name: input.name } } }) };
+    return { ok: true, json: async () => ({ data: {
+      id: '501', attributes: { name: input.name, block_page_id: 402, external_id: input.externalId, secret_key: 'never-expose' },
+      relationships: { organization: { data: { id: '10222523' } }, policies: { data: [{ id: '301' }] } },
+    } }) };
+  });
+  const result = await client.createNetwork('10222523', input);
+  assert.deepEqual(result, { id: '501', name: input.name });
+  assert.equal(JSON.stringify(result).includes('never-expose'), false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'https://api.dnsfilter.com/v1/networks');
+  assert.deepEqual(JSON.parse(calls[0].body).network, {
+    name: input.name, organization_id: 10222523, policy_ids: [301], block_page_id: 402, external_id: input.externalId,
+  });
+  assert.equal(calls[1].method, 'GET');
+  assert.equal(calls[1].url, 'https://api.dnsfilter.com/v1/networks/501');
+});
+
+test('never re-POSTs when Site read-back is missing or owned by another Organization', async () => {
+  for (const readBack of [null, {
+    data: { id: '501', attributes: { name: 'Trial Site', block_page_id: 402, external_id: 'sg-1' },
+      relationships: { organization: { data: { id: '999' } }, policies: { data: [{ id: '301' }] } } },
+  }]) {
+    let postCount = 0;
+    const client = new DnsFilterManagementClient('project', '11473', async () => 'secret', async (_url, init) => {
+      if (init.method === 'POST') { postCount++; return { ok: true, json: async () => ({ data: { id: '501' } }) }; }
+      return readBack ? { ok: true, json: async () => readBack } : { ok: false, status: 503 };
+    });
+    await assert.rejects(() => client.createNetwork('10222523', { name: 'Trial Site', policyIds: ['301'], blockPageId: '402', externalId: 'sg-1' }),
+      (error) => error instanceof DnsFilterManagementError && error.code === 'DNSFILTER_CREATE_OUTCOME_UNKNOWN');
+    assert.equal(postCount, 1);
+  }
+});

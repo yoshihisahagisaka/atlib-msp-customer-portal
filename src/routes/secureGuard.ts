@@ -28,7 +28,13 @@ const managedInvitationSchema = z.object({ email: z.string().email(), role: memb
 const roleUpdateSchema = z.object({ role: membershipRoleSchema });
 const provisioningSchema = z.object({ organizationName: z.string().trim().min(1).max(255) });
 const importSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
-const networkSchema = z.object({ name: z.string().trim().min(1).max(255), policyIds: z.array(z.string().regex(/^\d+$/)).max(10) });
+const networkIdSchema = z.string().regex(/^[1-9]\d*$/).refine((value) => Number.isSafeInteger(Number(value)));
+const networkSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  policyIds: z.array(networkIdSchema).min(1).max(10).refine((values) => new Set(values).size === values.length),
+  blockPageId: networkIdSchema,
+  externalId: z.string().trim().min(1).max(255),
+});
 const recoverySchema = z.object({ dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const licenseAllocationSchema = z.object({ allocatedLicenses: z.number().int().min(0).max(10_000_000) });
 
@@ -201,7 +207,15 @@ export function createSecureGuardRouter(input: {
   router.post('/admin/organizations/:organizationId/sites', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = networkSchema.safeParse(req.body); if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     const dnsId = await input.repo.findActiveDnsFilterOrganization(req.params.organizationId!); if (!dnsId) return void res.status(404).json({ error: 'DNSFILTER_MAPPING_NOT_FOUND' });
-    try { const site = await management().createNetwork(dnsId, parsed.data.name, parsed.data.policyIds); await input.repo.recordSystemAudit(req.secureGuardUserId!, 'site.created', 'success'); res.status(201).json(site); } catch { res.status(502).json({ error: 'DNSFILTER_SITE_CREATE_UNAVAILABLE' }); }
+    try {
+      const site = await management().createNetwork(dnsId, parsed.data);
+      await input.repo.recordSystemAudit(req.secureGuardUserId!, 'site.created', 'success');
+      res.status(201).json(site);
+    } catch {
+      // A remote Site may exist despite a failed response/read-back. Do not advise re-POST.
+      await input.repo.recordSystemAudit(req.secureGuardUserId!, 'site.creation.unresolved', 'failed').catch(() => undefined);
+      res.status(502).json({ error: 'DNSFILTER_SITE_CREATE_OUTCOME_UNKNOWN' });
+    }
   });
 
   router.get('/overview', requireIdentity, requireCustomerScope, async (req, res) => {

@@ -72,7 +72,39 @@ export class DnsFilterManagementClient {
     const body = await this.request(`/v1/networks?organization_id=${encodeURIComponent(organizationId)}`, { method: 'GET' }); if (!Array.isArray(body.data)) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN');
     return body.data.map((v) => { const r = object(v); const a = object(r.attributes); const relation = object(object(r.relationships).organization); const owner = id(object(relation.data).id); if (owner !== organizationId || typeof a.name !== 'string') throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN'); return { id: id(r.id), name: a.name }; });
   }
-  async createNetwork(organizationId: string, name: string, policyIds: string[]): Promise<{ id: string; name: string }> {
-    const body = await this.request('/v1/networks', { method: 'POST', body: JSON.stringify({ network: { name, organization_id: Number(organizationId), policy_ids: policyIds.map(Number) } }) }); const data = object(body.data); const a = object(data.attributes); if (typeof a.name !== 'string') throw new DnsFilterManagementError('DNSFILTER_CREATE_OUTCOME_UNKNOWN'); return { id: id(data.id), name: a.name };
+  async createNetwork(organizationId: string, input: { name: string; policyIds: string[]; blockPageId: string; externalId: string }): Promise<{ id: string; name: string }> {
+    // No automatic retry: a failed POST or a failed read-back may already have created the Site.
+    const body = await this.request('/v1/networks', {
+      method: 'POST',
+      body: JSON.stringify({ network: {
+        name: input.name,
+        organization_id: Number(organizationId),
+        policy_ids: input.policyIds.map(Number),
+        block_page_id: Number(input.blockPageId),
+        external_id: input.externalId,
+      } }),
+    });
+    let createdId: string;
+    try { createdId = id(object(body.data).id); }
+    catch { throw new DnsFilterManagementError('DNSFILTER_CREATE_OUTCOME_UNKNOWN'); }
+    try {
+      const readBack = await this.request(`/v1/networks/${encodeURIComponent(createdId)}`, { method: 'GET' });
+      const data = object(readBack.data);
+      const attributes = object(data.attributes);
+      const relations = object(data.relationships);
+      const owner = id(object(object(relations.organization).data).id);
+      const policies = object(relations.policies).data;
+      if (!Array.isArray(policies)) throw new DnsFilterManagementError('DNSFILTER_SHAPE_UNKNOWN');
+      const confirmedPolicies = policies.map((p) => id(object(p).id)).sort();
+      if (id(data.id) !== createdId || owner !== organizationId || attributes.name !== input.name ||
+          id(attributes.block_page_id) !== input.blockPageId || attributes.external_id !== input.externalId ||
+          JSON.stringify(confirmedPolicies) !== JSON.stringify([...input.policyIds].sort())) {
+        throw new DnsFilterManagementError('DNSFILTER_CREATE_OUTCOME_UNKNOWN');
+      }
+      // Never return/log the raw Site GET response: it may include a secret_key.
+      return { id: createdId, name: input.name };
+    } catch {
+      throw new DnsFilterManagementError('DNSFILTER_CREATE_OUTCOME_UNKNOWN');
+    }
   }
 }

@@ -115,7 +115,7 @@ if (adminOrganizationList) {
     const id = selectedOrganization(); const siteForm = document.getElementById('site-form');
     if (!id) { siteForm.hidden = true; return; }
     adminStatus('site-policy-status', '取得中です。');
-    try { const [policies, sites] = await Promise.all([adminFetch(`/organizations/${id}/policies`), adminFetch(`/organizations/${id}/sites`)]); adminList('policy-list', policies.policies, (p) => adminText(`${p.name} (${p.global ? 'Global' : 'Organization'})`), '利用可能なPolicyはありません。'); const select = document.getElementById('site-policy'); select.replaceChildren(...policies.policies.map((p) => { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; return option; })); adminList('site-list', sites.sites, (s) => adminText(`Site: ${s.name}`), '登録済みSiteはありません。'); adminStatus('site-policy-status', '取得しました。'); siteForm.hidden = false; } catch { adminStatus('site-policy-status', 'Site・Policyを取得できませんでした。'); siteForm.hidden = true; }
+    try { const [policies, sites] = await Promise.all([adminFetch(`/organizations/${id}/policies`), adminFetch(`/organizations/${id}/sites`)]); adminList('policy-list', policies.policies, (p) => adminText(`${p.name} (${p.global ? 'Global / 選択不可' : 'Organization'})`), '利用可能なPolicyはありません。'); const select = document.getElementById('site-policy'); select.replaceChildren(...policies.policies.filter((p) => !p.global).map((p) => { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; return option; })); adminList('site-list', sites.sites, (s) => adminText(`Site: ${s.name}`), '登録済みSiteはありません。'); adminStatus('site-policy-status', '取得しました。'); siteForm.hidden = false; } catch { adminStatus('site-policy-status', 'Site・Policyを取得できませんでした。'); siteForm.hidden = true; }
   };
   const renderAdmin = async () => {
     try {
@@ -147,6 +147,28 @@ if (adminOrganizationList) {
   document.getElementById('initial-invitation-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminFetch('/initial-memberships/invitations', { method: 'POST', body: JSON.stringify({ customerOrganizationId: document.getElementById('initial-organization-id').value, email: document.getElementById('initial-email').value }) }); } catch { adminErrorMessage(); } });
   document.getElementById('managed-organization-select').addEventListener('change', () => loadSitesAndPolicies());
   document.getElementById('refresh-dnsfilter-organizations').addEventListener('click', async () => { adminStatus('dnsfilter-organizations-status', '取得中です。'); try { const data = await adminFetch('/dnsfilter/organizations'); adminList('dnsfilter-organizations', data.organizations, (o) => adminText(`${o.name} / ID: ${o.id}`), 'MSP配下の顧客Organizationはありません。'); adminStatus('dnsfilter-organizations-status', '取得しました。'); } catch { document.getElementById('dnsfilter-organizations').replaceChildren(); adminStatus('dnsfilter-organizations-status', 'DNSFilter Organization一覧を取得できませんでした。'); } });
-  document.getElementById('site-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const policyIds = [...document.getElementById('site-policy').selectedOptions].map((o) => o.value); await adminFetch(`/organizations/${selectedOrganization()}/sites`, { method: 'POST', body: JSON.stringify({ name: document.getElementById('site-name').value, policyIds }) }); event.target.reset(); await loadSitesAndPolicies(); } catch { adminErrorMessage(); } });
+  let siteCreationAttempted = false;
+  document.getElementById('site-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (siteCreationAttempted) return;
+    const organizationId = selectedOrganization();
+    const policyIds = [...document.getElementById('site-policy').selectedOptions].map((o) => o.value);
+    const data = {
+      name: document.getElementById('site-name').value,
+      policyIds,
+      blockPageId: document.getElementById('site-block-page-id').value,
+      externalId: document.getElementById('site-external-id').value,
+    };
+    if (!organizationId || policyIds.length === 0) { adminStatus('site-policy-status', '対象OrganizationとPolicyを選択してください。'); return; }
+    siteCreationAttempted = true;
+    event.target.querySelector('button[type="submit"]').disabled = true;
+    adminStatus('site-policy-status', 'Site作成要求を送信中です。再送しないでください。');
+    try {
+      const site = await adminFetch(`/organizations/${organizationId}/sites`, { method: 'POST', body: JSON.stringify(data) });
+      adminStatus('site-policy-status', `Site ${site.id} の作成・read-backが確認できました。追加作成は別の承認・操作で行ってください。`);
+    } catch {
+      adminStatus('site-policy-status', '作成結果が不明です。DNSFilterでSite一覧を確認してください。同じ画面から再送しないでください。');
+    }
+  });
   renderAdmin();
 }

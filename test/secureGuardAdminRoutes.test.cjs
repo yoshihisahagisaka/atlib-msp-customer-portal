@@ -62,3 +62,65 @@ test('Organization API keeps only a confirmed unique conflict at 409', async () 
   assert.deepEqual(await request(new Error('database connection failed')), { status: 500, body: { error: 'ORGANIZATION_UNAVAILABLE' } });
   assert.equal((await request(null)).status, 201);
 });
+
+test('Site creation requires fixed Policy, Block Page and external ID, and is MSP-only', async () => {
+  const site = { name: 'Trial Site', policyIds: ['301'], blockPageId: '402', externalId: 'sg-trial-10222523-1' };
+  for (const admin of [true, false]) {
+    const calls = []; const audits = [];
+    const app = express(); app.use(express.json()); app.use(cookieParser());
+    app.use('/api/secure-guard', createSecureGuardRouter({
+      identityService: { verifySession: () => ({ userId: 'msp-user', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'msp-user', status: 'active', sessionVersion: 1 }) },
+      repo: {
+        hasActiveMspAdminGrant: async () => admin,
+        findActiveDnsFilterOrganization: async () => '10222523',
+        recordSystemAudit: async (...args) => { audits.push(args); },
+      },
+      managementClient: { createNetwork: async (...args) => { calls.push(args); return { id: '501', name: 'Trial Site' }; } },
+      inventoryClient: {}, mailer: {}, portalBaseUrl: 'https://portal.example.test',
+    }));
+    const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}/api/secure-guard/admin/organizations/org-1/sites`;
+      const post = (body) => fetch(base, { method: 'POST', headers: { Cookie: 'secure_guard_session=test', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const missing = await post({ ...site, blockPageId: undefined });
+      assert.equal(missing.status, admin ? 400 : 403);
+      const globalPolicyGuess = await post({ ...site, policyIds: [] });
+      assert.equal(globalPolicyGuess.status, admin ? 400 : 403);
+      const invalidId = await post({ ...site, blockPageId: '402abc' });
+      assert.equal(invalidId.status, admin ? 400 : 403);
+      const overflowId = await post({ ...site, blockPageId: '9999999999999999999999' });
+      assert.equal(overflowId.status, admin ? 400 : 403);
+      assert.equal(calls.length, 0);
+      const created = await post(site);
+      assert.equal(created.status, admin ? 201 : 403);
+      if (admin) {
+        assert.deepEqual(await created.json(), { id: '501', name: 'Trial Site' });
+        assert.deepEqual(calls, [['10222523', site]]);
+        assert.equal(audits.length, 1);
+        assert.equal(audits[0][1], 'site.created');
+      } else assert.equal(calls.length, 0);
+    } finally { await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve())); }
+  }
+});
+
+test('Site creation returns an unresolved outcome without a retry when read-back fails', async () => {
+  let postCount = 0; const audits = [];
+  const app = express(); app.use(express.json()); app.use(cookieParser());
+  app.use('/api/secure-guard', createSecureGuardRouter({
+    identityService: { verifySession: () => ({ userId: 'msp-user', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'msp-user', status: 'active', sessionVersion: 1 }) },
+    repo: { hasActiveMspAdminGrant: async () => true, findActiveDnsFilterOrganization: async () => '10222523', recordSystemAudit: async (...args) => { audits.push(args); } },
+    managementClient: { createNetwork: async () => { postCount++; throw new Error('GET read-back failed after POST'); } },
+    inventoryClient: {}, mailer: {}, portalBaseUrl: 'https://portal.example.test',
+  }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/secure-guard/admin/organizations/org-1/sites`, {
+      method: 'POST', headers: { Cookie: 'secure_guard_session=test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Trial Site', policyIds: ['301'], blockPageId: '402', externalId: 'sg-trial-10222523-1' }),
+    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: 'DNSFILTER_SITE_CREATE_OUTCOME_UNKNOWN' });
+    assert.equal(postCount, 1);
+    assert.equal(audits[0][1], 'site.creation.unresolved');
+  } finally { await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve())); }
+});
