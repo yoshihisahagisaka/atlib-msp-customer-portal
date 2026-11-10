@@ -353,3 +353,10 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - Docker CIイメージのBuild成功と脆弱性検査合格は、本番Artifact RegistryへのBuild/Push、専用SA/Secret IAM/Cloud SQL Client、Job作成、Job実行の承認を意味しない。
 - 合成Secret mountはCloud Runの実際のSecret Manager/IAM、volume設定、Cloud SQL socket疎通の実環境確認に代わらない。実行前のJob export/Image Digest/権限差分二者レビュー、DB statement auditのRead-only確認、担当者・復旧責任者、Cloud SQL/Portal/PPAP正常性Gateが必要。
 - 本変更には本番GCP、Cloud SQL、Secret、IAM、Cloud Run、Stage A/B/Final verify、LOGIN、Source Inventory、Migrationの実行を含めない。**Production No-Go / Draft PR #5を維持する。**
+
+## 2026-11-10 次の本番Gateに向けた審査票（文書化のみ）
+
+- [`SECURE_GUARD_SOURCE_INVENTORY_PRODUCTION_PREFLIGHT_20261110.md`](SECURE_GUARD_SOURCE_INVENTORY_PRODUCTION_PREFLIGHT_20261110.md)に、P0〜P6の個別承認境界、監査・正常性のRead-only収集、専用SA/IAM/Jobの固定差分、Stage A/Bと復旧責任分界、二者レビューと結果不明STOPを整理した。
+- Cloud Run Jobs Executorはoverride権限がない一方、同じJobを再実行できる`run.jobs.run`を持つため、P4までは付与せず、実行後の権限回収も別審査とする。固定runnerの`APPROVED_ONCE`検査のみで人的な単発承認を代替しない。
+- DB statement auditはCloud SQL側の`cloudsql.enable_pgaudit`・extension・有効`pgaudit.log`・Cloud Logging Data Access可視性の実測が必要。pgAuditを新規有効化する場合、インスタンス再起動を伴う本番変更として審査から分離する。
+- 審査票はGo・配置・実行の承認を与えない。本番GCP、Cloud SQL、IAM、Secret、Job、Stage A/B、LOGIN、Source Inventory、Migration変更0件。**Production No-Go / Draft PR維持。**
