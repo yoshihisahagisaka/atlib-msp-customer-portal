@@ -115,12 +115,40 @@ test('Stage B unknown result is fixed-code, secret-free and never retried', asyn
   assert.deepEqual(h.logs.map(JSON.parse).map(({ status }) => status), ['ENTER', 'STOP']);
 });
 
-test('Stage B workload image contains only the fixed runner contract', () => {
+test('Stage B workload image pins supported Node 24 and contains only the fixed runner contract', () => {
   const dockerfile = readFileSync(resolve(__dirname,
     '../scripts/Dockerfile.secure-guard-source-inventory-stage-b'), 'utf8');
+  const deps = JSON.parse(readFileSync(resolve(__dirname,
+    '../scripts/secure-guard-stage-b/package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(resolve(__dirname,
+    '../scripts/secure-guard-stage-b/package-lock.json'), 'utf8'));
+  const ignore = readFileSync(resolve(__dirname,
+    '../scripts/Dockerfile.secure-guard-source-inventory-stage-b.dockerignore'), 'utf8');
+  assert.deepEqual(deps.dependencies, { pg: '8.22.0' });
+  assert.equal(deps.engines.node, '>=24 <25');
+  assert.deepEqual(lock.packages[''].dependencies, deps.dependencies);
+  assert.deepEqual(Object.keys(lock.packages).filter((name) => name.startsWith('node_modules/')).sort(),
+    ['pg', 'pg-cloudflare', 'pg-connection-string', 'pg-int8', 'pg-pool',
+      'pg-protocol', 'pg-types', 'pgpass', 'postgres-array', 'postgres-bytea',
+      'postgres-date', 'postgres-interval', 'split2', 'xtend']
+      .map((name) => `node_modules/${name}`).sort());
+  assert.match(dockerfile, /FROM node:24-bookworm-slim@sha256:[a-f0-9]{64} AS stage-b-deps/);
+  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs24-debian13@sha256:[a-f0-9]{64} AS stage-b-runtime/);
+  assert.match(dockerfile, /COPY scripts\/secure-guard-stage-b\/package\.json scripts\/secure-guard-stage-b\/package-lock\.json/);
+  assert.match(dockerfile, /RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund/);
+  assert.match(dockerfile, /COPY --from=stage-b-deps \/app\/node_modules \.\/node_modules/);
   assert.match(dockerfile, /COPY scripts\/secureGuardSourceInventoryStageBJob\.cjs/);
   assert.match(dockerfile, /COPY scripts\/secureGuardSourceInventoryRoleStageB\.sql/);
-  assert.match(dockerfile, /USER node/);
-  assert.match(dockerfile, /ENTRYPOINT \["node", "scripts\/secureGuardSourceInventoryStageBJob\.cjs"\]/);
-  assert.doesNotMatch(dockerfile, /COPY src|COPY migrations|CMD \["sh"/);
+  assert.match(dockerfile, /USER nonroot/);
+  assert.match(dockerfile, /CMD \["scripts\/secureGuardSourceInventoryStageBJob\.cjs"\]/);
+  assert.doesNotMatch(dockerfile, /node:20|COPY src|COPY migrations|CMD \["sh"|COPY package\.json package-lock\.json/);
+  assert.deepEqual(ignore.trim().split('\n'), [
+    '**',
+    '!scripts/',
+    '!scripts/secure-guard-stage-b/',
+    '!scripts/secure-guard-stage-b/package.json',
+    '!scripts/secure-guard-stage-b/package-lock.json',
+    '!scripts/secureGuardSourceInventoryStageBJob.cjs',
+    '!scripts/secureGuardSourceInventoryRoleStageB.sql',
+  ]);
 });

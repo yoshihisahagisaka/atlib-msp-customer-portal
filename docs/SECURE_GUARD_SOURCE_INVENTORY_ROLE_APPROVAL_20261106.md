@@ -315,3 +315,26 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - 専用imageのオフラインBuildは成功し、設定なし起動はSecretへ触れる前に`CONFIG_EXPLICIT_APPROVAL_REQUIRED`でSTOPした。既存lockfileのproduction依存についてnpm audit警告が出ているため、imageの脆弱性評価は本番Build前の残存Gate。自動`npm audit fix`や依存更新は今回行わない。
 - 本番Goには、専用SA / IAM方式、Job配置・実行担当者、実行時刻、Cloud SQL / service health Gate、DB statement auditの確認、Build / image digest、Job export、Secret Version 1 mount、復旧承認の確定が必要。
 - 本番Stage A / B / Final verify、Secret payload取得、IAM / Cloud Run変更、LOGIN有効化、Inventory、Migrationは未実施。**Production No-Go / PR Draftを維持する。**
+
+## 2026-11-10 Stage B専用イメージの依存分離・Runtime Hardening（オフライン）
+
+### 目的と変更境界
+
+- 統括レビューで指摘されたNode.js 20 EOLと、Portal全体のproduction依存をStage B Jobへ持ち込む問題を解消する。Stage B固定SQL、SHA-256、認証・ACL・トランザクション、Final verifyの保証境界は変更しない。
+- `scripts/Dockerfile.secure-guard-source-inventory-stage-b`はNode.js 24のDigest固定ビルドステージとDistroless Node.js 24のDigest固定実行ステージへ分離。実行イメージにはShell、npm、Portal/PPAPの業務コード、Migration、Inventoryを含めない。実行ユーザーは`nonroot`、固定CMDはStage B runnerのみ。
+- `scripts/secure-guard-stage-b/package.json`と専用lockfileを新設し、直接依存を`pg@8.22.0`のみに限定する。lockfileは既存Portal lockfileから同一の`pg`と推移依存のversion/integrityを抜き出したもので、Portal本体の依存は変更しない。
+- Dockerfile固有の`.dockerignore`でコンテキストを専用runner、固定SQL、最小依存manifest/lockfileに限定する。他のDockerfileのBuild対象は変更しない。
+- Stage B SQLは既存のDigest照合を維持する。Secretは`/var/run/secrets/portal-db-password/password`のファイルmountとし、環境変数・ログへの展開を行わない。
+
+### 追加CIの証明対象
+
+1. Node.js 24、非root UID、`pg`読込み成功、Express / Puppeteer / bcrypt / Nodemailer不存在を実行イメージ内部で確認する。
+2. 本物の認証情報を使わない合成ファイル（0444）をroot所有相当のマウントで読み、`--network none`・Cloud SQL socket未接続状態で`ENTER`後に固定`STAGE_B_RESULT_UNKNOWN_OR_FAILED`となることを確認する。ファイル本文をログに出さない。
+3. TrivyをCommit固定のActionで実行し、実行イメージのOS/ライブラリの`CRITICAL,HIGH`を`ignore-unfixed=false`でFail-closedにする。スキャンが成功するまで脆弱性Gateは未解除とする。
+4. 既存の通常回帰・Migration型検査・PostgreSQL 16統合試験・Source Inventory否定試験・合成移送試験を維持する。
+
+### 本番境界と残存Gate
+
+- Docker CIイメージのBuild成功と脆弱性検査合格は、本番Artifact RegistryへのBuild/Push、専用SA/Secret IAM/Cloud SQL Client、Job作成、Job実行の承認を意味しない。
+- 合成Secret mountはCloud Runの実際のSecret Manager/IAM、volume設定、Cloud SQL socket疎通の実環境確認に代わらない。実行前のJob export/Image Digest/権限差分二者レビュー、DB statement auditのRead-only確認、担当者・復旧責任者、Cloud SQL/Portal/PPAP正常性Gateが必要。
+- 本変更には本番GCP、Cloud SQL、Secret、IAM、Cloud Run、Stage A/B/Final verify、LOGIN、Source Inventory、Migrationの実行を含めない。**Production No-Go / Draft PR #5を維持する。**

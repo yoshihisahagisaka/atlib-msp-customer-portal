@@ -1,0 +1,7 @@
+**
+!scripts/
+!scripts/secure-guard-stage-b/
+!scripts/secure-guard-stage-b/package.json
+!scripts/secure-guard-stage-b/package-lock.json
+!scripts/secureGuardSourceInventoryStageBJob.cjs
+!scripts/secureGuardSourceInventoryRoleStageB.sql
