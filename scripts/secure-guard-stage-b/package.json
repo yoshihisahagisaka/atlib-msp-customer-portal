@@ -1,0 +1,12 @@
+{
+  "name": "secure-guard-source-inventory-stage-b",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated dependency contract for the one-shot ledger owner GRANT runner",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "dependencies": {
+    "pg": "8.22.0"
+  }
+}

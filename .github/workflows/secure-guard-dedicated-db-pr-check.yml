@@ -1,0 +1,141 @@
+name: Secure Guard dedicated database offline checks
+
+on:
+  pull_request:
+    branches:
+      - feat/secure-guard-allocation-snapshot-20261104
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'scripts/secureGuardSourceInventory*'
+      - 'scripts/Dockerfile.secure-guard-source-inventory-stage-b'
+      - 'scripts/Dockerfile.secure-guard-source-inventory-stage-b.dockerignore'
+      - 'scripts/secure-guard-stage-b/**'
+      - 'package.json'
+      - 'tsconfig.secure-guard-migration.json'
+      - '.github/workflows/secure-guard-dedicated-db-pr-check.yml'
+  push:
+    branches:
+      - feat/secure-guard-shared-sql-db-prep-20261105
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local_ci_fixture_password_not_a_secret
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile and run offline tests
+        run: npm test
+      - name: Typecheck SG dedicated migration runner
+        run: npm run typecheck:secure-guard-migration
+      - name: Secure Guard isolated PostgreSQL 16 integration
+        run: npm run test:secure-guard-db-e2e
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy SG read-only inventory guard on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryReadOnly.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy Source Inventory NOLOGIN role bootstrap on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryRoleBootstrap.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Legacy Source Inventory two-stage role bootstrap on disposable PostgreSQL 16
+        run: node --test test/integration/secureGuardSourceInventoryRoleTwoStage.test.cjs
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Build fixed Stage B one-shot workload image
+        run: docker build -f scripts/Dockerfile.secure-guard-source-inventory-stage-b -t source-inventory-stage-b:ci .
+      - name: Verify isolated Stage B runtime and synthetic nonroot secret mount
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --read-only --entrypoint /nodejs/bin/node source-inventory-stage-b:ci -e '
+            const assert = require("node:assert/strict");
+            assert.match(process.version, /^v24\./);
+            assert.equal(process.getuid(), 65532);
+            assert.ok(require.resolve("pg"));
+            for (const dependency of ["express", "puppeteer", "bcrypt", "nodemailer"]) {
+              assert.throws(() => require.resolve(dependency), { code: "MODULE_NOT_FOUND" });
+            }
+          '
+          fixture_dir="$(mktemp -d)"
+          chmod 0755 "$fixture_dir"
+          printf 'synthetic-not-a-real-credential' > "$fixture_dir/password"
+          chmod 0444 "$fixture_dir/password"
+          if output="$(docker run --rm --read-only --network none \
+            --mount "type=bind,src=$fixture_dir,dst=/var/run/secrets/portal-db-password,readonly" \
+            -e SG_STAGE_B_EXPLICIT_APPROVAL=APPROVED_ONCE \
+            -e DB_NAME=msp_customer_portal \
+            -e DB_USER=portal_app \
+            -e CLOUD_SQL_INSTANCE=msp-zabbix:asia-northeast1:msp-customer-portal-db \
+            -e DB_PASSWORD_FILE=/var/run/secrets/portal-db-password/password \
+            source-inventory-stage-b:ci 2>&1)"; then
+            echo 'STOP: synthetic smoke unexpectedly succeeded'
+            exit 1
+          fi
+          echo "$output" | grep -F '"status":"ENTER"'
+          echo "$output" | grep -F '"code":"STAGE_B_RESULT_UNKNOWN_OR_FAILED"'
+          if echo "$output" | grep -F 'synthetic-not-a-real-credential'; then
+            echo 'STOP: fixture credential appeared in runtime output'
+            exit 1
+          fi
+      - name: Scan Stage B runtime image for Critical and High vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: 'v0.76.2'
+          image-ref: 'source-inventory-stage-b:ci'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+      - name: Synthetic legacy-to-SG data transfer rehearsal
+        run: npm run test:secure-guard-transfer-rehearsal
+        env:
+          CI: 'true'
+          NODE_ENV: 'test'
+          SECURE_GUARD_DB_E2E_ENABLED: 'true'
+          SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
+          SECURE_GUARD_DB_E2E_PORT: '55432'

@@ -1,0 +1,13 @@
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS stage-b-deps
+WORKDIR /app
+COPY scripts/secure-guard-stage-b/package.json scripts/secure-guard-stage-b/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM gcr.io/distroless/nodejs24-debian13@sha256:088a01637f22908632ba09018be2e0b516f2fa6f7869c191d29491139db43c78 AS stage-b-runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=stage-b-deps /app/node_modules ./node_modules
+COPY scripts/secureGuardSourceInventoryStageBJob.cjs ./scripts/
+COPY scripts/secureGuardSourceInventoryRoleStageB.sql ./scripts/
+USER nonroot
+CMD ["scripts/secureGuardSourceInventoryStageBJob.cjs"]
