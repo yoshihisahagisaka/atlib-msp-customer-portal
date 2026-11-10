@@ -360,3 +360,12 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - Cloud Run Jobs Executorはoverride権限がない一方、同じJobを再実行できる`run.jobs.run`を持つため、P4までは付与せず、実行後の権限回収も別審査とする。固定runnerの`APPROVED_ONCE`検査のみで人的な単発承認を代替しない。
 - DB statement auditはCloud SQL側の`cloudsql.enable_pgaudit`・extension・有効`pgaudit.log`・Cloud Logging Data Access可視性の実測が必要。pgAuditを新規有効化する場合、インスタンス再起動を伴う本番変更として審査から分離する。
 - 審査票はGo・配置・実行の承認を与えない。本番GCP、Cloud SQL、IAM、Secret、Job、Stage A/B、LOGIN、Source Inventory、Migration変更0件。**Production No-Go / Draft PR維持。**
+
+## 2026-11-10 P1 DB文監査STOPと代替監査B案（提案のみ）
+
+- 運用者のRead-only `gcloud.cmd`照合で、`msp-customer-portal-db`は`POSTGRES_16 / RUNNABLE`、`ZONAL`、Backup enabled（30件保持）、PITR enabled（7日）、自動ストレージ拡張有効、直近5件の自動Backupは`SUCCESSFUL`、直近10件のCloud SQL Operationsは`DONE`。復元実証・実行時点の健康状態は別途必要。
+- `settings.databaseFlags`が応答に表示されず、pgAuditのROLE文監査が成立する証拠はない。Cloud SQLで`cloudsql.enable_pgaudit`の変更はインスタンス再起動を伴うため、既存Portal/PPAP等と共有する本番DBの無断再起動はしない。**既存P1監査要件は未達=STOP**。
+- 統括が承認したのは、再起動不要の**B案を文書上で提案する作業のみ**。採用判断、DB文監査を代替する残余リスクの受容、本番P1解除、Stage A/Bの実施、IAM/Secret/Job配置・実行は未承認。
+- 詳細：[本番Bootstrap代替監査B案（2026-11-10）](SECURE_GUARD_SOURCE_INVENTORY_ALTERNATIVE_AUDIT_PROPOSAL_20261110.md)。Stage Aの管理操作記録とDB ACL before/after、Stage Bの固定SQL SHA / Job export / image digest / Execution / platform audit、独立Final verifyを連結する。**DBで実際に流れたSQL文を直接証明せず、他管理操作の不存在も保証しない。**
+- 正式採用には、適用範囲を本Bootstrapの一回限りとした監査契約の変更、証跡の責任者・原本/保持期間・二者レビュー、残余リスクの承認者、実行直前Gateが必要。その後もP2（資産作成のみ）、P3（Stage A）、P4（Stage B単発）、P5（独立検証）、P6（LOGIN/Inventory等）は別承認。
+- 今回は**Git文書更新のみ**。本番GCP/DB/Cloud Run/Secret/IAM/Stage A・B/Final verify/Source Inventory/Migration変更なし。**Production No-Go / Draft PR #5を維持**。
