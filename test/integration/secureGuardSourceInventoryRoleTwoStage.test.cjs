@@ -21,6 +21,17 @@ const reader = 'sg_source_inventory_ro_20261106';
 const executor = 'sg_stage_a_executor';
 const owner = 'portal_app';
 
+async function verifyDirectRuntimeState(client) {
+  const result = await client.query(finalVerify);
+  const results = Array.isArray(result) ? result : [result];
+  const evidence = results.find((item) => item.rows?.[0]?.direct_runtime_checks);
+  assert.deepEqual(evidence.rows[0], {
+    direct_runtime_checks: 'PASS',
+    password_null_runtime_status: 'NOT_DIRECTLY_VERIFIED',
+    password_null_assurance: 'STAGE_A_DDL_AND_POSTGRESQL16_CI',
+  });
+}
+
 async function roleState(client) {
   return (await client.query(`SELECT rolcanlogin,
     has_database_privilege($1, current_database(), 'CONNECT') AS db_connect,
@@ -72,6 +83,9 @@ test('PostgreSQL 16: two-stage Source Inventory bootstrap is fail-closed and rec
       await admin.query('REVOKE SELECT ON public.customer_organizations FROM PUBLIC');
 
       await stageAActor.query(stageA);
+      const passwordEvidence = (await admin.query(`SELECT rolpassword IS NULL AS password_is_null
+        FROM pg_authid WHERE rolname=$1`, [reader])).rows[0];
+      assert.deepEqual(passwordEvidence, { password_is_null: true });
       assert.deepEqual(await roleState(admin), {
         rolcanlogin: false,
         db_connect: true,
@@ -111,14 +125,16 @@ test('PostgreSQL 16: two-stage Source Inventory bootstrap is fail-closed and rec
       // An unknown result is inspected, never auto-granted again.
       await assert.rejects(stageBActor.query(stageB), /STOP_STAGE_B: ledger SELECT already present; inspect before retry/);
       await stageBActor.query('ROLLBACK');
-      await admin.query(finalVerify);
+      const executableFinalVerify = finalVerify.replace(/--.*$/gm, '');
+      assert.doesNotMatch(executableFinalVerify, /pg_authid|rolpassword/i);
+      await verifyDirectRuntimeState(admin);
 
       // Final verification fails closed on any unexpected business-table access.
       await admin.query(`GRANT SELECT ON public.customer_organizations TO ${reader}`);
       await assert.rejects(admin.query(finalVerify), /STOP_FINAL_VERIFY: unexpected effective privileges/);
       await admin.query('ROLLBACK');
       await admin.query(`REVOKE SELECT ON public.customer_organizations FROM ${reader}`);
-      await admin.query(finalVerify);
+      await verifyDirectRuntimeState(admin);
 
       // Recovery is deliberately actor-separated and performed in reverse order.
       await stageBActor.query(`REVOKE SELECT ON public.schema_migrations FROM ${reader}`);
@@ -152,4 +168,12 @@ test('PostgreSQL 16: two-stage Source Inventory bootstrap is fail-closed and rec
       await stageAActor.end();
       await admin.end();
     }
+
+    const cleanup = new Client({ ...base, database: 'postgres' });
+    await cleanup.connect();
+    try {
+      await cleanup.query('DROP DATABASE msp_customer_portal WITH (FORCE)');
+      await cleanup.query(`DROP ROLE ${executor}`);
+      await cleanup.query(`DROP ROLE ${owner}`);
+    } finally { await cleanup.end(); }
   });

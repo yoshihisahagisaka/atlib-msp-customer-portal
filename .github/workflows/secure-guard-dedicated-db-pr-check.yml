@@ -8,6 +8,8 @@ on:
       - 'src/**'
       - 'test/**'
       - 'migrations/**'
+      - 'scripts/secureGuardSourceInventory*'
+      - 'scripts/Dockerfile.secure-guard-source-inventory-stage-b'
       - 'package.json'
       - 'tsconfig.secure-guard-migration.json'
       - '.github/workflows/secure-guard-dedicated-db-pr-check.yml'
@@ -81,6 +83,8 @@ jobs:
           SECURE_GUARD_DB_E2E_ENABLED: 'true'
           SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
           SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Build fixed Stage B one-shot workload image
+        run: docker build -f scripts/Dockerfile.secure-guard-source-inventory-stage-b -t source-inventory-stage-b:ci .
       - name: Synthetic legacy-to-SG data transfer rehearsal
         run: npm run test:secure-guard-transfer-rehearsal
         env:

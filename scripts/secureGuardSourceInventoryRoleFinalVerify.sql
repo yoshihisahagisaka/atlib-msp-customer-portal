@@ -11,7 +11,6 @@ DECLARE
   reader constant text := 'sg_source_inventory_ro_20261106';
   owner_oid oid;
   reader_oid oid;
-  password_is_null boolean;
 BEGIN
   IF current_database() <> 'msp_customer_portal' THEN
     RAISE EXCEPTION 'STOP_FINAL_VERIFY: wrong Source Inventory database';
@@ -32,15 +31,6 @@ BEGIN
     AND NOT rolreplication AND NOT rolbypassrls;
   IF reader_oid IS NULL THEN
     RAISE EXCEPTION 'STOP_FINAL_VERIFY: role state missing or invalid';
-  END IF;
-  BEGIN
-    SELECT rolpassword IS NULL INTO password_is_null
-    FROM pg_authid WHERE oid = reader_oid;
-  EXCEPTION WHEN insufficient_privilege THEN
-    RAISE EXCEPTION 'STOP_FINAL_VERIFY: cannot verify PASSWORD NULL';
-  END;
-  IF password_is_null IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'STOP_FINAL_VERIFY: PASSWORD NULL contract violated';
   END IF;
   IF NOT has_database_privilege(reader, 'msp_customer_portal', 'CONNECT')
     OR NOT has_schema_privilege(reader, 'public', 'USAGE')
@@ -81,5 +71,14 @@ BEGIN
   END IF;
 END;
 $verify$;
+
+-- Cloud SQL's postgres role cannot read pg_authid.  Do not convert the
+-- masked pg_roles.rolpassword value into a false PASS.  PASSWORD NULL is an
+-- artifact/CI assurance from Stage A and is deliberately reported separately
+-- from the production-observable checks above.
+SELECT
+  'PASS'::text AS direct_runtime_checks,
+  'NOT_DIRECTLY_VERIFIED'::text AS password_null_runtime_status,
+  'STAGE_A_DDL_AND_POSTGRESQL16_CI'::text AS password_null_assurance;
 
 COMMIT;

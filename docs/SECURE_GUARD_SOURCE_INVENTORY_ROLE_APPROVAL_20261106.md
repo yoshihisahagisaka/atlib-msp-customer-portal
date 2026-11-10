@@ -264,3 +264,54 @@ ALTER ROLE sg_source_inventory_ro_20261106
 - `portal_app`もPASSWORD NULL検証主体として承認・立証されていない。権限付与、SET ROLE、別カタログのマスク値、認証試行による迂回は採用しない。
 - Stage Bには、`portal_app`を使う専用の資格情報非露出手順、実行責任者、監査方法、結果不明時の照合を別承認する必要がある。Final verifyには、PASSWORD NULLを権限拡張なしで証明する承認済み方式、または検証契約の設計変更とオフライン回帰試験が必要である。
 - 今回はrole作成、GRANT / REVOKE、DDL / DML、`portal_app`接続、Secret payload取得、Stage A / B / Final verify、Inventory、Migrationを実施していない。本番DBのRead-only transaction以外の変更0件、GCP変更0件。**Production No-Go / PR Draftを維持する。**
+
+## 2026-11-10 Decision: Stage B一時ワークロードとFinal verify保証境界
+
+### 決定
+
+- Stage Bは、通常Portalプロセスや管理VMの`.env`から実行せず、固定SQLだけを内包する一回限りのCloud Run Jobを本番候補とする。Jobの配置・IAM・実行は本書の実装完了によって承認されず、別の実行前Gateと統括承認を要する。
+- `portal_app`資格情報はLedger所有者としてStage Bの1文を実行するためだけに使い、Source InventoryのLOGIN主体にはしない。Secretは環境変数に展開せず、Secret Manager Version 1を専用volumeの`/var/run/secrets/portal-db-password/password`へmountする。runnerは値・driver error・接続文字列をログへ出さない。
+- Final verifyは、本番で直接観測できる項目と、Stage A DDLおよびPostgreSQL 16 CIで保証する項目を分離する。直接観測できないPASSWORD NULLをPASSと表示せず、`NOT_DIRECTLY_VERIFIED`と`STAGE_A_DDL_AND_POSTGRESQL16_CI`を返す。これはBootstrap全体の無条件PASSではない。
+
+### Stage B固定runner
+
+- `scripts/secureGuardSourceInventoryStageBJob.cjs`を追加した。DB名、DB user、Cloud SQL instance、Secret file path、明示承認値を固定値照合し、ずれがあればSecret読出し・接続前にSTOPする。
+- runnerが実行できるSQLは`secureGuardSourceInventoryRoleStageB.sql`だけであり、改行を正規化したSHA-256をコード内の承認値と照合する。任意SQL、CLI引数、fallback、別user、別DB、別instance、自動再試行を受け付けない。
+- SQLは既存どおり単一トランザクションで、事前Gate、`GRANT SELECT ON TABLE public.schema_migrations`の1文、grantor / 最小権限の事後検査、COMMITだけを実行する。query dispatch後の例外は`STAGE_B_RESULT_UNKNOWN_OR_FAILED`として固定STOPし、再送しない。
+- ログは固定event / ENTER / COMPLETE / STOP codeだけ。Cloud Runのexecution / task / image digest / timestampはplatformのresource labelとAdmin Activityで追跡する。Secret、SQL error、URL、接続文字列をアプリログへ含めない。
+- `scripts/Dockerfile.secure-guard-source-inventory-stage-b`はrunnerとStage B SQLだけをruntimeへ含め、非root userで固定ENTRYPOINTを実行する。通常Portal server、migration、Inventoryコードは含めない。
+
+### 本番候補構成とIAM境界（未適用）
+
+- 候補Job名は`secure-guard-source-inventory-stage-b-once`、regionは`asia-northeast1`。imageは検証済みdigest固定、Cloud SQL attachmentは`msp-zabbix:asia-northeast1:msp-customer-portal-db`、task 1、parallelism 1、max retries 0、短いtimeout、Schedulerなし、実行時overrideなしとする。
+- 推奨runtime identityは専用SA。`roles/cloudsql.client`と、`portal-db-password` Secret単位の`roles/secretmanager.secretAccessor`だけを付与する。既存Portal Runtime SAの流用はIAM変更を減らすが、既存の複数Secret accessとアプリ責務を一時管理Jobへ持ち込むため不採用候補とする。
+- 配置主体と実行主体を分ける。実行担当者にはJob単位の`roles/run.jobsExecutor`相当だけを候補とし、`run.jobs.runWithOverrides`、Job update、Service Account Userを与えない。Google公式では`run.jobs.run`と`run.jobs.runWithOverrides`は別permissionである。
+- Cloud Run JobのSecret volumeはJob runtime SAのSecret Accessorを必要とし、Cloud SQL接続はCloud SQL Clientを必要とする。根拠：[Cloud Run Job IAM permissions](https://cloud.google.com/run/docs/reference/iam/permissions)、[Cloud Run Job secrets](https://cloud.google.com/run/docs/configuring/jobs/secrets)、[Cloud SQL from Cloud Run](https://cloud.google.com/sql/docs/postgres/connect-run)。
+- 専用SA作成、Secret IAM、Cloud SQL Client、Job作成、Build / Push、Invoker付与はいずれも本番変更であり今回未実施。Project Owner等の上位権限保有者がJobやimageを変更できる残存管理リスクは、実行前のJob export / image digest / IAM差分照合と二者レビューで扱う。
+
+### 結果不明・監査・復旧
+
+- COMPLETE時も、別主体のFinal verifyでACLのgrantee / grantor、3権限、不要権限なしを確認するまで完了扱いしない。UNKNOWN時はJobを再実行せず、同じRead-only確認で「SELECTなし」「期待するowner-granted SELECTあり」「想定外ACL」のいずれかに分類する。
+- Cloud Run execution、Build ID、source SHA、image digest、Job export、Secret version参照、固定runner event、Final verify結果を一つの実行証跡として保全する。DB側のstatement auditが有効であることは未確認であり、実行前にログ設定をRead-only確認する。監査設定変更は別承認とする。
+- 復旧主体はLedger所有者`portal_app`。既存統合試験どおりLedger SELECTを先にREVOKEし、Stage A主体がUSAGE / CONNECTをREVOKEし、依存0件後にroleをDROPする。復旧用の任意SQL runnerや自動cleanupは作らず、各操作は別承認とする。
+
+### Final verifyの直接・間接保証
+
+| 項目 | 本番で直接検証 | 保証区分 |
+|---|---:|---|
+| NOLOGIN / NOINHERIT / 非SUPERUSER等のrole属性 | Yes (`pg_roles`) | Direct |
+| CONNECT / USAGE / Ledger SELECT | Yes | Direct |
+| Ledger grantor=`portal_app` / grantable=false | Yes (ACL) | Direct |
+| 業務表権限、DML / DDL、readerから他roleへのmembershipなし | Yes | Direct / fail-closed |
+| PASSWORD NULL | No (`postgres`は`pg_authid` SELECT不可) | Stage Aの固定DDL + PostgreSQL 16 CIによるIndirect |
+
+- Final verifyのdirect検査が通過すると`direct_runtime_checks=PASS`を返すが、同時に`password_null_runtime_status=NOT_DIRECTLY_VERIFIED`を必ず返す。運用記録は両方を保持し、単独のPASSへ要約しない。
+- CIはStage A後に権限のある使い捨てPostgreSQL 16主体で`pg_authid.rolpassword IS NULL=true`を実測する。本番では`pg_authid`権限追加、SET ROLE、マスク値解釈、認証試行による代替を行わない。
+
+### オフライン検証と残存Gate
+
+- 通常回帰試験はStage B runnerの固定SQL1回、設定drift事前拒否、SQL digest不一致、Secret空、query結果不明、秘密・driver error非出力、retry 0、専用Dockerfileを検証する。
+- PostgreSQL 16統合試験はStage A / B正常系、各事前STOP、Stage A中断、Stage B rollback / unknown再実行STOP、直接Final verify、想定外業務表権限STOP、逆順復旧を維持し、PASSWORD NULLのCI実測を追加する。
+- 専用imageのオフラインBuildは成功し、設定なし起動はSecretへ触れる前に`CONFIG_EXPLICIT_APPROVAL_REQUIRED`でSTOPした。既存lockfileのproduction依存についてnpm audit警告が出ているため、imageの脆弱性評価は本番Build前の残存Gate。自動`npm audit fix`や依存更新は今回行わない。
+- 本番Goには、専用SA / IAM方式、Job配置・実行担当者、実行時刻、Cloud SQL / service health Gate、DB statement auditの確認、Build / image digest、Job export、Secret Version 1 mount、復旧承認の確定が必要。
+- 本番Stage A / B / Final verify、Secret payload取得、IAM / Cloud Run変更、LOGIN有効化、Inventory、Migrationは未実施。**Production No-Go / PR Draftを維持する。**
