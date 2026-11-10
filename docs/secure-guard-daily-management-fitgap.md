@@ -276,3 +276,14 @@ try {
 3. DNSFilter Organization `10222523`のDELETE 1回。直前のMSP所属、Site／Agent／Subscription、Portal mapping、課金停止条件、C2 DryRunとUNKNOWN時の復旧を全て確認してから別承認を得る。
 
 以上はいずれも準備のみであり、2026-11-10の作業ではDNSFilterへの追加GET・変更要求、DB変更、Slack実送信を行っていない。
+
+### 2026-11-10 Windows GET専用preflight 実行結果
+
+- 対象Commit `72bdeedac6490c109031e182d241f04103970df7` を既存worktreeとは別のdetached worktreeへ取得した。
+- `scripts/secure-guard-trial-site-readonly-preflight.ps1` はCommit内blobとローカルファイルのGit object hashがともに `2c5d893a8c32a264be4f1832d59968440297f3f0` で一致した。
+- Windows PowerShell 5.1でスクリプトを1回だけ実行した。終了コードは1で、安全な構造化出力は生成されなかった。
+- スクリプトは秘密取得時の標準エラーと例外本文を意図的に破棄するため、Secret取得、最初のOrganization GET、またはそれ以前のどこで停止したかを今回の証跡だけでは確定できない。GET成功件数も未確認とする。
+- コード上のHTTPメソッドはGETだけであり、POST／PATCH／DELETE、Allow List変更、Slack送信は含まれない。API取得失敗時の自動再試行禁止に従い、同じpreflightを再実行していない。
+- Organization、Policy、Block Page、Siteの実測結果を取得できなかったため、Site作成に必要なPolicy ID、Block Page ID、既存Site重複、適用可能性は未解決のまま。Site POSTはSTOPを維持する。
+
+再開には、秘密を出力せずに固定STOPコードを確実に標準出力へ同期出力でき、Secret取得失敗と各GET境界を区別できる最小修正のレビューが必要である。修正版の実行は新たな1回として統括承認を得る。
