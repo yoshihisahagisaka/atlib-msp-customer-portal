@@ -66,7 +66,14 @@ test('trial Site preflight emits fixed failure stage without leaking HTTP errors
   assert.match(ps, /ConvertTo-Json -Compress -Depth 4/);
   assert.match(ps, /Pagination=\$\(if \(\$complete\)/);
   assert.doesNotMatch(ps, /Pagination=if\s*\(/);
-  assert.doesNotMatch(ps, /\$_\.(Exception|ErrorDetails|InvocationInfo)/);
+  assert.match(ps, /\$failure = \$_\.Exception/);
+  assert.match(ps, /\$statusCode -ge 100 -and \$statusCode -le 599/);
+  assert.match(ps, /'NO_HTTP_RESPONSE'/);
+  assert.match(ps, /'PARAMETER_BINDING'/);
+  assert.match(ps, /'TLS_FAILURE'/);
+  assert.match(ps, /'\/v1\/organizations\/\{0\}\?include_current_mrr=true' -f \$organizationId/);
+  assert.doesNotMatch(ps, /(?:Write-Output|Write-Host|\[Console\]::Out\.WriteLine)\([^)]*(?:\$failure(?!\w)|\$_\.(?:Exception|ErrorDetails|InvocationInfo))/);
+  assert.doesNotMatch(ps, /(?:Exception\.Message|Response\.Content|GetResponseStream\()/);
   assert.doesNotMatch(ps, /(Write-Output|Write-Host)\s+\$\s*(apiKey|headers|organization|response)/i);
 });
 

@@ -304,3 +304,10 @@ try {
 - 自動再試行は0回。Site POST、Allow List変更、Organization DELETE、Slack送信、GCP／DB変更は0件。Production No-Goを維持する。
 
 未解決事項は、Organization GETが完了しなかった原因の安全な切り分け、およびPolicy／Block Page／Site候補のRead-only取得である。今回の結果をSite作成承認とは扱わず、Site POSTはSTOPを維持する。
+
+### 2026-11-10 Organization GET失敗のオフラインFit/Gapと次回診断準備
+
+- 既存成功例の`https://api.dnsfilter.com/v1/organizations/{id}`、Bearer認証、Secret名／Versionを今回のコードと照合し、基本構成に差異は見つからなかった。`-MaximumRedirection 0`はPowerShell 5.1でリダイレクトを禁止する正式パラメータであり、今回の失敗原因とは断定しない。
+- `Stage=ORGANIZATION_GET`、`CompletedGetCount=0`だけでは、HTTP 401／403／404／429／5xx、タイムアウト、DNS／TLS／接続障害、PowerShellの引数エラー、応答解釈エラーを区別できない。
+- 診断スクリプトはOrganizationのURIを`-f`書式で明示的に生成し、失敗時に`HttpStatus`（100〜599または`NO_HTTP_RESPONSE`）と許可済み固定`FailureClass`だけを追加出力する。Secret、Authorization、URI、HTTP本文、例外本文、環境情報は出力しない。
+- **この修正はオフラインのみ。** Windows PowerShell 5.1構文解析とCommit照合の後、追加の実機GETは統括の別承認が必要。今回の承認済み1回を自動延長せず、Site POST／Allow List／DELETEはSTOPとする。

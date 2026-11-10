@@ -52,7 +52,8 @@ try {
   $headers = @{ Authorization = "Bearer $apiKey"; Accept = 'application/json' }
 
   $stopStage = 'ORGANIZATION_GET'
-  $organization = Get-ReadOnlyDnsFilter -Path "/v1/organizations/$organizationId?include_current_mrr=true"
+  $organizationPath = '/v1/organizations/{0}?include_current_mrr=true' -f $organizationId
+  $organization = Get-ReadOnlyDnsFilter -Path $organizationPath
   $completedGetCount++
   $stopStage = 'ORGANIZATION_VALIDATE'
   if ($null -eq $organization.data -or [string]$organization.data.id -ne $organizationId -or
@@ -115,8 +116,30 @@ try {
     Note='Global Policy/Block Page applicability, Site duplicate name, SKU and billing terms require separate confirmation. POST remains STOP.'
   })
 } catch {
-  # Only fixed stage codes and a GET count are emitted. No exception/HTTP body/secret.
-  [Console]::Out.WriteLine('{"Check":"Gate","Result":"UNKNOWN_STOP","Stage":"' + $stopStage + '","CompletedGetCount":' + $completedGetCount + '}')
+  # Classify the failure without ever outputting an exception message, HTTP body or secret.
+  $httpStatus = 'NO_HTTP_RESPONSE'
+  $failureClass = 'UNKNOWN'
+  $failure = $_.Exception
+  if ($failure -is [System.Net.WebException]) {
+    $failureClass = 'WEB_EXCEPTION'
+    if ($failure.Status -eq [System.Net.WebExceptionStatus]::Timeout) { $failureClass = 'TIMEOUT' }
+    elseif ($failure.Status -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) { $failureClass = 'DNS_RESOLUTION' }
+    elseif ($failure.Status -eq [System.Net.WebExceptionStatus]::ConnectFailure) { $failureClass = 'CONNECT_FAILURE' }
+    elseif ($failure.Status -eq [System.Net.WebExceptionStatus]::TrustFailure -or
+            $failure.Status -eq [System.Net.WebExceptionStatus]::SecureChannelFailure) { $failureClass = 'TLS_FAILURE' }
+    if ($null -ne $failure.Response) {
+      try {
+        $statusCode = [int]$failure.Response.StatusCode
+        if ($statusCode -ge 100 -and $statusCode -le 599) { $httpStatus = [string]$statusCode }
+      } catch { }
+    }
+  } elseif ($failure -is [System.Management.Automation.ParameterBindingException]) {
+    $failureClass = 'PARAMETER_BINDING'
+  } elseif ($failure -is [System.ArgumentException]) {
+    $failureClass = 'ARGUMENT'
+  }
+  # Stage and class values originate from hard-coded branches, never raw error text.
+  [Console]::Out.WriteLine('{"Check":"Gate","Result":"UNKNOWN_STOP","Stage":"' + $stopStage + '","CompletedGetCount":' + $completedGetCount + ',"HttpStatus":"' + $httpStatus + '","FailureClass":"' + $failureClass + '"}')
   [Console]::Out.Flush()
   exit 1
 } finally {
