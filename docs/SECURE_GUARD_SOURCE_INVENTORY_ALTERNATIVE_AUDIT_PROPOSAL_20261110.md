@@ -108,3 +108,48 @@ Google Cloud公式では、`cloudsql.enable_pgaudit`フラグ変更はインス�
 | 実行権限 | **0件。この決裁はP2〜P6の実行を許可しない** |
 
 **次の工程：** 監査方式は正式採用済み。P1の人的統制・証跡の保全先/期間・復旧/稼働状態の未充足をRead-onlyで確認し、二者照合を準備する。条件が揃うまでProduction No-Goを維持し、P2〜P6は別承認する。
+
+## 8. 一人運用への限定変更案（2026-11-10・未承認）
+
+DNSFilter試用期限中の作業を簡素化するため、運用者が萩坂1名である現状に合わせ、上記の「二者照合」「別主体による独立Final verify」を次の自動照合へ置き換える案を記録する。これはDecision `SG-SOURCE-INV-AUDIT-B-20261110`の確定条件に対する**変更提案**であり、統括承認前は適用しない。P1はSTOP、Production No-Goを維持する。
+
+### 8.1 変更後も固定する証跡
+
+1. Stage A/Bごとに別の明示承認ID、対象commit、実行時刻を固定する。
+2. 実行対象SQLをSHA-256で固定し、Git上の対象ファイルと一致しなければSTOPする。
+3. Stage Bは検証済みImage Digestを固定し、タグだけでは実行しない。
+4. Job exportをハッシュ化し、runtime SA、Secret version、Cloud SQL接続、task 1、parallelism 1、retry 0、引数overrideなしを実行直前に自動照合する。
+5. Stage A/Bの前後で、role属性、role membership、Database/Schema/Ledger ACL、業務テーブル権限を定型Read-only出力へ正規化し、SHA-256と差分を保存する。
+6. Cloud Run Execution ID、固定ENTER/COMPLETE/STOP event、Cloud Audit Logs参照ID、Image Digest、SQL SHA-256、ACL before/after hashを同一の実行記録へ連結する。
+7. 結果不明、ログ欠損、ACL不一致、ハッシュ不一致、想定外権限を検出した場合は再実行・自動修復を禁止し、STOPする。
+
+自動照合は固定スクリプトの機械的再現性を高めるが、第三者による独立検証ではない。実行者本人が入力、実行、証跡選択、結果確認を担うため、誤操作・証跡選択誤り・同一主体による不正を独立に検出できない。
+
+### 8.2 追加で受容が必要な残余リスク
+
+- 実行者と確認者が同一となり、職務分離および第三者による牽制がない。
+- 自動照合コード自体の欠陥や、照合対象外の変更を同一担当者だけでは見逃す可能性がある。
+- Cloud Run/Cloud Audit Logs/ACLのいずれかが欠損した場合、別担当者の記録で補完できない。
+- 自動照合のPASSは「固定された観測項目が一致した」ことだけを示し、DBで実行されたSQL全文や第三者操作不存在を証明しない。
+
+### 8.3 一人運用での段階別Gate案
+
+| Gate | 萩坂が実施する内容 | 自動検査 | STOP条件 |
+|---|---|---|---|
+| P2 | SA/IAM、Build、Job作成の個別承認と配置 | commit/SQL/image/job export/IAMの固定値照合 | drift、権限過大、証跡欠損 |
+| P3 | Stage Aの別承認後に1回実行 | ACL before/after、NOLOGIN、CONNECT/USAGEのみ | Ledger SELECT付与、想定外権限、結果不明 |
+| P4 | Stage Bの別承認後に1回実行 | Execution、固定event、grantor、Ledger SELECTのみ | retry、ログ欠損、grantor/ACL不一致 |
+| P5 | Final verifyをRead-only実行 | 3権限、不要権限/membershipなし、直接/間接保証の区分 | 1件でも不一致または未確認 |
+
+段階を同一担当者が実施しても、承認IDと実行時刻は分離し、前段の成功を次段の承認として流用しない。`PASSWORD NULL`は従来どおり本番直接確認済みとせず、Stage A DDLとPostgreSQL 16 CIによる間接保証として記録する。
+
+### 8.4 試用期限のクリティカルパスから外す項目
+
+新規監査Bucket、400日保持への変更、復元試験は今回の試用期限内作業には含めない。既存の`_Required` 400日（管理操作）と`_Default` 90日（通常ログ）を利用候補とするが、実行証跡の保全先・保持期間・アクセス権を統括が承認するまではP1をPASSにしない。復元試験未実施も残余リスクとして維持する。
+
+### 8.5 承認待ち
+
+- 本案の採否と追加残余リスクの受容者：萩坂（統括）
+- P1状態：**STOP継続**
+- P2〜P6：**未承認・No-Go継続**
+- 本案により許可されるGCP/DB操作：**0件**

@@ -128,6 +128,10 @@ password_null_assurance=STAGE_A_DDL_AND_POSTGRESQL16_CI
 
 **結論：P0のみ実装・CI上PASS。監査方式B案は本一回限りで採用済みだが、P1の人的統制/保全/復旧/最新正常性Gateが未成立でSTOP。P2〜P4の個別承認、P5の本番実測は未成立。Production No-Goを維持する。**
 
+### 一人運用への変更提案（未承認）
+
+運用者が萩坂1名である現状に対し、二者照合・独立Final verifyを、固定SQL SHA-256、固定Image Digest、Job export、実行前後ACL、Cloud Run Execution/監査ログを連結した自動照合へ置き換える案を[代替監査B案の第8節](SECURE_GUARD_SOURCE_INVENTORY_ALTERNATIVE_AUDIT_PROPOSAL_20261110.md#8-一人運用への限定変更案2026-11-10未承認)に記録した。自動照合は第三者検証ではなく、職務分離欠如と同一担当者による見落としを追加残余リスクとする。統括承認前は本表のP1 STOP、P2〜P6 No-Go、Production No-Goを変更しない。
+
 ## 7. 2026-11-10 運用者Read-only確認とB案の採用決定（P1 STOP維持）
 
 - `gcloud.cmd sql instances describe`：`POSTGRES_16` / `RUNNABLE`。`settings.databaseFlags`は返却JSONに現れず、`cloudsql.enable_pgaudit=on`の証拠なし。**DB文単位監査GateはSTOP**。pgAuditのDB内extension・`pgaudit.log`・ログ配送は本確認だけでは立証できない。
