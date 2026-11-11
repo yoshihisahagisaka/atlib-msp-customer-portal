@@ -27,6 +27,35 @@ test('MSP organization inventory is available only to an explicit MSP grant', as
   });
 });
 
+test('MSP auto-sync requires an MSP grant, rejects supplied IDs, and never writes when upstream GET fails', async () => {
+  for (const mode of ['non-admin', 'supplied-ids', 'upstream-failure', 'empty-success']) {
+    let upstreamCalls = 0; let databaseWrites = 0;
+    const app = express(); app.use(express.json()); app.use(cookieParser());
+    app.use('/api/secure-guard', createSecureGuardRouter({
+      identityService: { verifySession: () => ({ userId: 'msp-user', sessionVersion: 1 }), verifyActiveSession: async () => ({ id: 'msp-user', status: 'active', sessionVersion: 1 }) },
+      repo: {
+        hasActiveMspAdminGrant: async () => mode !== 'non-admin',
+        listManagedOrganizations: async () => [],
+        createManagedOrganization: async () => { databaseWrites++; throw new Error('Unexpected local write'); },
+        recordSystemAudit: async () => { databaseWrites++; },
+      },
+      managementClient: { listOrganizations: async () => { upstreamCalls++; if (mode === 'upstream-failure') throw new Error('page 2 failed'); return []; } },
+      inventoryClient: {}, mailer: {}, portalBaseUrl: 'https://portal.example.test',
+    }));
+    const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/api/secure-guard/admin/dnsfilter/organizations/sync`, {
+        method: 'POST', headers: { Cookie: 'secure_guard_session=test', 'Content-Type': 'application/json' },
+        body: mode === 'supplied-ids' ? JSON.stringify({ organizationIds: ['10222523'] }) : '{}',
+      });
+      assert.equal(response.status, mode === 'non-admin' ? 403 : mode === 'supplied-ids' ? 400 : mode === 'upstream-failure' ? 502 : 200);
+      assert.equal(upstreamCalls, ['non-admin', 'supplied-ids'].includes(mode) ? 0 : 1);
+      assert.equal(databaseWrites, 0);
+      if (mode === 'empty-success') assert.deepEqual((await response.json()).sync, { imported: 0, skipped: 0, failed: 0, needsReview: 0, issues: [] });
+    } finally { await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve())); }
+  }
+});
+
 test('management screen never contains an API-key input or secret API route', () => {
   const fs = require('node:fs'); const path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'secure-guard-admin.html'), 'utf8');
@@ -34,12 +63,11 @@ test('management screen never contains an API-key input or secret API route', ()
   assert.doesNotMatch(html, /type="password"/); assert.doesNotMatch(routes, /dnsfilter-key/);
 });
 
-test('MSP Site form keeps verified Global Policy candidates available for the prior PoC configuration', () => {
+test('MSP normal UI no longer asks operators to choose Global Policy or Block Page IDs', () => {
   const fs = require('node:fs'); const path = require('node:path');
-  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'secureGuard.js'), 'utf8');
-  assert.match(js, /select\.replaceChildren\(\.\.\.policies\.policies\.map\(/);
-  assert.doesNotMatch(js, /policies\.policies\.filter\(\(p\) => !p\.global\)/);
-  assert.match(js, /適用可否の事前確認必須/);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'secure-guard-admin.html'), 'utf8');
+  assert.doesNotMatch(html, /site-policy|site-block-page-id|site-external-id/);
+  assert.match(html, /managed-organization-select/);
 });
 
 test('trial Site preflight is restricted to one known Organization and GET-only requests', () => {

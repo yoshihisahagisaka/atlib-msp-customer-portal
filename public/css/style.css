@@ -13,6 +13,16 @@
   --color-muted: #6b7280;
 }
 
+.sg-admin-page { max-width: 1240px; }
+.sg-admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.sg-admin-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.sg-admin-heading .btn { flex-shrink: 0; }
+.sg-admin-customer { width: 100%; text-align: left; background: #fff; border: 1px solid var(--color-border); border-radius: 6px; padding: 0.8rem; margin: 0.35rem 0; cursor: pointer; }
+.sg-admin-customer[aria-pressed="true"] { border-color: var(--color-accent-dark); background: #eafbf6; }
+.sg-admin-customer:disabled { cursor: not-allowed; color: var(--color-muted); }
+.sg-admin-customer small { display: block; color: var(--color-muted); margin-top: 0.3rem; }
+@media (max-width: 820px) { .sg-admin-grid { grid-template-columns: 1fr; } .sg-admin-heading { flex-direction: column; } }
+
 * {
   box-sizing: border-box;
 }

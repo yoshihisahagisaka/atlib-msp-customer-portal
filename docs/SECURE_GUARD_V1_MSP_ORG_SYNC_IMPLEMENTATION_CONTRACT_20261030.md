@@ -1,5 +1,5 @@
 # Secure Guard v1｜MSP Organization自動同期・UI実装契約
-状態: 既存Decisionに基づく実装仕様。コード変更・HA未実施。
+状態: 2026-10-30時点の既存Decisionに基づく実装契約。2026-11-11の実装差分は末尾の追記を参照。
 基準: PR #3 HEAD ac47bb86c5db4ab8c2f6552f3788de2f87de8a06
 上位: DECISION_SECURE_GUARD_V1_SERVICE_LAUNCH_20261030.md
 
@@ -55,3 +55,10 @@ DNSFilter公式画面でOrganization/プランを登録後、Secure Guard MSP画
 
 ## 非対象
 DNSFilter Organization作成/削除、Subscription変更、Agent削除、MFA実装、課金計算、Scheduler/Webhook同期。別の確定仕様・工程で扱う。
+
+## 2026-11-11｜実装差分と検証境界
+- `src/services/secureGuardOrganizationSync.ts`を追加。既存のDNSFilter MSP子Organization全件GETと`createManagedOrganization`を組み合わせ、未連携のみ取込み、既存activeはskip、停止/矛盾/ローカルdraft/上流で見えない連携は要確認とする。並行時のDB unique競合は再照合し、完全一致のactiveのみskipする。
+- `POST /api/secure-guard/admin/dnsfilter/organizations/sync`を追加。MSP権限必須、任意IDを含むリクエスト拒否、上流全件取得失敗時はDB書込み前に502。取込み途中の失敗は成功件数・失敗件数を分離し、自動再試行しない。
+- MSP通常画面を専用`secureGuardAdmin.js`へ分離。初回/F5の1回同期、顧客一覧統合、選択されたローカルOrganizationに対する初期招待・Site一覧・ライセンス参照、失敗時の手動再同期、低頻度の監査/復旧領域を実装した。同期中は招待・数量更新を抑止。旧APIは他依存の確認前に削除しない。
+- 新規テストと既存回帰を含むTypeScriptビルド・Node自動試験はPASS。**実ブラウザHA、本番Cloud Run/Cloud SQL適用、DNSFilterへの実書込み、Production traffic切替は未実施**。実デプロイ承認・本番受入を意味しない。
+- Site/Agentの顧客画面拡張、端末アンインストール&削除、MFA、復旧、ホワイトリスト等は既定の後続工程。今回の同期実装を理由に既存PoCの再実施を要求しない。

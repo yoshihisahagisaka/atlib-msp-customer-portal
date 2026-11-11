@@ -14,6 +14,7 @@ import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
 import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
 import type { SecureGuardLicenseSlack } from '../services/secureGuardLicenseSlack';
+import { synchronizeManagedOrganizations } from '../services/secureGuardOrganizationSync';
 
 const membershipRoleSchema = z.enum(['org_admin', 'operator', 'viewer']);
 const invitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
@@ -179,6 +180,15 @@ export function createSecureGuardRouter(input: {
   router.get('/admin/audit', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => res.json({ events: await input.repo.listAuditEvents() }));
   router.get('/admin/dnsfilter/organizations', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => {
     try { res.json({ organizations: await management().listOrganizations() }); } catch { res.status(502).json({ error: 'DNSFILTER_UNAVAILABLE' }); }
+  });
+  router.post('/admin/dnsfilter/organizations/sync', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    // Complete the upstream read before any local write; do not accept arbitrary IDs from the client.
+    if (req.body && (typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).length > 0)) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    let remote: Array<{ id: string; name: string }>;
+    try { remote = await management().listOrganizations(); }
+    catch { return void res.status(502).json({ error: 'DNSFILTER_ORGANIZATION_SYNC_UNAVAILABLE' }); }
+    try { res.json(await synchronizeManagedOrganizations(input.repo, req.secureGuardUserId!, remote)); }
+    catch { res.status(500).json({ error: 'ORGANIZATION_SYNC_OUTCOME_UNKNOWN' }); }
   });
   router.post('/admin/dnsfilter/organizations', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = provisioningSchema.safeParse(req.body); if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });

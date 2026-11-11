@@ -353,3 +353,9 @@ try {
 - `70676`：External (Advanced)、302 Redirect URLは`https://www.atlib.jp/secure-guard/blocked/`、割当は3 Networks。URL到達性・画面表示は未検証。
 - `70675`：Hosted (Recommended)、Organization Nameは`atLIB Secure Guard`、Notice Email／カスタムロゴ未設定、Unassigned。独自デザインの中身が未設定であってもDNSFilterの既定Hosted表示はある。
 - `70675`／`70676`の`10222523`での選択・適用可否、Site POST後のread-back、外部URLの実機到達は未検証。**DNSFilter API書込みは実施せず、Site POST STOP、Production No-Goを維持**する。
+
+### 2026-11-11 補足｜過去のBlock Page PoC実績と今回の未確認事項を分離
+
+- **既存PoCの実績を引き継ぐ**：2026-10-17の実機PoCではExternal Block Page `70676`から`https://www.atlib.jp/secure-guard/blocked/`への302誘導、Phishingの日本語遮断表示、domain/categories引渡し、HTTPS証明書エラーなしをPASSとして記録済み（atlib-corporate-site PR #6／#7／#9関連記録）。本日ユーザー提供の画面でも同URLの日本語遮断表示を確認している。上の「URL到達性・画面表示は未検証」は**11-11の追加preflightで未再実施という作業記録**であり、過去PoCが未実施という意味ではない。再試験しない。
+- **依然未確認の差分**：今回の別試験Organization `10222523`へのGlobal設定共有・適用、当該Organizationの新規Site POST/read-back、Production運用の許可。過去の別OrganizationのPoC PASSをこの差分まで拡張しない。
+- **次の開発**：既合意順序どおりMSP Organization自動同期を実装（別途実装契約の末尾参照）。この実装はPoCを再実行せず、DNSFilter APIのGET contractを再利用する。
