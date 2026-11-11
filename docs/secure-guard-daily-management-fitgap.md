@@ -325,3 +325,17 @@ try {
 - 自動再試行は0回。Site POST、Allow List変更、Organization DELETE、Slack送信、GCP／DB変更は0件。Production No-Goを維持する。
 
 未解決事項は、Global Policy `1510300`の対象Organizationへの正式な適用可否、Block Page `70675`／`70676`の共有・指定可否、SKU／課金条件、作成時のSite名と`external_id`である。これらが確定するまでSite POSTはSTOPとする。
+
+### 2026-11-11 次工程｜Global適用確認・Billing確認・命名整理
+
+- **取得済みFactは再取得しない。** Organization `10222523`はMSP `11473`配下、Policy候補`1510300`、Block Page候補`70675`/`70676`、Site 0件・ページング完了は上記preflightで確定。GETの実行承認は今回の1回で消費済み。
+- 公式DNSFilter資料では、MSPのGlobal Filtering Policy／Global Block Pageは配下顧客へ適用できる。ただし、別Organization `10220948`が所有者であるという事実だけでは**各IDが実際にGlobal設定であること・`10222523`で選択可能であること**を確定できない。
+- 次の**手動Read-only確認**：DNSFilter MSP管理画面のGlobal Policies > Filteringで`1510300`のGlobal表示、Global Policies > Block Pagesで標準候補`70675`（必要に応じ`70676`）のGlobal表示を確認する。`10222523`のSite設定画面で選択可能性を確認する場合も**保存／追加を押さない**。対象IDと用途が一致するか照合し、画面・名称だけで推定しない。
+- 次の**手動Read-only確認**：DNSFilterのSubscriptions/Billingで`10222523`のPlan（Core/Plus）、Allocated Licenses、保存済み契約状態、課金開始条件を確認する。APIのSubscription relationship nullから無契約・無課金を推定しない。
+- **顧客別Allow Listは別Gate**：Global Policy `1510300`自体を変更すると他のOrganizationに影響する可能性がある。顧客単位の試験は、所有範囲と適用先を確定した顧客専用Policyを用意するまでSTOP。MSP Universal Listは使わない。
+- Site作成時の仮名称案：`aSG - Trial Site`、仮`external_id`案：`asg-trial-10222523`。実POSTで使う値は既存重複、対象IDの適用、Billing状態を確認した後、統括の個別承認票で固定する。
+- 名称整理の確定方針は`DECISION_SECURE_GUARD_V1_SERVICE_LAUNCH_20261030.md` §9。`aSG - ...`をDNSFilter内部名称に採用し、Naming Cleanupは実機E2E完了後・Production移行前の別作業とする。実変更・PR merge・Production No-Go解除は行わない。
+
+公式参照：
+- https://help.dnsfilter.com/hc/en-us/articles/1500008108702-Create-Global-Policies-to-use-in-any-MSP-Organization
+- https://help.dnsfilter.com/hc/en-us/articles/43809316077715-Sales-managed-MSP-subscription-management

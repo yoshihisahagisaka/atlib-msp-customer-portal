@@ -70,3 +70,11 @@
 ## 8. 実装・記録の境界
 - 本文は**決定事項の記録**。新規機能の実装、デプロイ、GCP/DB/DNSFilter操作、Production traffic変更を承認するものではない。
 - Git/Canonical/PR #3と解約PR #44の現行状態を照合し、Fit/Gapから再開。設計案と実測PASSを混同しない。
+
+## 9. 2026-11-11 追記｜DNSFilter内部リソースの命名規則
+- **対外的な製品名は「atLIB Secure Guard」を維持**し、DNSFilter管理画面内のPolicy、Block Page、Site等の管理名称に短縮接頭辞 `aSG - ` を使う。表示例は `aSG - Standard Security`。スペースを含む表記を統一する。
+- 標準本番用は用途名だけで識別する。検証専用のリソースには `(PoC)` または `(Test)` を末尾に付け、本番用を装わない。顧客固有リソースは必要に応じて顧客識別名を追加する。
+- 現時点のリネーム候補：Policy `1510300` → `aSG - Standard Security`、標準Block Page `70675` → `aSG - Standard Block Page`、検証用Block Page `70676` → `aSG - External Block Page (PoC)`。**すべて名称案であり、変更承認・適用確認を意味しない**。
+- DNSFilter Organization、Policy、Block Page、Siteの全件名称と用途を棚卸しし、**実機E2E検証完了後・Production移行前**にNaming Cleanupとして実施する。既存の試験用リソースを安易に本番用へ転用しない。
+- Global Policy／Global Block Pageは複数顧客へ適用され得るため、利用先・参照ID・監査/運用への影響を確認し、対象を固定した個別承認後に名前だけを変更する。ID、参照関係、Scope、`external_id`、顧客mappingを名称整理に便乗して変更しない。
+- DNSFilter管理画面でしか変更できない項目は、対象画面と手順をユーザーへ明示して手動変更を依頼する。現段階ではDNSFilter書込み、Site POST、Allow List変更、Organization DELETE、Slack送信、GCP/DB変更を承認しない。
