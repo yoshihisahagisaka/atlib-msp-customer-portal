@@ -311,3 +311,17 @@ try {
 - `Stage=ORGANIZATION_GET`、`CompletedGetCount=0`だけでは、HTTP 401／403／404／429／5xx、タイムアウト、DNS／TLS／接続障害、PowerShellの引数エラー、応答解釈エラーを区別できない。
 - 診断スクリプトはOrganizationのURIを`-f`書式で明示的に生成し、失敗時に`HttpStatus`（100〜599または`NO_HTTP_RESPONSE`）と許可済み固定`FailureClass`だけを追加出力する。Secret、Authorization、URI、HTTP本文、例外本文、環境情報は出力しない。
 - **この修正はオフラインのみ。** Windows PowerShell 5.1構文解析とCommit照合の後、追加の実機GETは統括の別承認が必要。今回の承認済み1回を自動延長せず、Site POST／Allow List／DELETEはSTOPとする。
+
+### 2026-11-11 分類強化版preflight 1回実行結果
+
+- 統括承認済みCommit `4e87d18b4fc8d242650497d33acdc895b9a6c7c0` を既存worktreeとは別のdetached worktreeへ取得した。
+- Commit blobとGit filter適用後の隔離ファイルはGit object hash `78ea99ce6eff9a89172d2671cf286189d96dac7d` で一致した。raw worktree hashとの差はCRLF／LF変換によるもので、Commit内容の不一致ではない。
+- Windows PowerShell `5.1.26100.9711`によるオフライン構文解析はエラー0件でPASSした。
+- 上記GateのPASS後、GET専用preflightを1回だけ実行した。終了コードは0、最終Gateは `INFORMATION_ONLY_SITE_POST_STOP`。成功経路のため `Stage`、`HttpStatus`、`FailureClass`は出力対象外。Organization、Policy、Block Page、Siteの4 GET完了を安全出力から確認した（`CompletedGetCount`フィールド自体は成功経路では未出力）。
+- Organization `10222523`はMSP `11473`所属一致、Subscription relationshipはnull。
+- Policy候補は1件：ID `1510300`、`atLIB Secure Guard - Standard Security`。所有Organizationは`10220948`で、Global Policy候補だが`10222523`への適用可能性は未検証。
+- Block Page候補は2件：ID `70676`（`atLIB Secure Guard - External Block Page PoC`）とID `70675`（`atLIB Secure Guard - Standard Block Page`）。いずれも所有Organizationは`10220948`で、`10222523`への適用可能性はUNKNOWN。
+- Siteは0件、ページング終端を確認した。
+- 自動再試行は0回。Site POST、Allow List変更、Organization DELETE、Slack送信、GCP／DB変更は0件。Production No-Goを維持する。
+
+未解決事項は、Global Policy `1510300`の対象Organizationへの正式な適用可否、Block Page `70675`／`70676`の共有・指定可否、SKU／課金条件、作成時のSite名と`external_id`である。これらが確定するまでSite POSTはSTOPとする。
