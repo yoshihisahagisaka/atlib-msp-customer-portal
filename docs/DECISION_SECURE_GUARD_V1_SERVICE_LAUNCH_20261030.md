@@ -85,3 +85,9 @@
 - Global PolicyとBlock Pageは現行画面でそれぞれ3 Sites／3 Networksに割当あり。検証用だけの依存関係であることを確認し、利用先を解除する前に削除しない。
 - `aSG - ...`の命名規則は**将来の本番用・残置承認済みリソース**へ適用する。削除予定の試用資産を名前だけ変えて本番用へ転用する前提にはしない（Policy `1510300`の試験中改名履歴は保持）。
 - この発言は**最終cleanupの方針承認**であり、DELETE/API一括実行の承認ではない。既存C2／Billing／Portal mapping／MSP親保護のGateと削除直前の個別承認を維持する。現時点で削除は0件。
+
+### 2026-11-11 実機での表示名変更（ユーザー操作）
+- DNSFilter MSPのGlobal Block Pages画面で、`70676`の表示名を **`aSG - External Block Page PoC`**、`70675`の表示名を **`aSG - Standard Block Page`** にユーザーが手動変更したことをスクリーンショットで確認。前記 `(PoC)` 付き表記は当初案であり、実機の現行名は括弧なし。
+- Policy `1510300`の手動変更後の表示名は **`aSG - Standard Security`**。いずれも今回変更されたのは名称のみで、ID、利用先、Page Type、Redirect URL、その他設定の変更報告はない。
+- `70676`はExternal redirect方式で3 Networksに割当、`70675`はHosted既定ページでUnassigned（画面確認時点）。`70675`に独自ロゴ／通知メールは未設定。Redirect先 `https://www.atlib.jp/secure-guard/blocked/` の到達・表示は未検証。
+- 試用資産は依然として最終cleanup候補。名称変更を本番転用の承認と解釈せず、Site POST／DELETE／Production移行のSTOPを維持する。

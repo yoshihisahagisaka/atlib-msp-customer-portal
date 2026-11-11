@@ -346,3 +346,10 @@ try {
 - 今回のGlobal Policy `1510300`、Global Block Page `70675`／`70676`も、検証用に作成した資産であれば**削除候補**。Globalであるだけで残置対象にはしない。試験中にPolicy表示名を`aSG - Standard Security`へ変更した事実と、Global資産を本番で再利用する承認は別である。
 - 削除前に各Org／Site／Agent／Global資産のID・所有・参照・Billing・Portal mappingを照合。3 Sites／3 Networksの依存先がすべて検証用であることを確認する。Global資産の所有Org `10220948`が親／NFRのどちらに当たるか未確定のため、Organization削除候補とみなさない。
 - **今回実施したのは方針記録のみ**。即時削除、Site POST、Allow List変更、GCP/DB/Slack変更、Production移行は未承認のまま。個別操作には別の対象固定・承認・安全停止を必要とする。
+
+### 2026-11-11 実機Global Block Pageの現行名称・設定確認
+
+- ユーザーのDNSFilter管理画面操作により、Block Page `70676`は`aSG - External Block Page PoC`、`70675`は`aSG - Standard Block Page`へ**名称のみ**変更済み。Policy `1510300`も先行して`aSG - Standard Security`へ変更済み。上記preflight節の旧名称は**取得時点の履歴**として保持する。
+- `70676`：External (Advanced)、302 Redirect URLは`https://www.atlib.jp/secure-guard/blocked/`、割当は3 Networks。URL到達性・画面表示は未検証。
+- `70675`：Hosted (Recommended)、Organization Nameは`atLIB Secure Guard`、Notice Email／カスタムロゴ未設定、Unassigned。独自デザインの中身が未設定であってもDNSFilterの既定Hosted表示はある。
+- `70675`／`70676`の`10222523`での選択・適用可否、Site POST後のread-back、外部URLの実機到達は未検証。**DNSFilter API書込みは実施せず、Site POST STOP、Production No-Goを維持**する。
