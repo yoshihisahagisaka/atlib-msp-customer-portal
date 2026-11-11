@@ -78,3 +78,10 @@
 - DNSFilter Organization、Policy、Block Page、Siteの全件名称と用途を棚卸しし、**実機E2E検証完了後・Production移行前**にNaming Cleanupとして実施する。既存の試験用リソースを安易に本番用へ転用しない。
 - Global Policy／Global Block Pageは複数顧客へ適用され得るため、利用先・参照ID・監査/運用への影響を確認し、対象を固定した個別承認後に名前だけを変更する。ID、参照関係、Scope、`external_id`、顧客mappingを名称整理に便乗して変更しない。
 - DNSFilter管理画面でしか変更できない項目は、対象画面と手順をユーザーへ明示して手動変更を依頼する。現段階ではDNSFilter書込み、Site POST、Allow List変更、Organization DELETE、Slack送信、GCP/DB変更を承認しない。
+
+### 2026-11-11 補正｜試用資産は名称変更ではなく最終削除の対象
+- ユーザー確認：**今回の検証用に作成したリソースは、実機E2E完了後すべて削除してよい**。`atLIB Inc.`の親MSPアカウント／必要な親アカウント基盤は維持する。「Globalである」という理由だけで検証用Policy／Block Pageを本番残置しない。
+- 検証用Organization（例：`10222523`、`10220954`）、Site、Agent、検証用Global Policy `1510300`、Global Block Page `70675`／`70676`などを**棚卸し候補**とする。各リソースの作成目的・所属・参照元・現在の使用先を確定してから、削除対象一覧を固定する。`10220948`はGlobal資産の所有Organizationであるため、親／NFRとの関係を特定するまではOrganization削除対象に含めない。
+- Global PolicyとBlock Pageは現行画面でそれぞれ3 Sites／3 Networksに割当あり。検証用だけの依存関係であることを確認し、利用先を解除する前に削除しない。
+- `aSG - ...`の命名規則は**将来の本番用・残置承認済みリソース**へ適用する。削除予定の試用資産を名前だけ変えて本番用へ転用する前提にはしない（Policy `1510300`の試験中改名履歴は保持）。
+- この発言は**最終cleanupの方針承認**であり、DELETE/API一括実行の承認ではない。既存C2／Billing／Portal mapping／MSP親保護のGateと削除直前の個別承認を維持する。現時点で削除は0件。

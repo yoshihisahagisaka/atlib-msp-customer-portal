@@ -339,3 +339,10 @@ try {
 公式参照：
 - https://help.dnsfilter.com/hc/en-us/articles/1500008108702-Create-Global-Policies-to-use-in-any-MSP-Organization
 - https://help.dnsfilter.com/hc/en-us/articles/43809316077715-Sales-managed-MSP-subscription-management
+
+### 2026-11-11 検証資産の最終cleanup範囲の補正
+
+- ユーザー方針：検証中の割当・利用数の変動は個々に追跡せず、E2E完了後は**検証用に作成したものを全件整理・削除**。`atLIB Inc.`の親MSPアカウントは維持する。
+- 今回のGlobal Policy `1510300`、Global Block Page `70675`／`70676`も、検証用に作成した資産であれば**削除候補**。Globalであるだけで残置対象にはしない。試験中にPolicy表示名を`aSG - Standard Security`へ変更した事実と、Global資産を本番で再利用する承認は別である。
+- 削除前に各Org／Site／Agent／Global資産のID・所有・参照・Billing・Portal mappingを照合。3 Sites／3 Networksの依存先がすべて検証用であることを確認する。Global資産の所有Org `10220948`が親／NFRのどちらに当たるか未確定のため、Organization削除候補とみなさない。
+- **今回実施したのは方針記録のみ**。即時削除、Site POST、Allow List変更、GCP/DB/Slack変更、Production移行は未承認のまま。個別操作には別の対象固定・承認・安全停止を必要とする。
