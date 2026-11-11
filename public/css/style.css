@@ -50,6 +50,11 @@
 .sg-home-agent-detail dl { display: grid; grid-template-columns: minmax(90px, 1fr) 2fr; margin: 0; gap: 0.5rem; font-size: 0.88rem; }
 .sg-home-agent-detail dt { color: var(--color-muted); }
 .sg-home-agent-detail dd { margin: 0; overflow-wrap: anywhere; }
+.sg-home-uninstall { border-top: 1px solid var(--color-border); margin-top: 1rem; padding-top: 0.85rem; }
+.sg-home-uninstall label { display: block; margin: 0.75rem 0; }
+.sg-home-uninstall label input[type="text"] { display: block; width: 100%; margin-top: 0.3rem; }
+.sg-home-uninstall-ack { display: flex !important; gap: 0.55rem; align-items: flex-start; }
+.sg-home-uninstall-ack input { flex: none; margin-top: 0.22rem; }
 .sg-home-guidance { background: #eafbf6; color: var(--color-primary); border-left: 3px solid var(--color-accent); padding: 0.85rem; margin: 0.8rem 0 1rem; line-height: 1.6; }
 .sg-home-invite { display: grid; grid-template-columns: minmax(200px, 2fr) minmax(140px, 1fr) auto; align-items: end; gap: 0.75rem; padding-top: 1.2rem; }
 .sg-home-invite label { margin: 0; }

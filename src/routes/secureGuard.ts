@@ -11,6 +11,7 @@ import type { Mailer } from '../services/mailer';
 import type { SecureGuardIdentityService } from '../services/secureGuardIdentityService';
 import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
+import { DnsFilterAgentUninstallClient } from '../services/dnsFilterAgentUninstallClient';
 import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
 import type { SecureGuardLicenseSlack } from '../services/secureGuardLicenseSlack';
@@ -38,6 +39,13 @@ const networkSchema = z.object({
 });
 const recoverySchema = z.object({ dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const licenseAllocationSchema = z.object({ allocatedLicenses: z.number().int().min(0).max(10_000_000) });
+const agentUuidSchema = z.string().uuid();
+const agentUninstallSchema = z.object({
+  siteId: networkIdSchema,
+  hostname: z.string().min(1).max(255),
+  confirmHostname: z.string().min(1).max(255),
+  acknowledgeCommunicationRisk: z.literal(true),
+}).strict();
 
 function toError(error: unknown, res: { status: (code: number) => { json: (value: unknown) => void } }): boolean {
   if (!(error instanceof SecureGuardConflictError)) return false;
@@ -58,11 +66,15 @@ export function createSecureGuardRouter(input: {
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
   licenseAlertSlack?: SecureGuardLicenseSlack;
+  agentUninstallClient?: DnsFilterAgentUninstallClient;
+  agentUninstallEnabled?: boolean;
 }): Router {
   const router = Router();
   const requireIdentity = requireSecureGuardIdentity(input.identityService);
   const requireCustomerScope = requireSecureGuardCustomerScope(input.repo);
   const management = () => { if (!input.managementClient) throw new DnsFilterManagementError('DNSFILTER_UNAVAILABLE'); return input.managementClient; };
+  // A deployment flag, a configured server-only client and the Migration gate are all required.
+  const agentUninstallReady = Boolean(input.agentUninstallEnabled && input.agentUninstallClient?.isConfigured());
 
   const loadInventory = async (customerOrganizationId: string): Promise<SecureGuardInventory | null> => {
     try {
@@ -243,6 +255,7 @@ export function createSecureGuardRouter(input: {
     res.json({
       organization: { name: scope.organizationName },
       scope: { membershipId: scope.membershipId, role: scope.role },
+      capabilities: { agentQueuedUninstall: agentUninstallReady && (scope.role === 'org_admin' || scope.role === 'operator') },
       fetchedAt: inventory.fetchedAt,
       siteCount: inventory.sites.length,
       agentCount: inventory.agents.length,
@@ -268,6 +281,60 @@ export function createSecureGuardRouter(input: {
       return;
     }
     res.json({ fetchedAt: inventory.fetchedAt, agents: inventory.agents });
+  });
+
+  router.get('/agents/:agentId/uninstall-status', requireIdentity, requireCustomerScope, async (req, res) => {
+    const parsed = agentUuidSchema.safeParse(req.params.agentId);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_AGENT_ID' });
+    try {
+      const claim = await input.repo.getAgentUninstallClaim(req.secureGuardScope!.customerOrganizationId, parsed.data);
+      res.json({ claim });
+    } catch { res.status(503).json({ error: 'AGENT_UNINSTALL_STATUS_UNAVAILABLE' }); }
+  });
+
+  router.post('/agents/:agentId/queued-uninstall', requireIdentity, requireCustomerScope, async (req, res) => {
+    if (!agentUninstallReady) return void res.status(503).json({ error: 'AGENT_UNINSTALL_NOT_ENABLED' });
+    const scope = req.secureGuardScope!;
+    if (scope.role !== 'org_admin' && scope.role !== 'operator') return void res.status(403).json({ error: 'CUSTOMER_SCOPE_DENIED' });
+    const agentId = agentUuidSchema.safeParse(req.params.agentId);
+    const body = agentUninstallSchema.safeParse(req.body);
+    if (!agentId.success || !body.success || body.data.hostname !== body.data.confirmHostname) {
+      return void res.status(400).json({ error: 'AGENT_CONFIRMATION_MISMATCH' });
+    }
+    let dnsfilterOrganizationId: string | null;
+    let inventory: SecureGuardInventory;
+    try {
+      dnsfilterOrganizationId = await input.repo.findActiveDnsFilterOrganization(scope.customerOrganizationId);
+      if (!dnsfilterOrganizationId) return void res.status(409).json({ error: 'AGENT_SCOPE_UNAVAILABLE' });
+      // Fresh complete cross-source inventory; never trust an Agent UUID, Site or hostname from a browser alone.
+      inventory = await input.inventoryClient.getInventory(dnsfilterOrganizationId);
+    } catch { return void res.status(503).json({ error: 'AGENT_PREFLIGHT_UNAVAILABLE' }); }
+    const matches = inventory.agents.filter((agent) => agent.id.toLowerCase() === agentId.data.toLowerCase());
+    if (matches.length !== 1 || matches[0]!.siteId !== body.data.siteId || matches[0]!.hostname !== body.data.hostname
+      || !inventory.sites.some((site) => site.id === body.data.siteId)) {
+      return void res.status(409).json({ error: 'AGENT_TARGET_CHANGED_REFRESH_REQUIRED' });
+    }
+    const operationId = randomUUID();
+    try {
+      const claim = await input.repo.claimAgentUninstall({ operationId, actorUserId: req.secureGuardUserId!,
+        scope, dnsfilterOrganizationId, agentUuid: agentId.data, siteId: body.data.siteId, hostname: body.data.hostname });
+      if (claim === 'denied') return void res.status(403).json({ error: 'CUSTOMER_SCOPE_DENIED' });
+      if (claim === 'duplicate') return void res.status(409).json({ error: 'AGENT_UNINSTALL_ALREADY_CLAIMED_NO_RETRY' });
+    } catch {
+      // No committed claim -> no HTTP DELETE. A DB COMMIT acknowledgement may itself be ambiguous:
+      // fail closed; later calls can only proceed if no claim exists, never blindly replay here.
+      return void res.status(503).json({ error: 'AGENT_UNINSTALL_CLAIM_UNAVAILABLE_NO_RETRY' });
+    }
+    try {
+      await input.agentUninstallClient!.requestQueuedUninstall(agentId.data);
+      const recorded = await input.repo.finishAgentUninstall(operationId, req.secureGuardUserId!, scope, 'accepted');
+      if (!recorded) throw new Error('AGENT_UNINSTALL_RECORD_NOT_CONFIRMED');
+      return void res.status(202).json({ operationId, status: 'accepted', deviceUninstallCompleted: false });
+    } catch {
+      // Claim remains forever: 204 response loss, API failure, timeout and DB failure all mean NO RETRY.
+      await input.repo.finishAgentUninstall(operationId, req.secureGuardUserId!, scope, 'unknown').catch(() => undefined);
+      return void res.status(503).json({ error: 'AGENT_UNINSTALL_OUTCOME_UNKNOWN_NO_RETRY', operationId });
+    }
   });
 
   router.get('/memberships', requireIdentity, requireCustomerScope, async (req, res) => {

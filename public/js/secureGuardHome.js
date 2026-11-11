@@ -5,6 +5,8 @@ const sgHomeRoles = { org_admin: '管理者', operator: '運用者', viewer: '�
 let sgHomeMembership = null;
 let sgHomeOverview = null;
 let sgHomeSelectedAgentId = null;
+let sgHomeUninstallSequence = 0;
+const sgHomeUninstallAttempts = new Set();
 let sgHomeInventorySequence = 0;
 let sgHomeMembershipSequence = 0;
 let sgHomeInvitationAttempted = false;
@@ -35,7 +37,9 @@ function sgHomeCell(value) {
 function sgHomeClearInventory() {
   sgHomeOverview = null;
   sgHomeSelectedAgentId = null;
+  ++sgHomeUninstallSequence;
   sgHomeNode('agent-detail').hidden = true;
+  sgHomeNode('agent-uninstall-controls').hidden = true;
   for (const id of ['agent-count', 'protected-count', 'other-count', 'site-count']) sgHomeStatus(id, '—');
   sgHomeStatus('fetched-at', 'データ未取得');
   sgHomeNode('agents').replaceChildren();
@@ -67,6 +71,7 @@ function sgHomeDrawAgents() {
       sgHomeStatus('detail-status', agent.status);
       sgHomeStatus('detail-agent-state', agent.agentState);
       sgHomeNode('agent-detail').hidden = false;
+      sgHomePrepareUninstall(agent);
       sgHomeDrawAgents();
     });
     const actionCell = document.createElement('td'); actionCell.append(detailButton);
@@ -86,7 +91,9 @@ function sgHomeDrawAgents() {
 function sgHomeDrawInventory(overview) {
   sgHomeOverview = overview;
   sgHomeSelectedAgentId = null;
+  ++sgHomeUninstallSequence;
   sgHomeNode('agent-detail').hidden = true;
+  sgHomeNode('agent-uninstall-controls').hidden = true;
   const protectedCount = overview.agents.filter((agent) => agent.status === 'active' && agent.agentState === 'protected').length;
   sgHomeStatus('organization-name', overview.organization.name);
   sgHomeStatus('role', `ご利用権限：${sgHomeRoles[overview.scope.role] || overview.scope.role}`);
@@ -104,6 +111,73 @@ function sgHomeDrawInventory(overview) {
   sgHomeStatus('sites-status', siteNodes.length ? '' : '登録済みSiteはありません。');
   sgHomeDrawAgents();
 }
+
+async function sgHomePrepareUninstall(agent) {
+  const controls = sgHomeNode('agent-uninstall-controls');
+  const allowed = sgHomeOverview?.capabilities?.agentQueuedUninstall === true
+    && (sgHomeMembership?.role === 'org_admin' || sgHomeMembership?.role === 'operator');
+  const sequence = ++sgHomeUninstallSequence;
+  controls.hidden = !allowed;
+  if (!allowed) return;
+  const membershipId = sgHomeMembership.membershipId;
+  const button = sgHomeNode('uninstall-request');
+  sgHomeNode('uninstall-confirm-hostname').value = '';
+  sgHomeNode('uninstall-ack').checked = false;
+  button.disabled = true;
+  sgHomeStatus('uninstall-status', '過去の操作記録を確認しています。');
+  const attemptKey = `${membershipId}:${agent.id}`;
+  if (sgHomeUninstallAttempts.has(attemptKey)) {
+    sgHomeStatus('uninstall-status', '操作結果が確定していません。管理者に確認するまで再送しないでください。');
+    return;
+  }
+  try {
+    const { claim } = await sgHomeFetch(`/agents/${encodeURIComponent(agent.id)}/uninstall-status`);
+    if (sequence !== sgHomeUninstallSequence || membershipId !== sgHomeMembership?.membershipId || agent.id !== sgHomeSelectedAgentId) return;
+    if (claim) {
+      sgHomeStatus('uninstall-status', claim.status === 'accepted'
+        ? 'アンインストール予約は送信済みです。端末での完了は未確認です。再送できません。'
+        : '既に操作記録があります。結果不明のため再送できません。管理者へ確認してください。');
+      return;
+    }
+    button.disabled = false;
+    sgHomeStatus('uninstall-status', '対象端末を確認してから操作してください。');
+  } catch {
+    if (sequence === sgHomeUninstallSequence) sgHomeStatus('uninstall-status', '操作履歴を確認できません。安全のため操作できません。');
+  }
+}
+
+sgHomeNode('uninstall-request').addEventListener('click', async () => {
+  const agent = sgHomeOverview?.agents.find((item) => item.id === sgHomeSelectedAgentId);
+  if (!agent || sgHomeOverview?.capabilities?.agentQueuedUninstall !== true || !sgHomeMembership
+    || !['org_admin', 'operator'].includes(sgHomeMembership.role)) return;
+  if (sgHomeNode('uninstall-confirm-hostname').value !== agent.hostname || !sgHomeNode('uninstall-ack').checked) {
+    sgHomeStatus('uninstall-status', '端末名の入力と通信への影響の確認が必要です。');
+    return;
+  }
+  if (!window.confirm(`${agent.hostname} のアンインストールを予約しますか？\nこの操作は取り消せません。受付後の端末完了は別途確認が必要です。`)) return;
+  const membershipId = sgHomeMembership.membershipId;
+  const attemptKey = `${membershipId}:${agent.id}`;
+  if (sgHomeUninstallAttempts.has(attemptKey)) return;
+  // From this point forward, even a network timeout means UNKNOWN; never enable a second submission.
+  sgHomeUninstallAttempts.add(attemptKey);
+  sgHomeNode('uninstall-request').disabled = true;
+  sgHomeStatus('uninstall-status', '依頼を送信しています。再送しないでください。');
+  try {
+    const result = await sgHomeFetch(`/agents/${encodeURIComponent(agent.id)}/queued-uninstall`, {
+      method: 'POST',
+      body: JSON.stringify({ siteId: agent.siteId, hostname: agent.hostname, confirmHostname: agent.hostname, acknowledgeCommunicationRisk: true }),
+    });
+    if (membershipId === sgHomeMembership?.membershipId && agent.id === sgHomeSelectedAgentId) {
+      sgHomeStatus('uninstall-status', result.status === 'accepted'
+        ? 'アンインストール予約を受け付けました。端末での完了ではありません。再送できません。'
+        : '結果が不明です。再送せず管理者へ確認してください。');
+    }
+  } catch {
+    if (membershipId === sgHomeMembership?.membershipId && agent.id === sgHomeSelectedAgentId) {
+      sgHomeStatus('uninstall-status', '結果が不明です。再送せず管理者へ確認してください。');
+    }
+  }
+});
 
 async function sgHomeLoadInventory() {
   const sequence = ++sgHomeInventorySequence;

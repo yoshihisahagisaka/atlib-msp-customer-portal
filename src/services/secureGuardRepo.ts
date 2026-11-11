@@ -32,6 +32,14 @@ export interface LicenseAlertState {
 }
 export interface ManagedMembership { id: string; email: string; role: CustomerRole; status: 'pending' | 'active' | 'revoked'; isInitialAdmin: boolean; }
 export interface AuditEvent { id: string; organizationName: string | null; action: string; result: 'success' | 'denied' | 'failed'; createdAt: string; }
+export interface AgentUninstallClaim {
+  id: string;
+  agentUuid: string;
+  hostname: string;
+  siteId: string;
+  status: 'pending_unknown' | 'accepted' | 'unknown';
+  createdAt: string;
+}
 
 type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 
@@ -179,6 +187,76 @@ export class SecureGuardRepo {
     );
     const organizationId = rows[0]?.dnsfilter_organization_id;
     return typeof organizationId === 'string' && /^\d+$/.test(organizationId) ? organizationId : null;
+  }
+
+  /** Transactionally rechecks the live actor/scope/mapping, then commits claim AND audit before any DELETE. */
+  async claimAgentUninstall(input: {
+    operationId: string; actorUserId: string; scope: CustomerScope; dnsfilterOrganizationId: string;
+    agentUuid: string; siteId: string; hostname: string;
+  }): Promise<'claimed' | 'duplicate' | 'denied'> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const authorized = await client.query(
+        `SELECT m.id
+         FROM customer_memberships m
+         JOIN portal_users u ON u.id = m.user_id AND u.status = 'active'
+         JOIN customer_organizations o ON o.id = m.customer_organization_id AND o.status = 'active'
+         JOIN dnsfilter_organization_mappings d ON d.customer_organization_id = o.id AND d.status = 'active'
+         WHERE m.id = $1 AND m.user_id = $2 AND m.customer_organization_id = $3
+           AND m.status = 'active' AND m.role IN ('org_admin', 'operator')
+           AND d.dnsfilter_organization_id = $4
+         FOR SHARE OF m, u, o, d`,
+        [input.scope.membershipId, input.actorUserId, input.scope.customerOrganizationId, input.dnsfilterOrganizationId],
+      );
+      if (!authorized.rows[0]) { await client.query('ROLLBACK'); return 'denied'; }
+      const inserted = await client.query(
+        `INSERT INTO secure_guard_agent_uninstall_claims
+           (id, actor_user_id, membership_id, customer_organization_id, dnsfilter_organization_id, agent_uuid, site_id, hostname)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (agent_uuid) DO NOTHING RETURNING id`,
+        [input.operationId, input.actorUserId, input.scope.membershipId, input.scope.customerOrganizationId,
+          input.dnsfilterOrganizationId, input.agentUuid, input.siteId, input.hostname],
+      );
+      if (!inserted.rows[0]) { await client.query('ROLLBACK'); return 'duplicate'; }
+      await this.insertAudit(client, input.actorUserId, input.scope.customerOrganizationId, input.scope.membershipId, 'agent.uninstall.claimed', 'success');
+      await client.query('COMMIT');
+      return 'claimed';
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async finishAgentUninstall(operationId: string, actorUserId: string, scope: CustomerScope, status: 'accepted' | 'unknown'): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query(
+        `UPDATE secure_guard_agent_uninstall_claims SET status = $1, result_at = now()
+         WHERE id = $2 AND customer_organization_id = $3 AND actor_user_id = $4 AND status = 'pending_unknown'
+         RETURNING id`,
+        [status, operationId, scope.customerOrganizationId, actorUserId],
+      );
+      if (!updated.rows[0]) { await client.query('ROLLBACK'); return false; }
+      await this.insertAudit(client, actorUserId, scope.customerOrganizationId, scope.membershipId,
+        status === 'accepted' ? 'agent.uninstall.request.accepted' : 'agent.uninstall.outcome.unknown',
+        status === 'accepted' ? 'success' : 'failed');
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async getAgentUninstallClaim(customerOrganizationId: string, agentUuid: string): Promise<AgentUninstallClaim | null> {
+    const { rows } = await this.pool.query(
+      `SELECT id, agent_uuid, site_id, hostname, status, created_at
+       FROM secure_guard_agent_uninstall_claims
+       WHERE customer_organization_id = $1 AND agent_uuid = $2`,
+      [customerOrganizationId, agentUuid],
+    );
+    const row = rows[0];
+    return row ? { id: String(row.id), agentUuid: String(row.agent_uuid), siteId: String(row.site_id),
+      hostname: String(row.hostname), status: row.status as AgentUninstallClaim['status'],
+      createdAt: new Date(row.created_at).toISOString() } : null;
   }
 
   async getLicenseAlertState(customerOrganizationId: string): Promise<LicenseAlertState | null> {

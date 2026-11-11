@@ -46,7 +46,7 @@ async function withCustomer(role, run) {
   } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
 }
 
-test('Customer daily UI reuses verified inventory and Membership APIs without enabling Agent deletion or billing claims', () => {
+test('Customer daily UI retains scoped reads and gates queued Agent uninstall behind server capability', () => {
   const html = source('public/secure-guard-home.html');
   const js = source('public/js/secureGuardHome.js');
   const css = source('public/css/style.css');
@@ -59,6 +59,12 @@ test('Customer daily UI reuses verified inventory and Membership APIs without en
   assert.match(js, /状態は不明です/);
   assert.match(js, /sequence !== sgHomeInventorySequence/);
   assert.match(js, /sgHomeMembership\?\.role === 'org_admin'/);
+  assert.match(html, /id="agent-uninstall-controls"[^>]*hidden/);
+  assert.match(html, /id="uninstall-confirm-hostname"/);
+  assert.match(html, /id="uninstall-ack"/);
+  assert.match(js, /capabilities\?\.agentQueuedUninstall === true/);
+  assert.match(js, /uninstall-status/);
+  assert.match(js, /結果が不明です。再送せず管理者へ確認してください/);
   assert.doesNotMatch(js, /user_agents|queue_uninstall|soft.delete|deleteAgent/);
   assert.match(css, /@media \(max-width: 640px\)/);
   assert.match(html, /管理者を2〜3名登録することを推奨します/);

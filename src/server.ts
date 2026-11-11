@@ -40,6 +40,7 @@ import { requireMspAdmin, requireSecureGuardIdentity } from './middleware/secure
 import { createIpRateLimiter } from './middleware/rateLimit';
 import type { StaffRoleDeps } from './domain/staffRoles';
 import { SecureGuardRepo } from './services/secureGuardRepo';
+import { DnsFilterAgentUninstallClient } from './services/dnsFilterAgentUninstallClient';
 import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
 import { DnsFilterInventoryClient } from './services/dnsFilterInventoryClient';
 import { createSecureGuardAuthRouter } from './routes/secureGuardAuth';
@@ -124,6 +125,9 @@ async function main(): Promise<void> {
       portalBaseUrl: config.portalBaseUrl,
       managementClient: dnsFilterManagementClient,
       licenseAlertSlack: new SecureGuardLicenseSlack(config.slack.webhookSecureGuardLicenseAlert),
+      // Default OFF. Never enable until Migration 014, runtime access, HA and release gates are approved.
+      agentUninstallEnabled: process.env.SECURE_GUARD_AGENT_UNINSTALL_ENABLED === 'true',
+      agentUninstallClient: new DnsFilterAgentUninstallClient(process.env.DNSFILTER_API_KEY),
     }),
   );
 

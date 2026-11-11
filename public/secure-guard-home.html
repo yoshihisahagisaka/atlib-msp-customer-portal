@@ -68,8 +68,18 @@
             <dt>DNSFilter状態</dt><dd id="detail-status"></dd>
             <dt>Agent状態</dt><dd id="detail-agent-state"></dd>
           </dl>
+          <div id="agent-uninstall-controls" class="sg-home-uninstall" hidden>
+            <h3>アンインストール＆削除</h3>
+            <p>この操作は端末へのアンインストール予約を送信します。端末がオフラインの場合は反映まで時間がかかります。通信・名前解決に影響する可能性があります。送信の受付と端末での完了は異なります。</p>
+            <label>確認のため、上の端末名を入力してください
+              <input id="uninstall-confirm-hostname" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="sg-home-uninstall-ack"><input id="uninstall-ack" type="checkbox">通信への影響と、結果が不明な場合に再送しないことを理解しました</label>
+            <button id="uninstall-request" type="button" class="btn btn-danger">この端末のアンインストールを依頼</button>
+            <p id="uninstall-status" role="status" class="info-message"></p>
+          </div>
         </div>
-        <p class="info-message">表示は取得時点の状態です。端末の撤去操作は安全確認を伴う別工程で提供します。</p>
+        <p class="info-message">表示は取得時点の状態です。アンインストール操作は運用準備が完了している環境でのみ利用できます。</p>
       </aside>
     </div>
     <section class="card" id="membership-section">
