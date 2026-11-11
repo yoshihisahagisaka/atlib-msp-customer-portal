@@ -1,6 +1,6 @@
 # Secure Guard v1｜顧客日常画面・運用UI実装契約
 日付: 2026-10-31
-状態: 設計記録／コード変更・HA未実施
+状態: 2026-10-31時点の設計記録。2026-11-11の顧客画面実装差分は末尾参照
 基準: PR #3 HEAD 71cc16ba860c735a55b3d64d23afbbb5585c4912
 正本: DECISION_SECURE_GUARD_V1_SERVICE_LAUNCH_20261030.md
 依存: SECURE_GUARD_V1_MFA_IMPLEMENTATION_CONTRACT_20261031.md
@@ -50,3 +50,10 @@
 
 ## 7. 実装境界
 本書は設計記録のみ。コード、DB、Cloud Run、DNSFilter、本番操作なし。ホワイトリスト変更、Organization DELETE、請求確定は未検証・別工程。サービス開始に不要な自動化を追加しない。
+
+## 2026-11-11｜顧客日常画面の実装差分
+- `public/secure-guard-home.html`と新規`public/js/secureGuardHome.js`に、登録端末・保護状態・Site一覧・最終取得日時・検索・端末詳細（読取のみ）、Membership一覧・招待・Role変更・失効、管理者向け2〜3名推奨文言、簡潔なヘルプを集約。1366×768を主対象とした横並びと狭い画面向け縦並びをCSSに追加。
+- 既存の`GET /overview`と`GET /memberships`、既存の顧客Membership招待・権限変更・失効APIを再利用。利用者管理の変更UIは`org_admin`だけに表示し、Customer Scopeの実認可はサーバー側で維持。別Organizationへ切り替えた際は旧画面を消去し、遅延応答による混在を防ぐ。
+- Inventory GET失敗を0件として扱わず、取得状態不明と表示。招待202の空本文は成功扱い、変更結果不明時は連続自動再送しない。MSP権限のみでCustomer Membershipを持たない利用者には従来どおり中立画面。
+- 端末アンインストール&削除、MFAリセット、Allow List適用、実請求金額・割当数の確定表示は**未実装・非表示**。DNSFilterへの書込みAPI、DB/GCP/本番設定変更は0件。サービス公開No-Goは維持。
+- 検証: TypeScript build、既存回帰と追加した顧客Role別HTTP／静的UI契約試験PASS。**実ブラウザHA、実DB/実DNSFilterとの統合HA、運用受入は別途必要**。既存PoCの再実行を前提にしない。

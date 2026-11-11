@@ -47,9 +47,9 @@ test('Secure Guard login applies both IP and account rate-limit gates', () => {
 
 test('a membership-less MSP administrator receives a neutral home view without Customer inventory', () => {
   const home = read('public/secure-guard-home.html');
-  const client = read('public/js/secureGuard.js');
+  const client = read('public/js/secureGuardHome.js');
   assert.match(home, /id="msp-admin-notice"/);
   assert.match(home, /id="customer-inventory"/);
-  assert.match(client, /if \(me\.mspAdmin\) return showMspAdminHome\(\)/);
-  assert.match(client, /customer-inventory.*hidden = true/s);
+  assert.match(client, /if \(me\.mspAdmin\) sgHomeNode\('msp-admin-notice'\)\.hidden = false/);
+  assert.match(home, /id="customer-inventory" hidden/);
 });
