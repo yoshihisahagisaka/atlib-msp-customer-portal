@@ -75,6 +75,9 @@ export function createSecureGuardRouter(input: {
   roamingUsageClient?: DnsFilterRoamingUsageClient;
   overageStore?: Pick<SecureGuardOverageStore, 'listOpen' | 'markInProgress'>;
   licenseAlertSlack?: SecureGuardLicenseSlack;
+  // Dedicated DB uses the scheduled overage Job as the only Slack owner.
+  // The old manual delivery remains compatible only with the legacy Portal mode.
+  manualLicenseAlertDeliveryEnabled?: boolean;
   agentUninstallClient?: DnsFilterAgentUninstallClient;
   agentUninstallEnabled?: boolean;
 }): Router {
@@ -221,6 +224,11 @@ export function createSecureGuardRouter(input: {
   router.post('/admin/organizations/:organizationId/license-alerts/check', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const result = await licenseStatus(req.params.organizationId!);
     if (!result) return void res.status(404).json({ error: 'ORGANIZATION_OR_MAPPING_NOT_FOUND' });
+    // A manual POST can read the current state but never claim, clear or send a second
+    // Slack alert once the dedicated scheduled monitor owns alert delivery.
+    if (input.manualLicenseAlertDeliveryEnabled === false) {
+      return void res.json({ ...result.response, notification: 'managed_by_scheduled_monitor' });
+    }
     if (result.response.status === 'UNKNOWN') return void res.json({ ...result.response, notification: 'not_sent_unknown' });
     if (result.response.status === 'OK') {
       await input.repo.clearResolvedLicenseAlert(req.params.organizationId!);

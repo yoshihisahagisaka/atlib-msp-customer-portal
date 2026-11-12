@@ -137,7 +137,12 @@ async function main(): Promise<void> {
       managementClient: dnsFilterManagementClient,
       roamingUsageClient: dnsFilterRoamingUsageClient,
       overageStore: secureGuardOverageStore,
-      licenseAlertSlack: new SecureGuardLicenseSlack(config.slack.webhookSecureGuardLicenseAlert),
+      // One Slack owner per database mode: legacy manual or dedicated scheduled Job.
+      // In dedicated mode the manual route is read-only even if a legacy webhook is configured.
+      manualLicenseAlertDeliveryEnabled: !secureGuardDatabaseSettings,
+      licenseAlertSlack: secureGuardDatabaseSettings
+        ? undefined
+        : new SecureGuardLicenseSlack(config.slack.webhookSecureGuardLicenseAlert),
       // Default OFF. Both dedicated-DB cutover guards are mandatory; the legacy Portal DB must never handle this mutation.
       // Migration acceptance and explicit release approval remain independent gates.
       agentUninstallEnabled: process.env.SECURE_GUARD_AGENT_UNINSTALL_ENABLED === 'true'
