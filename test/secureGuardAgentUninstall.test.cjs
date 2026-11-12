@@ -149,13 +149,17 @@ test('DB denial or failure prevents upstream write', async () => {
   }
 });
 
-test('dedicated Migration 003 preserves global UUID uniqueness, legacy schema remains untouched and audit is atomic', () => {
-  const migration = fs.readFileSync('migrations/secure_guard/003_agent_uninstall_claims.sql', 'utf8');
+test('dedicated migrations preserve license snapshot + global UUID uniqueness, legacy schema untouched and audit atomic', () => {
+  const migration = fs.readFileSync('migrations/secure_guard/004_agent_uninstall_claims.sql', 'utf8');
+  const license = fs.readFileSync('migrations/secure_guard/003_license_alert_snapshot.sql', 'utf8');
+  const legacyLicense = fs.readFileSync('migrations/013_secure_guard_license_alert_snapshot.sql', 'utf8');
   const repo = fs.readFileSync('src/services/secureGuardRepo.ts', 'utf8');
   const server = fs.readFileSync('src/server.ts', 'utf8');
   assert.match(migration, /agent_uuid UUID NOT NULL UNIQUE/);
   assert.match(migration, /pending_unknown/);
   assert.match(migration, /dedicated migrations\/secure_guard_runner/);
+  assert.equal(license.slice(license.indexOf('ALTER TABLE')).trimEnd(), legacyLicense.trimEnd());
+  assert.ok('003_license_alert_snapshot.sql' < '004_agent_uninstall_claims.sql');
   assert.equal(fs.existsSync('migrations/014_secure_guard_agent_uninstall_claims.sql'), false);
   assert.match(server, /SECURE_GUARD_DB_MODE === 'dedicated'/);
   assert.match(server, /SECURE_GUARD_DB_REQUIRE_DEDICATED === 'true'/);
