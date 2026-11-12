@@ -12,6 +12,9 @@ import type { SecureGuardIdentityService } from '../services/secureGuardIdentity
 import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
 import { DnsFilterAgentUninstallClient } from '../services/dnsFilterAgentUninstallClient';
+import { DnsFilterRoamingUsageClient } from '../services/dnsFilterRoamingUsageClient';
+import { compareConfirmedLicenseUsage } from '../services/secureGuardLicenseOverage';
+import type { SecureGuardOverageStore } from '../services/secureGuardOverageStore';
 import type { SecureGuardInventory } from '../domain/secureGuardInventory';
 import { DnsFilterManagementClient, DnsFilterManagementError } from '../services/dnsFilterManagementClient';
 import type { SecureGuardLicenseSlack } from '../services/secureGuardLicenseSlack';
@@ -39,6 +42,10 @@ const networkSchema = z.object({
 });
 const recoverySchema = z.object({ dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const licenseAllocationSchema = z.object({ allocatedLicenses: z.number().int().min(0).max(10_000_000) });
+const overageHandlingSchema = z.object({
+  responseChoice: z.enum(['reduce_clients', 'increase_allocation']),
+  responseNote: z.string().trim().max(500).nullable().optional(),
+}).strict();
 const agentUuidSchema = z.string().uuid();
 const agentUninstallSchema = z.object({
   siteId: networkIdSchema,
@@ -65,6 +72,8 @@ export function createSecureGuardRouter(input: {
   mailer: Mailer;
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
+  roamingUsageClient?: DnsFilterRoamingUsageClient;
+  overageStore?: Pick<SecureGuardOverageStore, 'listOpen' | 'markInProgress'>;
   licenseAlertSlack?: SecureGuardLicenseSlack;
   agentUninstallClient?: DnsFilterAgentUninstallClient;
   agentUninstallEnabled?: boolean;
@@ -108,6 +117,64 @@ export function createSecureGuardRouter(input: {
     if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
     try { const updated = await input.repo.updateManagedOrganization(req.secureGuardUserId!, req.params.organizationId!, parsed.data); if (!updated) return void res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' }); res.json(updated); }
     catch (error) { res.status(isUniqueViolation(error) ? 409 : 500).json({ error: isUniqueViolation(error) ? 'ORGANIZATION_CONFLICT' : 'ORGANIZATION_UNAVAILABLE' }); }
+  });
+  // Read-only official source, separate from the operator-transcribed snapshot.
+  router.get('/admin/organizations/:organizationId/roaming-license-usage', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    const organizationId = req.params.organizationId!;
+    if (!z.string().uuid().safeParse(organizationId).success) {
+      res.status(400).json({ error: 'INVALID_REQUEST' });
+      return;
+    }
+    if (!input.roamingUsageClient) {
+      res.status(503).json({ error: 'ROAMING_USAGE_UNAVAILABLE' });
+      return;
+    }
+    try {
+      const organizations = await input.repo.listManagedOrganizations();
+      const organization = organizations.find((candidate) => candidate.id === organizationId);
+      if (!organization || organization.status !== 'active' || organization.mappingStatus !== 'active' ||
+          !organization.dnsfilterOrganizationId) {
+        res.status(404).json({ error: 'ORGANIZATION_NOT_FOUND' });
+        return;
+      }
+      const usage = await input.roamingUsageClient.getRoamingUsage(organization.dnsfilterOrganizationId);
+      const comparison = compareConfirmedLicenseUsage(
+        usage.roamingClientsInUse, usage.dnsfilterAllocatedRoamingClients,
+      );
+      res.json({
+        organizationId,
+        source: 'dnsfilter.organization_usage_detailed',
+        allocated: usage.dnsfilterAllocatedRoamingClients,
+        usage: usage.roamingClientsInUse,
+        status: comparison.status,
+        overBy: comparison.overBy,
+        observedAt: usage.retrievedAt,
+        periodFrom: usage.from,
+        periodTo: usage.to,
+      });
+    } catch {
+      res.status(502).json({ error: 'ROAMING_USAGE_UNAVAILABLE' });
+    }
+  });
+  // Internal MSP human response tracking only; never a DNSFilter license or billing write.
+  router.get('/admin/overage-alerts', requireIdentity, requireMspAdmin(input.repo), async (_req, res) => {
+    if (!input.overageStore) return void res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' });
+    try { res.json({ alerts: await input.overageStore.listOpen() }); }
+    catch { res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' }); }
+  });
+  router.patch('/admin/overage-alerts/:alertId/handling', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
+    if (!input.overageStore) return void res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' });
+    if (!/^\d+$/.test(req.params.alertId!)) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    const parsed = overageHandlingSchema.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+      const updated = await input.overageStore.markInProgress(
+        req.secureGuardUserId!, req.params.alertId!, parsed.data.responseChoice,
+        parsed.data.responseNote || null,
+      );
+      if (!updated) return void res.status(404).json({ error: 'OVERAGE_ALERT_NOT_FOUND' });
+      res.status(204).end();
+    } catch { res.status(503).json({ error: 'OVERAGE_MONITOR_UNAVAILABLE' }); }
   });
   router.patch('/admin/organizations/:organizationId/license-allocation', requireIdentity, requireMspAdmin(input.repo), async (req, res) => {
     const parsed = licenseAllocationSchema.safeParse(req.body);
