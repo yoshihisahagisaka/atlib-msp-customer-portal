@@ -149,11 +149,16 @@ test('DB denial or failure prevents upstream write', async () => {
   }
 });
 
-test('Migration preserves a global Agent UUID uniqueness and audit is committed with claim', () => {
-  const migration = fs.readFileSync('migrations/014_secure_guard_agent_uninstall_claims.sql', 'utf8');
+test('dedicated Migration 003 preserves global UUID uniqueness, legacy schema remains untouched and audit is atomic', () => {
+  const migration = fs.readFileSync('migrations/secure_guard/003_agent_uninstall_claims.sql', 'utf8');
   const repo = fs.readFileSync('src/services/secureGuardRepo.ts', 'utf8');
+  const server = fs.readFileSync('src/server.ts', 'utf8');
   assert.match(migration, /agent_uuid UUID NOT NULL UNIQUE/);
   assert.match(migration, /pending_unknown/);
+  assert.match(migration, /dedicated migrations\/secure_guard_runner/);
+  assert.equal(fs.existsSync('migrations/014_secure_guard_agent_uninstall_claims.sql'), false);
+  assert.match(server, /SECURE_GUARD_DB_MODE === 'dedicated'/);
+  assert.match(server, /SECURE_GUARD_DB_REQUIRE_DEDICATED === 'true'/);
   assert.match(repo, /'agent\.uninstall\.claimed', 'success'/);
   assert.match(repo, /'COMMIT'/);
   assert.match(repo, /FOR SHARE OF m, u, o, d/);

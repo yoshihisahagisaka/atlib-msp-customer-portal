@@ -1,4 +1,6 @@
--- Phase 3: at-most-once customer-triggered queued Agent uninstall.
+-- Secure Guard dedicated database Phase 3 extension.
+-- Apply only through the dedicated migrations/secure_guard_runner.ts from SG DB PR #5.
+-- Never run the legacy Portal migrations/runner.ts against secure_guard_staging.
 -- A committed claim is NEVER automatically expired or released, including on timeout/UNKNOWN.
 -- Manual investigation (not another API DELETE) is required after an ambiguous outcome.
 CREATE TABLE secure_guard_agent_uninstall_claims (

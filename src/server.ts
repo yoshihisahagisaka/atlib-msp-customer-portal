@@ -125,8 +125,11 @@ async function main(): Promise<void> {
       portalBaseUrl: config.portalBaseUrl,
       managementClient: dnsFilterManagementClient,
       licenseAlertSlack: new SecureGuardLicenseSlack(config.slack.webhookSecureGuardLicenseAlert),
-      // Default OFF. Never enable until Migration 014, runtime access, HA and release gates are approved.
-      agentUninstallEnabled: process.env.SECURE_GUARD_AGENT_UNINSTALL_ENABLED === 'true',
+      // Default OFF. Both dedicated-DB cutover guards are mandatory; the legacy Portal DB must never handle this mutation.
+      // PR #5 dedicated pool/runner integration, SG migration 003, HA and explicit release approval remain independent gates.
+      agentUninstallEnabled: process.env.SECURE_GUARD_AGENT_UNINSTALL_ENABLED === 'true'
+        && process.env.SECURE_GUARD_DB_MODE === 'dedicated'
+        && process.env.SECURE_GUARD_DB_REQUIRE_DEDICATED === 'true',
       agentUninstallClient: new DnsFilterAgentUninstallClient(process.env.DNSFILTER_API_KEY),
     }),
   );
