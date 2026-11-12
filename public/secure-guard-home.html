@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>atLIB Secure Guard｜ご利用状況</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<main class="page sg-home-page">
+  <header class="sg-home-header">
+    <div>
+      <p class="sg-home-brand">atLIB Secure Guard</p>
+      <h1 id="organization-name">ご利用状況</h1>
+      <p id="role" class="info-message"></p>
+    </div>
+    <div class="sg-home-actions">
+      <a id="msp-admin-link" class="btn btn-secondary" href="/secure-guard-admin.html" hidden>全体管理</a>
+      <button id="logout" class="btn btn-secondary" type="button">ログアウト</button>
+    </div>
+  </header>
+  <p id="error" class="error-message" role="alert"></p>
+  <section id="scope-section" class="card sg-home-scope" hidden>
+    <label for="scope">ご利用の企業・組織</label>
+    <select id="scope" aria-label="利用Organization"></select>
+  </section>
+  <section id="msp-admin-notice" class="card" hidden>
+    <h2>全体管理者</h2>
+    <p>利用可能な顧客Organizationが選択されていません。顧客のSite・端末情報は表示していません。</p>
+    <a href="/secure-guard-admin.html">全体管理へ</a>
+  </section>
+  <div id="customer-inventory" hidden>
+    <section class="sg-home-metrics" aria-label="登録端末の状態">
+      <div class="card"><p>登録端末数</p><strong id="agent-count">—</strong></div>
+      <div class="card"><p>保護中</p><strong id="protected-count">—</strong></div>
+      <div class="card"><p>その他・状態未確認</p><strong id="other-count">—</strong></div>
+      <div class="card"><p>登録Site数</p><strong id="site-count">—</strong></div>
+    </section>
+    <div class="sg-home-heading">
+      <div>
+        <h2>端末の保護状況</h2>
+        <p id="fetched-at" class="info-message">データ取得中です。</p>
+      </div>
+      <button type="button" id="refresh-inventory" class="btn btn-secondary">情報を更新</button>
+    </div>
+    <p id="inventory-status" role="status"></p>
+    <div class="sg-home-grid">
+      <section class="card sg-home-inventory-card">
+        <label for="agent-filter">端末検索</label>
+        <input id="agent-filter" type="search" placeholder="端末名・Site・状態で検索" autocomplete="off">
+        <div class="sg-home-table-scroll">
+          <table>
+            <thead><tr><th>端末名</th><th>Site</th><th>DNSFilter状態</th><th>Agent状態</th><th>詳細</th></tr></thead>
+            <tbody id="agents"></tbody>
+          </table>
+        </div>
+        <p id="agent-list-status" class="info-message"></p>
+      </section>
+      <aside class="card">
+        <h2>Site一覧</h2>
+        <ul id="sites" class="sg-home-site-list"></ul>
+        <p id="sites-status" class="info-message"></p>
+        <div id="agent-detail" class="sg-home-agent-detail" hidden>
+          <h3>選択した端末</h3>
+          <dl>
+            <dt>端末名</dt><dd id="detail-hostname"></dd>
+            <dt>Site</dt><dd id="detail-site"></dd>
+            <dt>DNSFilter状態</dt><dd id="detail-status"></dd>
+            <dt>Agent状態</dt><dd id="detail-agent-state"></dd>
+          </dl>
+          <div id="agent-uninstall-controls" class="sg-home-uninstall" hidden>
+            <h3>アンインストール＆削除</h3>
+            <p>この操作は端末へのアンインストール予約を送信します。端末がオフラインの場合は反映まで時間がかかります。通信・名前解決に影響する可能性があります。送信の受付と端末での完了は異なります。</p>
+            <label>確認のため、上の端末名を入力してください
+              <input id="uninstall-confirm-hostname" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="sg-home-uninstall-ack"><input id="uninstall-ack" type="checkbox">通信への影響と、結果が不明な場合に再送しないことを理解しました</label>
+            <button id="uninstall-request" type="button" class="btn btn-danger">この端末のアンインストールを依頼</button>
+            <p id="uninstall-status" role="status" class="info-message"></p>
+          </div>
+        </div>
+        <p class="info-message">表示は取得時点の状態です。アンインストール操作は運用準備が完了している環境でのみ利用できます。</p>
+      </aside>
+    </div>
+    <section class="card" id="membership-section">
+      <div class="sg-home-heading">
+        <div><h2>利用者管理</h2><p id="membership-status" role="status"></p></div>
+        <button id="refresh-memberships" type="button" class="btn btn-secondary">利用者を更新</button>
+      </div>
+      <div id="administrator-guidance" class="sg-home-guidance" hidden>
+        管理者の退職・異動や認証アプリの紛失に備え、管理者を2〜3名登録することを推奨します。管理者同士でMFAの再設定を支援できるため、ログインできなくなった場合にも社内で対応できます。
+      </div>
+      <div class="sg-home-table-scroll">
+        <table>
+          <thead><tr><th>メールアドレス</th><th>権限</th><th>状態</th><th id="membership-action-heading" hidden>操作</th></tr></thead>
+          <tbody id="membership-list"></tbody>
+        </table>
+      </div>
+      <form id="customer-invitation-form" class="sg-home-invite" hidden>
+        <label>招待するメールアドレス<input id="customer-invitation-email" type="email" required></label>
+        <label>権限
+          <select id="customer-invitation-role">
+            <option value="viewer">閲覧者</option>
+            <option value="operator">運用者</option>
+            <option value="org_admin">管理者</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">招待する</button>
+      </form>
+      <p id="customer-invitation-status" role="status"></p>
+    </section>
+    <details class="card sg-home-help">
+      <summary>導入・運用のご案内</summary>
+      <h3>端末の導入・入替・撤去</h3>
+      <p>導入用インストーラーと設定情報は管理者からご案内します。端末を撤去する際は社内管理者またはatLIB担当者へご相談ください。</p>
+      <h3>サイトがブロックされた場合</h3>
+      <p>安全上の理由で遮断しています。業務に必要なサイトは、遮断画面の情報を添えて社内管理者へご相談ください。自動解除は行いません。</p>
+      <h3>ログイン・MFAの復旧</h3>
+      <p>ログインできない場合は社内管理者またはatLIB担当者へご連絡ください。MFAの再設定機能は準備中です。</p>
+      <h3>利用者の追加・権限変更</h3>
+      <p>管理者権限の利用者が本画面の「利用者管理」で操作できます。</p>
+      <h3>契約・請求・解約</h3>
+      <p>請求額・確定利用数量は本画面には表示していません。契約や解約はatLIB担当者へご相談ください。</p>
+    </details>
+  </div>
+</main>
+<script src="/js/secureGuardHome.js"></script>
+</body>
+</html>
