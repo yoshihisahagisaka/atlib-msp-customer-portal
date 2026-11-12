@@ -14,6 +14,7 @@
 4. PR #5由来のDNSFilter公式usage read API、独立超過episode/対応記録API、1回実行の監視Jobも統合。JobはデフォルトOFF、`SECURE_GUARD_OVERAGE_JOB_ENABLED=true` の明示設定が必要。Slack未設定時に送信しない。
 5. 専用DB時の終了処理はHTTP停止後にPortal／SGの各Poolを解放。既存Portal単独運用の終了挙動は変更しない。
 6. **Slack送信OwnerをDB modeで一本化**：旧Portal `legacy` は既存の手動通知、`dedicated` はPR #5の定期監視Jobのみ。専用DBモードの手動確認POSTは状態を返すだけで、通知claim・解消処理・Slack送信をしない。管理画面の通常の使用数確認GETは変えない。新しい設定フラグは不要。
+7. PR #3の新しいMSP管理画面へ未解消超過一覧と人手対応記録（不要端末整理／割当増、任意メモ）を追加。再読込は管理者が明示操作し、画面からDNSFilterやSlackの変更はしない。Job未稼働・専用DB利用不可では「超過なし」と誤案内しない。
 
 ## 未完了・停止条件
 
@@ -26,5 +27,5 @@
 ## オフライン受入
 
 - `npm run build`、`npm run typecheck:secure-guard-migration`：PASS。
-- `npm test`：97 PASS / 0 FAIL（Agent解除、顧客Scope、Slack抑止、公式usage、超過episode、専用DB設定）。専用DBで手動APIを反復しても通知・DB claimがないことを追加検証。
+- `npm test`：98 PASS / 0 FAIL（Agent解除、顧客Scope、Slack抑止、公式usage、超過episode、専用DB設定、MSP管理画面）。専用DBで手動APIを反復しても通知・DB claimがないことを追加検証。
 - 実PostgreSQL E2E：`test/integration/secureGuardDatabaseE2E.test.cjs`。固定 `127.0.0.1:55432` の使い捨てPG16、CI opt-inのみ。旧Portal本番には接続しない。

@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const fs = require('node:fs');
+const path = require('node:path');
 const { createSecureGuardRouter } = require('../dist/routes/secureGuard');
 const { runSecureGuardOverageCheck } = require('../dist/services/secureGuardOverageMonitor');
 const { SecureGuardOverageStore } = require('../dist/services/secureGuardOverageStore');
@@ -29,6 +31,19 @@ async function withApp(grant, overageStore, run) {
 
 const endpoint = '/api/secure-guard/admin/overage-alerts';
 const jsonHeaders = { Cookie: cookie, 'Content-Type': 'application/json' };
+test('MSP screen shows unresolved overages and records only human handling, not DNSFilter mutations', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public/secure-guard-admin.html'), 'utf8');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public/js/secureGuardAdmin.js'), 'utf8');
+  assert.match(html, /id="overage-alerts"/);
+  assert.match(html, /id="refresh-overage-alerts"/);
+  assert.match(js, /sgAdminFetch\('\/overage-alerts'\)/);
+  assert.match(js, /\/overage-alerts\/\$\{encodeURIComponent\(alert\.id\)\}\/handling/);
+  assert.match(js, /responseChoice: choice\.value/);
+  assert.match(js, /needs_review: '送信要確認/);
+  assert.match(js, /定期監視が未稼働の場合/);
+  assert.doesNotMatch(js, /innerHTML|\/v1\/user_agents|dnsfilter\.com\/v1/);
+});
+
 test('only explicit MSP administrator may list and record human response', async () => {
   const updates = [];
   const store = { listOpen: async () => [{ id: '12', organizationName: 'Customer', overBy: 1 }],
