@@ -158,7 +158,8 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
       await assert.rejects(runtime.query(`INSERT INTO secure_guard_agent_uninstall_claims
         (id, customer_organization_id, dnsfilter_organization_id, actor_user_id,
          membership_id, agent_uuid, site_id, hostname)
-        VALUES ('44444444-4444-4444-8444-444444444444', $2, $3, $4, $5, $6, $7, $8)`, claimData),
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      ['44444444-4444-4444-8444-444444444444', ...claimData.slice(1)]),
         (error) => error.code === '23505');
       await assert.rejects(runtime.query('CREATE TABLE cross_role_write_denied (id integer)'),
         (error) => error.code === '42501');
