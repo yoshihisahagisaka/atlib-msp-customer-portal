@@ -7,6 +7,10 @@ const source = fs.readFileSync(
   path.join(__dirname, '../src/db/secureGuardStagingBootstrap.ts'),
   'utf8',
 );
+const secretScript = fs.readFileSync(
+  path.join(__dirname, '../scripts/secure-guard-staging-secret-versions.ps1'),
+  'utf8',
+);
 
 test('staging bootstrap is fixed to the approved empty database and three principals', () => {
   assert.match(source, /secure_guard_staging/);
@@ -30,4 +34,14 @@ test('staging bootstrap never emits passwords or dynamic exception details', () 
   assert.match(source, /secure_guard_staging_bootstrap_failed', stage/);
   assert.doesNotMatch(source, /console\.error\(error|stderr\.write\([^\n]*error/);
   assert.doesNotMatch(source, /DB_BOOTSTRAP_PASSWORD.*process\.stdout|SG_RUNTIME_DB_PASSWORD.*process\.stdout/);
+});
+
+test('PowerShell 5.1 secret initialization uses disposable RNG and stdin only', () => {
+  assert.match(secretScript, /RandomNumberGenerator\]::Create\(\)/);
+  assert.match(secretScript, /\.GetBytes\(\$bytes\)/);
+  assert.match(secretScript, /\$rng\.Dispose\(\)/);
+  assert.match(secretScript, /--data-file=-/);
+  assert.match(secretScript, /SECRET_NOT_EMPTY_STOP/);
+  assert.doesNotMatch(secretScript, /RandomNumberGenerator\]::Fill/);
+  assert.doesNotMatch(secretScript, /Write-(?:Output|Host).*\$password|Set-Content.*\$password/);
 });
