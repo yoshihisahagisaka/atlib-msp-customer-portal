@@ -44,6 +44,17 @@
       <p id="invitation-status" role="status"></p>
     </section>
   </div>
+  <section class="card" aria-labelledby="overage-alerts-heading">
+    <div class="sg-admin-heading">
+      <div>
+        <h2 id="overage-alerts-heading">ライセンス超過への対応</h2>
+        <p>定期取得で確認した未解消の超過を表示します。ここでは対応方針だけを記録し、DNSFilterの割当変更・顧客請求は行いません。</p>
+      </div>
+      <button type="button" class="btn btn-secondary" id="refresh-overage-alerts">対応状況を更新</button>
+    </div>
+    <p id="overage-alerts-status" role="status">対応状況を取得していません。</p>
+    <div id="overage-alerts" class="sg-overage-list"></div>
+  </section>
   <details class="card">
     <summary>作成結果不明の復旧（管理者専用）</summary>
     <p>自動再作成は行いません。DNSFilter側で確認済みのOrganization IDだけを使用します。</p>
