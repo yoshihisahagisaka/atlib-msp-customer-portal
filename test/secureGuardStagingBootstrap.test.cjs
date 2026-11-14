@@ -15,6 +15,10 @@ const iamScript = fs.readFileSync(
   path.join(__dirname, '../scripts/secure-guard-staging-secret-iam.ps1'),
   'utf8',
 );
+const cloudBuild = fs.readFileSync(
+  path.join(__dirname, '../cloudbuild.secure-guard-bootstrap.yaml'),
+  'utf8',
+);
 
 test('staging bootstrap is fixed to the approved empty database and three principals', () => {
   assert.match(source, /secure_guard_staging/);
@@ -57,4 +61,11 @@ test('PowerShell 5.1 IAM setup passes explicit validated string values', () => {
   assert.match(iamScript, /IAM_MEMBER_MISMATCH/);
   assert.match(iamScript, /ValidateSet\('Grant', 'RemoveBootstrap'\)/);
   assert.doesNotMatch(iamScript, /--member=\$item\.Member/);
+});
+
+test('bootstrap Cloud Build uses only Cloud Logging with an explicit image', () => {
+  assert.match(cloudBuild, /logging: CLOUD_LOGGING_ONLY/);
+  assert.match(cloudBuild, /docker[\s\S]*build[\s\S]*docker[\s\S]*push/);
+  assert.match(cloudBuild, /\$\{_IMAGE\}/);
+  assert.doesNotMatch(cloudBuild, /gcloud\s+run|jobs\s+execute|args:\s*\[[^\]]*['"]deploy['"]/);
 });
