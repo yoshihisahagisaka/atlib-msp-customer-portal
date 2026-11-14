@@ -11,6 +11,10 @@ const secretScript = fs.readFileSync(
   path.join(__dirname, '../scripts/secure-guard-staging-secret-versions.ps1'),
   'utf8',
 );
+const iamScript = fs.readFileSync(
+  path.join(__dirname, '../scripts/secure-guard-staging-secret-iam.ps1'),
+  'utf8',
+);
 
 test('staging bootstrap is fixed to the approved empty database and three principals', () => {
   assert.match(source, /secure_guard_staging/);
@@ -44,4 +48,13 @@ test('PowerShell 5.1 secret initialization uses disposable RNG and stdin only', 
   assert.match(secretScript, /SECRET_NOT_EMPTY_STOP/);
   assert.doesNotMatch(secretScript, /RandomNumberGenerator\]::Fill/);
   assert.doesNotMatch(secretScript, /Write-(?:Output|Host).*\$password|Set-Content.*\$password/);
+});
+
+test('PowerShell 5.1 IAM setup passes explicit validated string values', () => {
+  assert.match(iamScript, /\$secret = \[string\]\$item\['Secret'\]/);
+  assert.match(iamScript, /\$member = \[string\]\$item\['Member'\]/);
+  assert.match(iamScript, /SECRET_TARGET_MISMATCH/);
+  assert.match(iamScript, /IAM_MEMBER_MISMATCH/);
+  assert.match(iamScript, /ValidateSet\('Grant', 'RemoveBootstrap'\)/);
+  assert.doesNotMatch(iamScript, /--member=\$item\.Member/);
 });
