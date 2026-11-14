@@ -44,6 +44,14 @@ test('staging bootstrap never emits passwords or dynamic exception details', () 
   assert.doesNotMatch(source, /DB_BOOTSTRAP_PASSWORD.*process\.stdout|SG_RUNTIME_DB_PASSWORD.*process\.stdout/);
 });
 
+test('staging bootstrap shuts down only the fixed local Cloud SQL Proxy endpoint', () => {
+  assert.match(source, /http:\/\/127\.0\.0\.1:9091\/quitquitquit/);
+  assert.match(source, /method: 'POST'/);
+  assert.match(source, /AbortSignal\.timeout\(5_000\)/);
+  assert.match(source, /secure_guard_staging_proxy_shutdown_failed/);
+  assert.doesNotMatch(source, /process\.stderr\.write\([^\n]*error/);
+});
+
 test('PowerShell 5.1 secret initialization uses disposable RNG and stdin only', () => {
   assert.match(secretScript, /RandomNumberGenerator\]::Create\(\)/);
   assert.match(secretScript, /\.GetBytes\(\$bytes\)/);

@@ -22,6 +22,14 @@ const insightRoles = [
 
 type RoleKey = keyof typeof roles;
 
+async function shutdownCloudSqlProxy(): Promise<void> {
+  const url = process.env.CLOUD_SQL_PROXY_ADMIN_URL;
+  if (!url) return;
+  if (url !== 'http://127.0.0.1:9091/quitquitquit') throw new Error('PROXY_ADMIN_URL_INVALID');
+  const response = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error('PROXY_SHUTDOWN_FAILED');
+}
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`MISSING_${name}`);
@@ -260,4 +268,16 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+void main()
+  .catch(() => {
+    process.stderr.write(`${JSON.stringify({ event: 'secure_guard_staging_bootstrap_failed', stage: 'STARTUP' })}\n`);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    try {
+      await shutdownCloudSqlProxy();
+    } catch {
+      process.stderr.write(`${JSON.stringify({ event: 'secure_guard_staging_proxy_shutdown_failed' })}\n`);
+      process.exitCode = 1;
+    }
+  });
