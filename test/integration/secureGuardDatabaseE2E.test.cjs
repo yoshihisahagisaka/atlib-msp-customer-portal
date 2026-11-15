@@ -43,6 +43,37 @@ function runMigration() {
   });
 }
 
+test('PostgreSQL 16: bootstrap format parameters have explicit text types', async () => {
+  assert.equal(process.env.CI, 'true', 'CI-only integration test');
+  assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true', 'Explicit opt-in required');
+  assert.equal(process.env.SECURE_GUARD_DB_E2E_HOST, safeTestHost);
+  assert.equal(process.env.SECURE_GUARD_DB_E2E_PORT, String(safeTestPort));
+
+  const admin = client('postgres', 'postgres', fixturePassword);
+  await admin.connect();
+  try {
+    const roleName = 'secure guard "format fixture"';
+    const password = "local fixture ' password";
+    const result = await admin.query(
+      `SELECT format(
+         $fmt$CREATE ROLE %I LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+               NOREPLICATION NOBYPASSRLS CONNECTION LIMIT %s PASSWORD %L$fmt$,
+         $1::text, $2::text, $3::text
+       ) AS sql`,
+      [roleName, '2', password],
+    );
+    const generated = result.rows[0]?.sql.replace(/\s+/g, ' ').trim();
+    assert.equal(
+      generated,
+      `CREATE ROLE "secure guard ""format fixture""" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2 PASSWORD 'local fixture '' password'`,
+    );
+    const role = await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [roleName]);
+    assert.equal(role.rowCount, 0, 'format regression test must not create a role');
+  } finally {
+    await admin.end();
+  }
+});
+
 test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation', { timeout: 90000 }, async () => {
   assert.equal(process.env.CI, 'true', 'CI-only integration test');
   assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true', 'Explicit opt-in required');

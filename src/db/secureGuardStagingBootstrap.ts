@@ -50,7 +50,7 @@ function adminSettings(database: string) {
 }
 
 async function formatted(client: Client, template: string, ...values: string[]): Promise<string> {
-  const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+  const placeholders = values.map((_, index) => `$${index + 1}::text`).join(', ');
   const result = await client.query<{ sql: string }>(
     `SELECT format($fmt$${template}$fmt$, ${placeholders}) AS sql`,
     values,

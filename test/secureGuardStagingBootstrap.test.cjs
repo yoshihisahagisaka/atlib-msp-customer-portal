@@ -27,6 +27,7 @@ test('staging bootstrap is fixed to the approved empty database and three princi
   assert.match(source, /secure_guard_migration_staging/);
   assert.match(source, /CONNECTION LIMIT %s/);
   assert.match(source, /migrationsApplied: 0/);
+  assert.match(source, /`\$\$\{index \+ 1\}::text`/);
 });
 
 test('staging bootstrap fails closed and verifies cross-database isolation', () => {
