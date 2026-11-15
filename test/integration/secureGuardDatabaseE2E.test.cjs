@@ -43,6 +43,118 @@ function runMigration() {
   });
 }
 
+const bootstrapTargetDatabase = 'secure_guard_staging';
+const bootstrapInsightDatabase = 'secumie_insight_staging';
+const bootstrapManager = 'secure_guard_bootstrap_ci';
+const bootstrapRoles = [
+  ['secure_guard_runtime_staging', 2],
+  ['secure_guard_overage_staging', 2],
+  ['secure_guard_migration_staging', 1],
+];
+const bootstrapInsightRoles = [
+  'secumie_otp_staging',
+  'secumie_pira_staging',
+  'secumie_admin_staging',
+  'secumie_migration_staging',
+  'secumie_maintenance_staging',
+];
+
+function runBootstrap() {
+  return spawnSync(process.execPath, ['dist/db/secureGuardStagingBootstrap.js'], {
+    cwd: path.join(__dirname, '../..'),
+    encoding: 'utf8',
+    timeout: 30000,
+    env: {
+      ...process.env,
+      SG_BOOTSTRAP_TARGET_CONFIRMATION:
+        'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging',
+      DB_BOOTSTRAP_HOST: safeTestHost,
+      DB_BOOTSTRAP_PORT: String(safeTestPort),
+      DB_BOOTSTRAP_USER: bootstrapManager,
+      DB_BOOTSTRAP_PASSWORD: fixturePassword,
+      SG_RUNTIME_DB_PASSWORD: fixturePassword,
+      SG_OVERAGE_DB_PASSWORD: fixturePassword,
+      SG_MIGRATION_DB_PASSWORD: fixturePassword,
+      CLOUD_SQL_PROXY_ADMIN_URL: '',
+    },
+  });
+}
+
+async function cleanupBootstrapFixtures(admin) {
+  await admin.query(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+      WHERE datname = ANY($1::text[]) AND pid <> pg_backend_pid()`,
+    [[bootstrapTargetDatabase, bootstrapInsightDatabase]],
+  );
+  await admin.query(`DROP DATABASE IF EXISTS ${bootstrapTargetDatabase}`);
+  await admin.query(`DROP DATABASE IF EXISTS ${bootstrapInsightDatabase}`);
+  for (const [name] of bootstrapRoles) await admin.query(`DROP ROLE IF EXISTS ${name}`);
+  for (const name of bootstrapInsightRoles) await admin.query(`DROP ROLE IF EXISTS ${name}`);
+  await admin.query(`DROP ROLE IF EXISTS ${bootstrapManager}`);
+}
+
+async function setupBootstrapManagerAndInsight(admin) {
+  await admin.query(
+    `CREATE ROLE ${bootstrapManager} LOGIN CREATEROLE CREATEDB PASSWORD '${fixturePassword}'`,
+  );
+  for (const name of bootstrapInsightRoles) await admin.query(`CREATE ROLE ${name} NOLOGIN`);
+  await admin.query(`CREATE DATABASE ${bootstrapInsightDatabase}`);
+  await admin.query(`REVOKE CONNECT ON DATABASE ${bootstrapInsightDatabase} FROM PUBLIC`);
+  await admin.query(
+    `GRANT CONNECT ON DATABASE ${bootstrapInsightDatabase} TO ${bootstrapInsightRoles.join(', ')}`,
+  );
+}
+
+async function createBootstrapRolesAsManager() {
+  const manager = client('postgres', bootstrapManager, fixturePassword);
+  await manager.connect();
+  try {
+    for (const [name, limit] of bootstrapRoles) {
+      await manager.query(
+        `CREATE ROLE ${name} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+          NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit} PASSWORD '${fixturePassword}'`,
+      );
+    }
+  } finally {
+    await manager.end();
+  }
+}
+
+async function assertCompletedBootstrap(admin) {
+  const owner = await admin.query(
+    'SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1',
+    [bootstrapTargetDatabase],
+  );
+  assert.equal(owner.rows[0]?.owner, 'secure_guard_migration_staging');
+  const memberships = await admin.query(
+    `SELECT target.rolname AS role_name, member.rolname AS member_name,
+            grantor.rolname AS grantor_name, membership.admin_option,
+            membership.inherit_option, membership.set_option
+       FROM pg_auth_members membership
+       JOIN pg_roles target ON target.oid = membership.roleid
+       JOIN pg_roles member ON member.oid = membership.member
+       JOIN pg_roles grantor ON grantor.oid = membership.grantor
+      WHERE target.rolname = ANY($1::text[])
+         OR member.rolname = ANY($1::text[])
+      ORDER BY target.rolname`,
+    [bootstrapRoles.map(([name]) => name)],
+  );
+  assert.equal(memberships.rowCount, 3);
+  assert.deepEqual(memberships.rows.map((row) => ({
+    member: row.member_name,
+    grantor: row.grantor_name,
+    admin: row.admin_option,
+    inherit: row.inherit_option,
+    set: row.set_option,
+  })), bootstrapRoles.map(() => ({
+    member: bootstrapManager,
+    grantor: 'postgres',
+    admin: true,
+    inherit: false,
+    set: false,
+  })));
+}
+
 test('PostgreSQL 16: bootstrap format parameters have explicit text types', async () => {
   assert.equal(process.env.CI, 'true', 'CI-only integration test');
   assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true', 'Explicit opt-in required');
@@ -73,6 +185,58 @@ test('PostgreSQL 16: bootstrap format parameters have explicit text types', asyn
     await admin.end();
   }
 });
+
+test('PostgreSQL 16: bootstrap new, recovery and interrupted-state contracts',
+  { timeout: 90000 }, async () => {
+    assert.equal(process.env.CI, 'true', 'CI-only integration test');
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true', 'Explicit opt-in required');
+    const admin = client('postgres', 'postgres', fixturePassword);
+    await admin.connect();
+    try {
+      await cleanupBootstrapFixtures(admin);
+
+      // New installation: the non-superuser CREATEROLE/CREATEDB manager creates all
+      // three roles and keeps only PostgreSQL 16's automatic administration grants.
+      await setupBootstrapManagerAndInsight(admin);
+      const fresh = runBootstrap();
+      assert.equal(fresh.status, 0, `Fresh bootstrap must pass: ${fresh.stderr}`);
+      assert.match(fresh.stdout, /secure_guard_staging_bootstrap_completed/);
+      await assertCompletedBootstrap(admin);
+      await cleanupBootstrapFixtures(admin);
+
+      // Recovery: all three exact roles exist, the database does not, and only the
+      // automatic ADMIN=true/SET=false/INHERIT=false grants are present.
+      await setupBootstrapManagerAndInsight(admin);
+      await createBootstrapRolesAsManager();
+      const recovery = runBootstrap();
+      assert.equal(recovery.status, 0, `Recovery bootstrap must pass: ${recovery.stderr}`);
+      await assertCompletedBootstrap(admin);
+      await cleanupBootstrapFixtures(admin);
+
+      // Partial role creation is ambiguous and must stop before database creation.
+      await setupBootstrapManagerAndInsight(admin);
+      const manager = client('postgres', bootstrapManager, fixturePassword);
+      await manager.connect();
+      try {
+        await manager.query(
+          `CREATE ROLE secure_guard_runtime_staging LOGIN NOINHERIT CONNECTION LIMIT 2
+           PASSWORD '${fixturePassword}'`,
+        );
+      } finally {
+        await manager.end();
+      }
+      const partial = runBootstrap();
+      assert.notEqual(partial.status, 0);
+      assert.match(partial.stderr, /"stage":"PREFLIGHT"/);
+      const absent = await admin.query(
+        'SELECT 1 FROM pg_database WHERE datname = $1', [bootstrapTargetDatabase],
+      );
+      assert.equal(absent.rowCount, 0);
+    } finally {
+      await cleanupBootstrapFixtures(admin);
+      await admin.end();
+    }
+  });
 
 test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation', { timeout: 90000 }, async () => {
   assert.equal(process.env.CI, 'true', 'CI-only integration test');

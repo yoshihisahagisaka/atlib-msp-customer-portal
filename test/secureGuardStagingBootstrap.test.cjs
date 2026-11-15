@@ -36,6 +36,13 @@ test('staging bootstrap fails closed and verifies cross-database isolation', () 
   assert.match(source, /ROLE_EXISTENCE_STOP/);
   assert.match(source, /CROSS_DATABASE_CONNECT_UNEXPECTEDLY_ALLOWED/);
   assert.match(source, /SECU_CROSS_DATABASE_ACCESS_FAILED/);
+  assert.match(source, /existingTargetRoleCount !== 0 && existingTargetRoleCount !== 3/);
+  assert.match(source, /ROLE_ATTRIBUTE_VERIFY_FAILED/);
+  assert.match(source, /ROLE_MEMBERSHIP_VERIFY_FAILED/);
+  assert.match(source, /GRANT %I TO %I WITH ADMIN FALSE, SET TRUE, INHERIT FALSE/);
+  assert.match(source, /REVOKE %I FROM %I GRANTED BY %I/);
+  assert.match(source, /pg_get_userbyid\(10\) AS bootstrap_superuser/);
+  assert.match(source, /DATABASE_OWNER_VERIFY_FAILED/);
   assert.doesNotMatch(source, /DROP DATABASE|DROP ROLE|ALTER ROLE/);
 });
 

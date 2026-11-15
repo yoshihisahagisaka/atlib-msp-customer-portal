@@ -25,3 +25,9 @@
 - 旧DBに移行を要する実顧客データ・維持義務のある監査記録があると判明した場合、空開始を止めて統括に差分を報告する。
 - 接続予算、復旧条件、権限分離、合成E2Eが未成立ならStagingアプリ有効化を進めない。
 - 本決定は**実環境のGCP/DB/Secret/IAMへの変更承認ではない**。Production No-Go／Draftを維持する。
+
+## PostgreSQL 16 role-membership例外（2026-11-15承認）
+
+Secure Guard Staging専用3 Roleについて、最終membership 0件という従来条件を変更する。非SUPERUSERの`CREATEROLE`主体がRoleを作成した際にPostgreSQL 16が自動付与する、作成者をmember、bootstrap superuserをgrantor、`ADMIN TRUE / SET FALSE / INHERIT FALSE`とする3件のみを最終状態として許容する。
+
+BootstrapはRole、member、grantorおよび3つのOptionを各行で完全一致検証する。不足、重複、追加membershipはすべてFail-closedとする。Migration Roleへの`SET TRUE`はDatabase作成中の別membershipとしてのみ許可し、同じgrantorが必ず撤去してから後続処理へ進む。この例外はBootstrap実行、Migration、Production変更の承認を意味しない。

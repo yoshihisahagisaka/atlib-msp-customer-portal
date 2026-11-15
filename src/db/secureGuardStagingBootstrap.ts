@@ -22,6 +22,27 @@ const insightRoles = [
 
 type RoleKey = keyof typeof roles;
 
+type RoleFact = {
+  rolname: string;
+  rolcanlogin: boolean;
+  rolsuper: boolean;
+  rolcreatedb: boolean;
+  rolcreaterole: boolean;
+  rolinherit: boolean;
+  rolreplication: boolean;
+  rolbypassrls: boolean;
+  rolconnlimit: number;
+};
+
+type MembershipFact = {
+  role_name: string;
+  member_name: string;
+  grantor_name: string;
+  admin_option: boolean;
+  inherit_option: boolean;
+  set_option: boolean;
+};
+
 async function shutdownCloudSqlProxy(): Promise<void> {
   const url = process.env.CLOUD_SQL_PROXY_ADMIN_URL;
   if (!url) return;
@@ -90,6 +111,123 @@ async function expectConnectionDenied(role: RoleKey, database: string): Promise<
   }
 }
 
+async function targetRoleFacts(client: Client): Promise<RoleFact[]> {
+  const result = await client.query<RoleFact>(
+    `SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+            rolinherit, rolreplication, rolbypassrls, rolconnlimit
+       FROM pg_roles
+      WHERE rolname = ANY($1::text[])
+      ORDER BY rolname`,
+    [Object.values(roles).map((role) => role.name)],
+  );
+  return result.rows;
+}
+
+function verifyRoleFacts(facts: RoleFact[]): void {
+  if (facts.length !== 3 || facts.some((role) => !role.rolcanlogin
+    || role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolinherit
+    || role.rolreplication || role.rolbypassrls
+    || role.rolconnlimit !== Object.values(roles).find((spec) => spec.name === role.rolname)?.limit)) {
+    throw new Error('ROLE_ATTRIBUTE_VERIFY_FAILED');
+  }
+}
+
+async function targetMembershipFacts(client: Client): Promise<MembershipFact[]> {
+  const result = await client.query<MembershipFact>(
+    `SELECT target.rolname AS role_name,
+            member.rolname AS member_name,
+            grantor.rolname AS grantor_name,
+            membership.admin_option,
+            membership.inherit_option,
+            membership.set_option
+       FROM pg_auth_members membership
+       JOIN pg_roles target ON target.oid = membership.roleid
+       JOIN pg_roles member ON member.oid = membership.member
+       JOIN pg_roles grantor ON grantor.oid = membership.grantor
+      WHERE membership.roleid = ANY(
+              SELECT oid FROM pg_roles WHERE rolname = ANY($1::text[])
+            )
+         OR membership.member = ANY(
+              SELECT oid FROM pg_roles WHERE rolname = ANY($1::text[])
+            )
+      ORDER BY target.rolname, member.rolname, grantor.rolname`,
+    [Object.values(roles).map((role) => role.name)],
+  );
+  return result.rows;
+}
+
+async function verifyAutomaticMemberships(client: Client): Promise<void> {
+  const identity = await client.query<{ executor: string; bootstrap_superuser: string }>(
+    `SELECT current_user AS executor,
+            pg_get_userbyid(10) AS bootstrap_superuser`,
+  );
+  const expected = identity.rows[0];
+  const facts = await targetMembershipFacts(client);
+  const expectedNames = new Set<string>(Object.values(roles).map((role) => role.name));
+  if (!expected || facts.length !== 3 || facts.some((fact) => {
+    const expectedRole = expectedNames.delete(fact.role_name);
+    return !expectedRole
+      || fact.member_name !== expected.executor
+      || fact.grantor_name !== expected.bootstrap_superuser
+      || !fact.admin_option
+      || fact.inherit_option
+      || fact.set_option;
+  }) || expectedNames.size !== 0) {
+    throw new Error('ROLE_MEMBERSHIP_VERIFY_FAILED');
+  }
+}
+
+async function grantTemporaryMigrationSet(client: Client): Promise<void> {
+  const identity = await client.query<{ executor: string }>('SELECT current_user AS executor');
+  const executor = identity.rows[0]?.executor;
+  if (!executor) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
+  const sql = await formatted(
+    client,
+    'GRANT %I TO %I WITH ADMIN FALSE, SET TRUE, INHERIT FALSE',
+    roles.migration.name,
+    executor,
+  );
+  await client.query(sql);
+  const check = await client.query<{ can_set: boolean; count: string }>(
+    `SELECT pg_has_role(current_user, $1, 'SET') AS can_set,
+            (SELECT count(*)::text
+               FROM pg_auth_members membership
+               JOIN pg_roles target ON target.oid = membership.roleid
+               JOIN pg_roles member ON member.oid = membership.member
+               JOIN pg_roles grantor ON grantor.oid = membership.grantor
+              WHERE target.rolname = $1
+                AND member.rolname = current_user
+                AND grantor.rolname = current_user
+                AND NOT membership.admin_option
+                AND NOT membership.inherit_option
+                AND membership.set_option) AS count`,
+    [roles.migration.name],
+  );
+  if (!check.rows[0]?.can_set || check.rows[0]?.count !== '1') {
+    throw new Error('TEMPORARY_SET_GRANT_FAILED');
+  }
+}
+
+async function revokeTemporaryMigrationSet(client: Client): Promise<void> {
+  const identity = await client.query<{ executor: string }>('SELECT current_user AS executor');
+  const executor = identity.rows[0]?.executor;
+  if (!executor) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
+  const sql = await formatted(
+    client,
+    'REVOKE %I FROM %I GRANTED BY %I',
+    roles.migration.name,
+    executor,
+    executor,
+  );
+  await client.query(sql);
+  await verifyAutomaticMemberships(client);
+  const setCheck = await client.query<{ can_set: boolean }>(
+    `SELECT pg_has_role(current_user, $1, 'SET') AS can_set`,
+    [roles.migration.name],
+  );
+  if (setCheck.rows[0]?.can_set) throw new Error('TEMPORARY_SET_REVOKE_FAILED');
+}
+
 async function main(): Promise<void> {
   if (required('SG_BOOTSTRAP_TARGET_CONFIRMATION') !== TARGET_CONFIRMATION) {
     throw new Error('TARGET_CONFIRMATION_MISMATCH');
@@ -134,29 +272,35 @@ async function main(): Promise<void> {
       'SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname',
       [allRoleNames],
     );
-    if (Object.values(roles).some((role) => existingRoles.rows.some((row) => row.rolname === role.name))
+    const existingTargetRoleCount = Object.values(roles)
+      .filter((role) => existingRoles.rows.some((row) => row.rolname === role.name)).length;
+    if ((existingTargetRoleCount !== 0 && existingTargetRoleCount !== 3)
       || insightRoles.some((name) => !existingRoles.rows.some((row) => row.rolname === name))) {
       throw new Error('ROLE_EXISTENCE_STOP');
     }
 
-    stage = 'CREATE_ROLES';
-    await admin.query('BEGIN');
-    try {
-      for (const spec of Object.values(roles)) {
-        const sql = await formatted(
-          admin,
-          'CREATE ROLE %I LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT %s PASSWORD %L',
-          spec.name,
-          String(spec.limit),
-          required(spec.passwordEnv),
-        );
-        await admin.query(sql);
+    if (existingTargetRoleCount === 0) {
+      stage = 'CREATE_ROLES';
+      await admin.query('BEGIN');
+      try {
+        for (const spec of Object.values(roles)) {
+          const sql = await formatted(
+            admin,
+            'CREATE ROLE %I LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT %s PASSWORD %L',
+            spec.name,
+            String(spec.limit),
+            required(spec.passwordEnv),
+          );
+          await admin.query(sql);
+        }
+        await admin.query('COMMIT');
+      } catch (error) {
+        await admin.query('ROLLBACK').catch(() => undefined);
+        throw error;
       }
-      await admin.query('COMMIT');
-    } catch (error) {
-      await admin.query('ROLLBACK').catch(() => undefined);
-      throw error;
     }
+    verifyRoleFacts(await targetRoleFacts(admin));
+    await verifyAutomaticMemberships(admin);
 
     stage = 'CREATE_DATABASE';
     const createDatabase = await formatted(
@@ -168,11 +312,17 @@ async function main(): Promise<void> {
       'en_US.UTF8',
       'en_US.UTF8',
     );
-    await admin.query(createDatabase);
+    let temporarySetGranted = false;
+    try {
+      await grantTemporaryMigrationSet(admin);
+      temporarySetGranted = true;
+      await admin.query(createDatabase);
+    } finally {
+      if (temporarySetGranted) await revokeTemporaryMigrationSet(admin);
+    }
 
     stage = 'CONFIGURE_DATABASE';
-    const target = new Client(adminSettings(TARGET_DATABASE));
-    await target.connect();
+    const target = await connectAs('migration', TARGET_DATABASE);
     try {
       await target.query('BEGIN');
       try {
@@ -190,33 +340,17 @@ async function main(): Promise<void> {
     }
 
     stage = 'VERIFY';
-    const roleFacts = await admin.query<{
-      rolname: string;
-      rolcanlogin: boolean;
-      rolsuper: boolean;
-      rolcreatedb: boolean;
-      rolcreaterole: boolean;
-      rolinherit: boolean;
-      rolreplication: boolean;
-      rolbypassrls: boolean;
-      rolconnlimit: number;
-    }>(`SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
-               rolinherit, rolreplication, rolbypassrls, rolconnlimit
-          FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname`,
-      [Object.values(roles).map((role) => role.name)]);
-    if (roleFacts.rowCount !== 3 || roleFacts.rows.some((role) => !role.rolcanlogin
-      || role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolinherit
-      || role.rolreplication || role.rolbypassrls
-      || role.rolconnlimit !== Object.values(roles).find((spec) => spec.name === role.rolname)?.limit)) {
-      throw new Error('ROLE_ATTRIBUTE_VERIFY_FAILED');
-    }
-    const memberships = await admin.query<{ count: string }>(
-      `SELECT count(*)::text FROM pg_auth_members
-        WHERE roleid = ANY(SELECT oid FROM pg_roles WHERE rolname = ANY($1::text[]))
-           OR member = ANY(SELECT oid FROM pg_roles WHERE rolname = ANY($1::text[]))`,
-      [Object.values(roles).map((role) => role.name)],
+    verifyRoleFacts(await targetRoleFacts(admin));
+    await verifyAutomaticMemberships(admin);
+    const databaseOwner = await admin.query<{ owner_name: string }>(
+      `SELECT pg_get_userbyid(datdba) AS owner_name
+         FROM pg_database
+        WHERE datname = $1`,
+      [TARGET_DATABASE],
     );
-    if (memberships.rows[0]?.count !== '0') throw new Error('ROLE_MEMBERSHIP_VERIFY_FAILED');
+    if (databaseOwner.rows[0]?.owner_name !== roles.migration.name) {
+      throw new Error('DATABASE_OWNER_VERIFY_FAILED');
+    }
 
     for (const role of Object.keys(roles) as RoleKey[]) {
       const client = await connectAs(role, TARGET_DATABASE);

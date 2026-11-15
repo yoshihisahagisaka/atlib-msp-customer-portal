@@ -61,3 +61,13 @@ Bootstrap re-execution remains No-Go until separately approved.
 - The three Secure Guard login roles were created by the committed role transaction. `secure_guard_staging` was not created and Migration 001-004 remains unapplied.
 - Per the failure contract, the one-time Job and bootstrap service account's temporary access to the three Secure Guard password Secrets remain unchanged. No cleanup, IAM change or automatic recovery was performed.
 - Production changes: zero. Bootstrap and migration remain No-Go pending a separately reviewed recovery design.
+
+## 2026-11-15 PostgreSQL 16 recovery contract
+
+- Governance approved PostgreSQL 16's three automatic role-administration memberships as an explicit exception to the former zero-membership rule.
+- The exact allowed final state is one row per Secure Guard role, member equal to the bootstrap executor, grantor equal to PostgreSQL's bootstrap superuser, `ADMIN TRUE`, `SET FALSE`, and `INHERIT FALSE`.
+- Recovery is permitted only when the target database is absent, all three roles exist with exact attributes and connection limits, all five Insight roles remain present, and the membership set exactly matches that exception.
+- Partial role creation, role drift, or any extra membership remains fail-closed.
+- Database creation uses a separate temporary grant with `SET TRUE` only for the migration role. The same grantor revokes that row in a `finally` path, after which the automatic three-row state is reverified.
+- Database-internal grants and revocations are executed by the migration login as database owner; no permanent privilege expansion is introduced.
+- The new-install and three-role recovery paths are acceptance-tested on a disposable PostgreSQL 16 service. Bootstrap execution and Migration 001-004 remain No-Go until separately approved.
