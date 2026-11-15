@@ -87,3 +87,20 @@ Bootstrap re-execution remains No-Go until separately approved.
 - Existing Roles, Secrets, Secret versions, IAM and Cloud SQL configuration were not changed. Production changes: zero.
 
 Bootstrap execution remains No-Go until separately approved.
+
+## 2026-11-15 temporary SET cleanup exception fix
+
+- Fix commit: `5584c41`. Cleanup responsibility now begins before the temporary `GRANT` is attempted, so an unknown GRANT result or a verification exception still enters the same narrowly scoped REVOKE path.
+- Primary processing failure and cleanup/final-verification failure are retained separately. A cleanup failure takes the fixed `CREATE_DATABASE_TEMPORARY_SET_CLEANUP` STOP stage; neither condition can be reported as success.
+- After every successful cleanup query, the bootstrap reloads `pg_auth_members` and requires the exact three approved PostgreSQL 16 automatic rows. It never revokes those automatic grants.
+- Disposable PostgreSQL 16 integration covers: failure immediately after the temporary grant, restoration to the exact three automatic rows, no database creation on that path, and connection loss during REVOKE producing a fail-closed cleanup STOP.
+- Existing fresh-install, exact three-role recovery, partial-role STOP, database owner and cross-database isolation acceptance remains PASS.
+- Local regression: 105 PASS / 0 FAIL. TypeScript build, dedicated migration typecheck, PowerShell 5.1 syntax checks and `git diff --check`: PASS.
+- GitHub Actions runs `43723027865` and `43723033424`: PASS.
+- Cloud Build ID: `dc61cf3f-1cd1-43d0-afae-c7e4238404ce`; status `SUCCESS`; logging `CLOUD_LOGGING_ONLY`.
+- New image digest: `sha256:fa8d6c25e9417c3f7bb60f067baf52d65c2eec003e700fabc4dce0eced2b0290`.
+- The existing Job's bootstrap image was updated to the new digest. Full spec comparison confirmed that the image was the only Job spec difference.
+- Post-update read-back: Job Ready, exactly two prior failed executions, and no third execution. `secure_guard_staging` remains absent; Migration 001-004 remains unapplied.
+- Secret versions, IAM, service accounts, Cloud SQL configuration, existing roles and Production were unchanged.
+
+Bootstrap execution remains No-Go until separately approved.
