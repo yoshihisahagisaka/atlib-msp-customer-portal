@@ -339,9 +339,11 @@ async function main(): Promise<void> {
       await target.end();
     }
 
-    stage = 'VERIFY';
+    stage = 'VERIFY_ROLE_FACTS';
     verifyRoleFacts(await targetRoleFacts(admin));
+    stage = 'VERIFY_MEMBERSHIPS';
     await verifyAutomaticMemberships(admin);
+    stage = 'VERIFY_DATABASE_OWNER';
     const databaseOwner = await admin.query<{ owner_name: string }>(
       `SELECT pg_get_userbyid(datdba) AS owner_name
          FROM pg_database
@@ -353,6 +355,7 @@ async function main(): Promise<void> {
     }
 
     for (const role of Object.keys(roles) as RoleKey[]) {
+      stage = `VERIFY_${role.toUpperCase()}_LOGIN`;
       const client = await connectAs(role, TARGET_DATABASE);
       try {
         const check = await client.query<{ user_name: string; database_name: string; user_tables: string; ledger: string | null }>(
@@ -363,6 +366,7 @@ async function main(): Promise<void> {
         const row = check.rows[0];
         if (!row || row.user_name !== roles[role].name || row.database_name !== TARGET_DATABASE
           || row.user_tables !== '0' || row.ledger !== null) throw new Error('ROLE_LOGIN_VERIFY_FAILED');
+        stage = `VERIFY_${role.toUpperCase()}_SCHEMA`;
         const schema = await client.query<{ usage: boolean; create_privilege: boolean }>(
           `SELECT has_schema_privilege(current_user, 'public', 'USAGE') AS usage,
                   has_schema_privilege(current_user, 'public', 'CREATE') AS create_privilege`,
@@ -374,9 +378,11 @@ async function main(): Promise<void> {
       } finally {
         await client.end();
       }
+      stage = `VERIFY_${role.toUpperCase()}_CROSS_DATABASE`;
       await expectConnectionDenied(role, INSIGHT_DATABASE);
     }
 
+    stage = 'VERIFY_SECU_CROSS_DATABASE';
     const crossAccess = await admin.query<{ role_name: string; can_connect: boolean }>(
       `SELECT role_name,
               has_database_privilege(role_name, $1, 'CONNECT') AS can_connect
