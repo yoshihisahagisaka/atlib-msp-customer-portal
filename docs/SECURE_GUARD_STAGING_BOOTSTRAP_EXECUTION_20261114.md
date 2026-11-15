@@ -71,3 +71,19 @@ Bootstrap re-execution remains No-Go until separately approved.
 - Database creation uses a separate temporary grant with `SET TRUE` only for the migration role. The same grantor revokes that row in a `finally` path, after which the automatic three-row state is reverified.
 - Database-internal grants and revocations are executed by the migration login as database owner; no permanent privilege expansion is introduced.
 - The new-install and three-role recovery paths are acceptance-tested on a disposable PostgreSQL 16 service. Bootstrap execution and Migration 001-004 remain No-Go until separately approved.
+
+## 2026-11-15 recovery implementation and image update
+
+- Implementation commits: `4c92334`, `9d50abc`, and `2e473cf`.
+- Offline regression: 105 PASS / 0 FAIL. TypeScript build, dedicated migration typecheck, and both PowerShell 5.1 syntax checks: PASS.
+- Disposable PostgreSQL 16 integration: PASS for a non-superuser `CREATEROLE`/`CREATEDB` executor on both the new-install path and the exact three-role recovery path. Partial-role state stopped before database creation.
+- The integration verified the temporary migration `SET TRUE` grant, database ownership, owner-scoped database/schema configuration, removal of the temporary grant, and the exact three automatic `ADMIN TRUE / SET FALSE / INHERIT FALSE` membership rows.
+- GitHub Actions runs `43717061152` and `43717066030`: PASS.
+- Cloud Build ID: `e8176bcd-1f08-47c9-a342-ceeb492a13aa`; status `SUCCESS`; existing Build service account; `CLOUD_LOGGING_ONLY`.
+- New image digest: `sha256:7941dba6bd702fc6c3056f072350dd117a73710c249762d09c952ac3338f6ba5`.
+- The existing Job's `bootstrap` container was updated to the new digest. A full before/after `spec` comparison confirmed the image was the only spec change. The proxy, service account, version-1 Secret references, network, task count, parallelism, retry and timeout settings were unchanged.
+- Post-update read-back: Job Ready; execution count remains exactly two and both are the prior failed executions; no third execution was submitted.
+- `secure_guard_staging` remains absent. The three existing Secure Guard roles remain present. Migration 001-004 remains unapplied.
+- Existing Roles, Secrets, Secret versions, IAM and Cloud SQL configuration were not changed. Production changes: zero.
+
+Bootstrap execution remains No-Go until separately approved.
