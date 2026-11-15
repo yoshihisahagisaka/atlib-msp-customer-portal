@@ -49,3 +49,15 @@ Per the no-retry contract, the Job and bootstrap service account's temporary Sec
 - The bootstrap service account's temporary Secret access remains unchanged. Production changes: zero.
 
 Bootstrap re-execution remains No-Go until separately approved.
+
+## 2026-11-15 approved bootstrap re-execution
+
+- Pre-execution read-back passed for image digest `sha256:c4294e5a2e817a874e72a70aa85d7e3b06089ec8265699845bc235995a065e39`, one task, parallelism one, zero retries, 900-second timeout, the existing service account, proxy and version-1 Secret references.
+- The prior history contained exactly one failed execution before approval.
+- One additional execution was submitted: `secure-guard-db-bootstrap-staging-once-266rd`.
+- Result: `FAILED`; failed tasks one, successful tasks zero. No retry was submitted.
+- Safe application stage: `CREATE_DATABASE`.
+- Scoped Cloud SQL error: the `postgres` bootstrap principal must be able to `SET ROLE` to `secure_guard_migration_staging` before creating a database owned by that role.
+- The three Secure Guard login roles were created by the committed role transaction. `secure_guard_staging` was not created and Migration 001-004 remains unapplied.
+- Per the failure contract, the one-time Job and bootstrap service account's temporary access to the three Secure Guard password Secrets remain unchanged. No cleanup, IAM change or automatic recovery was performed.
+- Production changes: zero. Bootstrap and migration remain No-Go pending a separately reviewed recovery design.
