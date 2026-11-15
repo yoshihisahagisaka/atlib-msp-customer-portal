@@ -59,7 +59,7 @@ const bootstrapInsightRoles = [
   'secumie_maintenance_staging',
 ];
 
-function runBootstrap() {
+function runBootstrap(overrides = {}) {
   return spawnSync(process.execPath, ['dist/db/secureGuardStagingBootstrap.js'], {
     cwd: path.join(__dirname, '../..'),
     encoding: 'utf8',
@@ -76,6 +76,7 @@ function runBootstrap() {
       SG_OVERAGE_DB_PASSWORD: fixturePassword,
       SG_MIGRATION_DB_PASSWORD: fixturePassword,
       CLOUD_SQL_PROXY_ADMIN_URL: '',
+      ...overrides,
     },
   });
 }
@@ -155,6 +156,22 @@ async function assertCompletedBootstrap(admin) {
   })));
 }
 
+async function targetMemberships(admin) {
+  return admin.query(
+    `SELECT target.rolname AS role_name, member.rolname AS member_name,
+            grantor.rolname AS grantor_name, membership.admin_option,
+            membership.inherit_option, membership.set_option
+       FROM pg_auth_members membership
+       JOIN pg_roles target ON target.oid = membership.roleid
+       JOIN pg_roles member ON member.oid = membership.member
+       JOIN pg_roles grantor ON grantor.oid = membership.grantor
+      WHERE target.rolname = ANY($1::text[])
+         OR member.rolname = ANY($1::text[])
+      ORDER BY target.rolname, grantor.rolname`,
+    [bootstrapRoles.map(([name]) => name)],
+  );
+}
+
 test('PostgreSQL 16: bootstrap format parameters have explicit text types', async () => {
   assert.equal(process.env.CI, 'true', 'CI-only integration test');
   assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true', 'Explicit opt-in required');
@@ -211,6 +228,39 @@ test('PostgreSQL 16: bootstrap new, recovery and interrupted-state contracts',
       const recovery = runBootstrap();
       assert.equal(recovery.status, 0, `Recovery bootstrap must pass: ${recovery.stderr}`);
       await assertCompletedBootstrap(admin);
+      await cleanupBootstrapFixtures(admin);
+
+      // A failure after GRANT but during verification must revoke the bootstrap's
+      // own SET row, restore the exact three automatic rows, and never create DB.
+      await setupBootstrapManagerAndInsight(admin);
+      await createBootstrapRolesAsManager();
+      const verifyFailure = runBootstrap({
+        SG_BOOTSTRAP_TEST_FAIL_AFTER_TEMPORARY_GRANT: 'true',
+      });
+      assert.notEqual(verifyFailure.status, 0);
+      assert.match(verifyFailure.stderr, /"stage":"CREATE_DATABASE_TEMPORARY_SET_VERIFY"/);
+      const afterVerifyFailure = await targetMemberships(admin);
+      assert.equal(afterVerifyFailure.rowCount, 3);
+      assert.equal(afterVerifyFailure.rows.some((row) => row.set_option), false);
+      const noDatabaseAfterVerifyFailure = await admin.query(
+        'SELECT 1 FROM pg_database WHERE datname = $1', [bootstrapTargetDatabase],
+      );
+      assert.equal(noDatabaseAfterVerifyFailure.rowCount, 0);
+      await cleanupBootstrapFixtures(admin);
+
+      // Connection loss during REVOKE is never reported as success and no final
+      // verification or later configuration can run. Superuser fixture cleanup
+      // is test-only and models the separately approved recovery requirement.
+      await setupBootstrapManagerAndInsight(admin);
+      await createBootstrapRolesAsManager();
+      const revokeFailure = runBootstrap({
+        SG_BOOTSTRAP_TEST_FAIL_TEMPORARY_REVOKE: 'true',
+      });
+      assert.notEqual(revokeFailure.status, 0);
+      assert.match(revokeFailure.stderr, /"stage":"CREATE_DATABASE_TEMPORARY_SET_CLEANUP"/);
+      const afterRevokeFailure = await targetMemberships(admin);
+      assert.equal(afterRevokeFailure.rowCount, 4);
+      assert.equal(afterRevokeFailure.rows.filter((row) => row.set_option).length, 1);
       await cleanupBootstrapFixtures(admin);
 
       // Partial role creation is ambiguous and must stop before database creation.

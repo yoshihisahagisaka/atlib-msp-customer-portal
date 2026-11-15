@@ -188,6 +188,9 @@ async function grantTemporaryMigrationSet(client: Client): Promise<void> {
     executor,
   );
   await client.query(sql);
+}
+
+async function verifyTemporaryMigrationSet(client: Client): Promise<void> {
   const check = await client.query<{ can_set: boolean; count: string }>(
     `SELECT pg_has_role(current_user, $1, 'SET') AS can_set,
             (SELECT count(*)::text
@@ -209,6 +212,13 @@ async function grantTemporaryMigrationSet(client: Client): Promise<void> {
 }
 
 async function revokeTemporaryMigrationSet(client: Client): Promise<void> {
+  if (process.env.SG_BOOTSTRAP_TEST_FAIL_TEMPORARY_REVOKE === 'true') {
+    if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
+      || required('DB_BOOTSTRAP_HOST') !== '127.0.0.1') {
+      throw new Error('TEST_HOOK_ENVIRONMENT_INVALID');
+    }
+    await client.end();
+  }
   const identity = await client.query<{ executor: string }>('SELECT current_user AS executor');
   const executor = identity.rows[0]?.executor;
   if (!executor) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
@@ -312,13 +322,40 @@ async function main(): Promise<void> {
       'en_US.UTF8',
       'en_US.UTF8',
     );
-    let temporarySetGranted = false;
+    let primaryFailure: unknown;
+    let primaryFailureStage = stage;
+    let cleanupFailure: unknown;
     try {
+      // Cleanup responsibility begins before GRANT so an unknown GRANT result is
+      // handled by the same narrowly scoped REVOKE and final membership check.
+      stage = 'CREATE_DATABASE_TEMPORARY_SET_GRANT';
       await grantTemporaryMigrationSet(admin);
-      temporarySetGranted = true;
+      stage = 'CREATE_DATABASE_TEMPORARY_SET_VERIFY';
+      if (process.env.SG_BOOTSTRAP_TEST_FAIL_AFTER_TEMPORARY_GRANT === 'true') {
+        if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
+          || required('DB_BOOTSTRAP_HOST') !== '127.0.0.1') {
+          throw new Error('TEST_HOOK_ENVIRONMENT_INVALID');
+        }
+        throw new Error('TEST_TEMPORARY_SET_VERIFY_FAILURE');
+      }
+      await verifyTemporaryMigrationSet(admin);
+      stage = 'CREATE_DATABASE';
       await admin.query(createDatabase);
+    } catch (error) {
+      primaryFailure = error;
+      primaryFailureStage = stage;
     } finally {
-      if (temporarySetGranted) await revokeTemporaryMigrationSet(admin);
+      stage = 'CREATE_DATABASE_TEMPORARY_SET_CLEANUP';
+      try {
+        await revokeTemporaryMigrationSet(admin);
+      } catch (error) {
+        cleanupFailure = error;
+      }
+    }
+    if (cleanupFailure) throw cleanupFailure;
+    if (primaryFailure) {
+      stage = primaryFailureStage;
+      throw primaryFailure;
     }
 
     stage = 'CONFIGURE_DATABASE';

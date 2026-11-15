@@ -41,6 +41,9 @@ test('staging bootstrap fails closed and verifies cross-database isolation', () 
   assert.match(source, /ROLE_MEMBERSHIP_VERIFY_FAILED/);
   assert.match(source, /GRANT %I TO %I WITH ADMIN FALSE, SET TRUE, INHERIT FALSE/);
   assert.match(source, /REVOKE %I FROM %I GRANTED BY %I/);
+  assert.match(source, /CREATE_DATABASE_TEMPORARY_SET_CLEANUP/);
+  assert.match(source, /if \(cleanupFailure\) throw cleanupFailure/);
+  assert.match(source, /await verifyAutomaticMemberships\(client\)/);
   assert.match(source, /pg_get_userbyid\(10\) AS bootstrap_superuser/);
   assert.match(source, /DATABASE_OWNER_VERIFY_FAILED/);
   assert.doesNotMatch(source, /DROP DATABASE|DROP ROLE|ALTER ROLE/);
