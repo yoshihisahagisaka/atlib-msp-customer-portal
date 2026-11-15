@@ -104,3 +104,17 @@ Bootstrap execution remains No-Go until separately approved.
 - Secret versions, IAM, service accounts, Cloud SQL configuration, existing roles and Production were unchanged.
 
 Bootstrap execution remains No-Go until separately approved.
+
+## 2026-11-15 approved third execution
+
+- Approval: PR #6 comment `6896048052`; approved source/evidence HEAD `5c3c2d1eb1459df20176f5629095f44129dc972e`.
+- Pre-execution read-back passed for Job Ready, image digest `sha256:fa8d6c25e9417c3f7bb60f067baf52d65c2eec003e700fabc4dce0eced2b0290`, one task, parallelism one, zero retries, 900-second timeout, the approved service account, fixed Cloud SQL Proxy, default VPC with private-ranges-only egress, and four version-1 Secret references.
+- Before execution, `secure_guard_staging` was absent, the three Secure Guard roles and five Insight roles were present, `secumie_insight_staging` was present, and execution history contained exactly the two prior failed executions.
+- Exactly one manual execution was submitted: `secure-guard-db-bootstrap-staging-once-x9zvg`.
+- Result: `FAILED`; failed tasks one, successful tasks zero; no retry or additional execution was submitted.
+- Safe application event: `secure_guard_staging_bootstrap_failed`, fixed stage `PREFLIGHT`.
+- The safe log does not classify which preflight comparison failed. No cause is inferred from the aggregate stage.
+- Post-failure read-back: `secure_guard_staging` remains absent; the three Secure Guard roles, five Insight roles, and `secumie_insight_staging` remain present; execution count is exactly three.
+- Per the failure contract, the Job, Roles, Secrets, version-1 Secret references, service accounts and temporary Secret IAM remain in place. No cleanup, migration, automatic recovery or production change was performed.
+
+Bootstrap and Migration 001-004 remain No-Go pending separate root-cause review and approval.
