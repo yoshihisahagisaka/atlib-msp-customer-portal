@@ -358,14 +358,19 @@ async function main(): Promise<void> {
       stage = `VERIFY_${role.toUpperCase()}_LOGIN`;
       const client = await connectAs(role, TARGET_DATABASE);
       try {
-        const check = await client.query<{ user_name: string; database_name: string; user_tables: string; ledger: string | null }>(
+        const check = await client.query<{ user_name: string; database_name: string; user_tables: string }>(
           `SELECT current_user AS user_name, current_database() AS database_name,
-                  (SELECT count(*)::text FROM pg_tables WHERE schemaname = 'public') AS user_tables,
-                  to_regclass('public.secure_guard_schema_migrations')::text AS ledger`,
+                  (SELECT count(*)::text FROM pg_tables WHERE schemaname = 'public') AS user_tables`,
         );
         const row = check.rows[0];
         if (!row || row.user_name !== roles[role].name || row.database_name !== TARGET_DATABASE
-          || row.user_tables !== '0' || row.ledger !== null) throw new Error('ROLE_LOGIN_VERIFY_FAILED');
+          || row.user_tables !== '0') throw new Error('ROLE_LOGIN_VERIFY_FAILED');
+        if (role === 'migration') {
+          const ledger = await client.query<{ ledger: string | null }>(
+            `SELECT to_regclass('public.secure_guard_schema_migrations')::text AS ledger`,
+          );
+          if (ledger.rows[0]?.ledger !== null) throw new Error('MIGRATION_LEDGER_UNEXPECTED');
+        }
         stage = `VERIFY_${role.toUpperCase()}_SCHEMA`;
         const schema = await client.query<{ usage: boolean; create_privilege: boolean }>(
           `SELECT has_schema_privilege(current_user, 'public', 'USAGE') AS usage,
