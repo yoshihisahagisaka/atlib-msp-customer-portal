@@ -204,3 +204,29 @@ Future separately approved execution must use this sequence:
 Local static regression, TypeScript build/typecheck, manifest verification and the existing suite pass. The disposable PostgreSQL 16 integration now also covers a file-level partial failure: 001 commits, 002 rolls back, and the ledger contains only 001. The dedicated image is built and exercised by GitHub Actions because the local Windows Docker engine was unavailable to this worktree. No Cloud Build, Artifact push, Job creation, IAM/Secret/VPC change, migration, or Production change was made.
 
 Gate S3 real execution remains No-Go pending the consolidated Staging execution approval.
+
+## 2026-11-16 Gate S3 migration execution — STOP at acceptance
+
+The approved line-ending-only hash correction was committed as `68aed9311863f0d88317eb1e187bbc4202bbbbdb`. The migration runner and manifest verifier now both canonicalize LF/CRLF to CRLF before SHA-256 calculation; no SQL or approved manifest hash changed. Local regression was 111 PASS / 0 FAIL, and GitHub Actions runs `43816474334` and `43816479870` passed, including the disposable PostgreSQL 16 image execution, exact ledger hashes, safe replay, manifest drift rejection and migration image build.
+
+The dedicated migration image was built once:
+
+- Cloud Build ID: `46d85ca1-ac75-4b3b-98ce-0318aea03fd7`
+- Status: `SUCCESS`; existing Build SA; `CLOUD_LOGGING_ONLY`
+- Image digest: `sha256:146d26da81fa9125f76ce9ed472f9da10b67c78ef56115381c8f9e72dc55cb45`
+- Artifact Analysis: `FINISHED_SUCCESS`; vulnerability counts matched the previously accepted Bootstrap baseline.
+
+Job `secure-guard-db-migrate-staging-once` was created from the reviewed template. Read-back confirmed generation 1, Ready, task/parallelism one, retry zero, timeout 900 seconds, migration SA, migration password Secret version 1 only, pool maximum one, fixed Proxy and Direct VPC settings, and the digest above. No scheduler or execution-at-create was configured.
+
+The read-only S3 preflight used Execution `secure-guard-db-bootstrap-staging-once-q925w` and passed: PostgreSQL 16.15; target owner `postgres`; zero SG memberships; exact role attributes and limits 2/2/1; all three SG roles had CONNECT; database CREATE and public schema USAGE/CREATE were migration-only; runtime/overage CREATE was denied; cross-database CONNECT was denied in both directions; public tables were zero and the migration ledger was absent.
+
+The migration Job was manually executed exactly once as `secure-guard-db-migrate-staging-once-8lr7z`. It completed successfully with one task and zero retries. The fixed safe log recorded manifest count four, database `secure_guard_staging`, role `secure_guard_migration_staging`, and application of 001, 002, 003 and 004 in order. The manifest hashes remain:
+
+- `001_identity_scope_baseline.sql`: `19573cbc9c038b3f04ef72dc65a30dc49f328ff258af9993780a92f67d6f3f1e`
+- `002_overage_alerts.sql`: `4e5a2add9325aef108e10f312c80c6e4a03b4ed64bb73cac9bd05c71b410822a`
+- `003_license_alert_snapshot.sql`: `7d996cc7cfa9a1c1faa3a8a272c6fa82f279336d85869f640cb389b87810f802`
+- `004_agent_uninstall_claims.sql`: `ea58e4196dcf02e2181cb6505e2065b58d17ba433f549dc5ad96019552334ebd`
+
+Gate S3 acceptance is incomplete and therefore STOP. The statically reviewed SELECT-only acceptance script had SHA-256 `f8104f071f38a77354156ffb66eff4d1f445001b45c4848a1e1a5697709c542e`. A first local invocation exceeded the Windows command-length limit and created no Execution. The compressed transfer invocation created Execution `secure-guard-db-bootstrap-staging-once-ch5wq`, but the CLI split the Node expression at its comma into three args. Node stopped with a syntax error before loading the SELECT-only script or opening a database connection. No acceptance value, ledger row, object owner or runtime/overage privilege result was produced. Per the no-retry contract, no further diagnostic Execution was submitted.
+
+At STOP, Cloud SQL remained `RUNNABLE`; the migration Execution remained `SUCCEEDED`; all listed existing Cloud Run services remained Ready. No manual GRANT, schema repair, migration replay, Job deletion, Secret/IAM/VPC change, Production change, synthetic E2E or Gate S4 action was performed. The database and migration Job are retained. Direct ledger-hash verification, object/constraint ownership, runtime/overage Positive/Negative privilege acceptance, empty-data verification and final cross-database acceptance remain unverified and require a separately approved read-only acceptance recovery. Gate S3 is **STOP**, not PASS; Gate S4 remains No-Go.
