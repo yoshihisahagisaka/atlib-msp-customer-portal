@@ -6,14 +6,14 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const verifier = require('../scripts/readiness/verifySecureGuardMigrationManifest.cjs');
-const manifestPath = path.join(root, 'migration-manifests/secure-guard-staging-001-004.json');
+const manifestPath = path.join(root, 'migration-manifests/secure-guard-staging-001-005.json');
 const migrationsDirectory = path.join(root, 'migrations/secure_guard');
 
-test('SG migration manifest fixes exactly 001-004 and their approved SHA-256 values', () => {
+test('SG migration manifest fixes exactly 001-005 and their approved SHA-256 values', () => {
   const result = verifier.verify(manifestPath, migrationsDirectory, true);
   assert.equal(result.database, 'secure_guard_staging');
   assert.equal(result.role, 'secure_guard_migration_staging');
-  assert.equal(result.count, 4);
+  assert.equal(result.count, 5);
   assert.deepEqual(result.filenames, verifier.expectedNames);
 });
 
@@ -24,10 +24,25 @@ test('approved migration hashes are stable across Windows and Linux checkout lin
       const content = fs.readFileSync(path.join(migrationsDirectory, name), 'utf8');
       fs.writeFileSync(path.join(temporary, name), content.replace(/\r\n/g, '\n'));
     }
-    assert.equal(verifier.verify(manifestPath, temporary, true).count, 4);
+    assert.equal(verifier.verify(manifestPath, temporary, true).count, 5);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test('Migration 005 grants only the approved explicit runtime and overage privileges', () => {
+  const sql = fs.readFileSync(
+    path.join(migrationsDirectory, '005_runtime_overage_privileges.sql'), 'utf8',
+  );
+  assert.match(sql, /GRANT USAGE ON SCHEMA public/);
+  assert.match(sql, /TO secure_guard_runtime_staging, secure_guard_overage_staging/);
+  assert.match(sql, /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE/);
+  assert.match(sql, /TO secure_guard_runtime_staging/);
+  assert.match(sql, /GRANT SELECT, INSERT, UPDATE ON TABLE\s+public\.secure_guard_overage_alerts/);
+  assert.match(sql, /TO secure_guard_overage_staging/);
+  assert.doesNotMatch(sql, /ON ALL TABLES|ALTER DEFAULT PRIVILEGES/i);
+  assert.doesNotMatch(sql, /secure_guard_schema_migrations/i);
+  assert.doesNotMatch(sql, /\b(?:CREATE|ALTER|DROP|GRANT\s+\w+\s+TO\s+\w+\s+WITH)\b/i);
 });
 
 test('manifest verifier stops on missing, extra, reordered or changed SQL before execution', () => {

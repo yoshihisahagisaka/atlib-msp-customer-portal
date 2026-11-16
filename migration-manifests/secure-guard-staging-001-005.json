@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "database": "secure_guard_staging",
+  "role": "secure_guard_migration_staging",
+  "approvalBaselineCommit": "554331dc2f1e06484b6e3c40e1b3f18c061c8162",
+  "migrations": [
+    { "filename": "001_identity_scope_baseline.sql", "sha256": "19573cbc9c038b3f04ef72dc65a30dc49f328ff258af9993780a92f67d6f3f1e" },
+    { "filename": "002_overage_alerts.sql", "sha256": "4e5a2add9325aef108e10f312c80c6e4a03b4ed64bb73cac9bd05c71b410822a" },
+    { "filename": "003_license_alert_snapshot.sql", "sha256": "7d996cc7cfa9a1c1faa3a8a272c6fa82f279336d85869f640cb389b87810f802" },
+    { "filename": "004_agent_uninstall_claims.sql", "sha256": "ea58e4196dcf02e2181cb6505e2065b58d17ba433f549dc5ad96019552334ebd" },
+    { "filename": "005_runtime_overage_privileges.sql", "sha256": "cf005a3f148fba9098ccda869303fa77113d072651aed5b7fe286e763c7b0d40" }
+  ]
+}

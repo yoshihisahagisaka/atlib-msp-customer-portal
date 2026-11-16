@@ -22,8 +22,8 @@ ENV NODE_ENV=production
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist-secure-guard-migration ./dist-secure-guard-migration
 COPY migrations/secure_guard ./migrations/secure_guard
-COPY migration-manifests/secure-guard-staging-001-004.json ./migration-manifests/secure-guard-staging-001-004.json
+COPY migration-manifests/secure-guard-staging-001-005.json ./migration-manifests/secure-guard-staging-001-005.json
 COPY scripts/readiness/verifySecureGuardMigrationManifest.cjs ./scripts/readiness/verifySecureGuardMigrationManifest.cjs
-RUN node scripts/readiness/verifySecureGuardMigrationManifest.cjs migration-manifests/secure-guard-staging-001-004.json migrations/secure_guard true
+RUN node scripts/readiness/verifySecureGuardMigrationManifest.cjs migration-manifests/secure-guard-staging-001-005.json migrations/secure_guard true
 USER node
 CMD ["node", "dist-secure-guard-migration/migrations/secure_guard_runner.js"]

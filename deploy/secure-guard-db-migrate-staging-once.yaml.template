@@ -32,7 +32,7 @@ spec:
                 - { name: SECURE_GUARD_MIGRATION_APPROVED, value: 'true' }
                 - { name: SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION, value: 'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging' }
                 - { name: SECURE_GUARD_MIGRATIONS_DIR, value: /app/migrations/secure_guard }
-                - { name: SECURE_GUARD_MIGRATION_MANIFEST, value: /app/migration-manifests/secure-guard-staging-001-004.json }
+                - { name: SECURE_GUARD_MIGRATION_MANIFEST, value: /app/migration-manifests/secure-guard-staging-001-005.json }
                 - { name: SECURE_GUARD_MIGRATION_VERIFIER, value: /app/scripts/readiness/verifySecureGuardMigrationManifest.cjs }
                 - { name: CLOUD_SQL_PROXY_ADMIN_URL, value: 'http://127.0.0.1:9091/quitquitquit' }
                 - name: SECURE_GUARD_MIGRATION_DB_PASSWORD

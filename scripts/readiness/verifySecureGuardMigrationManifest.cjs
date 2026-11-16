@@ -9,6 +9,7 @@ const expectedNames = [
   '002_overage_alerts.sql',
   '003_license_alert_snapshot.sql',
   '004_agent_uninstall_claims.sql',
+  '005_runtime_overage_privileges.sql',
 ];
 
 function fail(message) {
@@ -22,12 +23,12 @@ function verify(manifestPath, migrationsDirectory, strict = true) {
     || manifest.role !== 'secure_guard_migration_staging') {
     fail('unexpected database or role target');
   }
-  if (!Array.isArray(manifest.migrations) || manifest.migrations.length !== 4) {
-    fail('exactly four migrations are required');
+  if (!Array.isArray(manifest.migrations) || manifest.migrations.length !== 5) {
+    fail('exactly five migrations are required');
   }
   const names = manifest.migrations.map((entry) => entry.filename);
   if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
-    fail('migration order or filename differs from 001-004 allowlist');
+    fail('migration order or filename differs from 001-005 allowlist');
   }
   for (const entry of manifest.migrations) {
     if (!/^[0-9a-f]{64}$/.test(entry.sha256)) fail(`invalid SHA-256 for ${entry.filename}`);

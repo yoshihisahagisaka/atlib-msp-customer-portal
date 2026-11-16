@@ -40,7 +40,7 @@ function runMigration(overrides = {}) {
         'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging',
       SECURE_GUARD_MIGRATIONS_DIR: path.join(__dirname, '../../migrations/secure_guard'),
       SECURE_GUARD_MIGRATION_MANIFEST:
-        path.join(__dirname, '../../migration-manifests/secure-guard-staging-001-004.json'),
+        path.join(__dirname, '../../migration-manifests/secure-guard-staging-001-005.json'),
       SECURE_GUARD_MIGRATION_VERIFIER:
         path.join(__dirname, '../../scripts/readiness/verifySecureGuardMigrationManifest.cjs'),
       // Never use the legacy DB principal, socket or endpoint.
@@ -376,12 +376,48 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
     assert.match(first.stdout, /applied: 003_license_alert_snapshot\.sql/);
     assert.match(first.stdout, /applied: 004_agent_uninstall_claims\.sql/);
 
+    assert.match(first.stdout, /applied: 005_runtime_overage_privileges\.sql/);
+
+    // Reproduce an established 001-004 database: remove only the 005 ledger row
+    // and the exact privileges introduced by 005, then prove the runner skips
+    // 001-004 and applies only 005.
+    const upgradeFixture = client(targetDatabase, migrationUser, fixturePassword);
+    await upgradeFixture.connect();
+    try {
+      await upgradeFixture.query(`REVOKE USAGE ON SCHEMA public
+        FROM ${runtimeUser}, ${overageUser}`);
+      await upgradeFixture.query(`REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLE
+        portal_users, customer_organizations, customer_memberships, msp_role_grants,
+        dnsfilter_organization_mappings, secure_guard_receipts, secure_guard_audit_events,
+        secure_guard_overage_alerts, secure_guard_agent_uninstall_claims
+        FROM ${runtimeUser}`);
+      await upgradeFixture.query(`REVOKE USAGE, SELECT ON SEQUENCE
+        secure_guard_overage_alerts_id_seq FROM ${runtimeUser}`);
+      await upgradeFixture.query(`REVOKE SELECT ON TABLE
+        customer_organizations, dnsfilter_organization_mappings FROM ${overageUser}`);
+      await upgradeFixture.query(`REVOKE SELECT, INSERT, UPDATE ON TABLE
+        secure_guard_overage_alerts FROM ${overageUser}`);
+      await upgradeFixture.query(`REVOKE USAGE, SELECT ON SEQUENCE
+        secure_guard_overage_alerts_id_seq FROM ${overageUser}`);
+      await upgradeFixture.query(`DELETE FROM secure_guard_schema_migrations
+        WHERE filename = '005_runtime_overage_privileges.sql'`);
+    } finally {
+      await upgradeFixture.end();
+    }
+
+    const upgrade = runMigration();
+    assert.equal(upgrade.status, 0, `001-004 upgrade must pass: ${upgrade.stderr}`);
+    assert.match(upgrade.stdout, /skip verified: 001_identity_scope_baseline\.sql/);
+    assert.match(upgrade.stdout, /skip verified: 004_agent_uninstall_claims\.sql/);
+    assert.match(upgrade.stdout, /applied: 005_runtime_overage_privileges\.sql/);
+
     const replay = runMigration();
     assert.equal(replay.status, 0, `Migration replay must be safe: ${replay.stderr}`);
     assert.match(replay.stdout, /skip verified: 001_identity_scope_baseline\.sql/);
     assert.match(replay.stdout, /skip verified: 002_overage_alerts\.sql/);
     assert.match(replay.stdout, /skip verified: 003_license_alert_snapshot\.sql/);
     assert.match(replay.stdout, /skip verified: 004_agent_uninstall_claims\.sql/);
+    assert.match(replay.stdout, /skip verified: 005_runtime_overage_privileges\.sql/);
 
     const ddl = client(targetDatabase, migrationUser, fixturePassword);
     await ddl.connect();
@@ -390,6 +426,7 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
       assert.deepEqual(ledger.rows.map((row) => row.filename), [
         '001_identity_scope_baseline.sql', '002_overage_alerts.sql',
         '003_license_alert_snapshot.sql', '004_agent_uninstall_claims.sql',
+        '005_runtime_overage_privileges.sql',
       ]);
       const tables = await ddl.query(`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
@@ -404,17 +441,64 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         WHERE contype = 'f' AND confrelid = to_regclass('public.customers')
       `);
       assert.equal(crossFk.rows[0].count, 0);
-      await ddl.query('REVOKE CREATE ON SCHEMA public FROM PUBLIC');
-      await ddl.query(`GRANT USAGE ON SCHEMA public TO ${runtimeUser}`);
-      await ddl.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${runtimeUser}`);
-      await ddl.query(`REVOKE ALL PRIVILEGES ON secure_guard_schema_migrations FROM ${runtimeUser}`);
-      await ddl.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${runtimeUser}`);
-      // A separate overage Job login can only read Organization/mapping identifiers
-      // and update alert episodes. It cannot inspect personal identities or audits.
-      await ddl.query(`GRANT USAGE ON SCHEMA public TO ${overageUser}`);
-      await ddl.query(`GRANT SELECT ON customer_organizations, dnsfilter_organization_mappings TO ${overageUser}`);
-      await ddl.query(`GRANT SELECT, INSERT, UPDATE ON secure_guard_overage_alerts TO ${overageUser}`);
-      await ddl.query(`GRANT USAGE, SELECT ON SEQUENCE secure_guard_overage_alerts_id_seq TO ${overageUser}`);
+      const businessTables = [
+        'portal_users', 'customer_organizations', 'customer_memberships', 'msp_role_grants',
+        'dnsfilter_organization_mappings', 'secure_guard_receipts', 'secure_guard_audit_events',
+        'secure_guard_overage_alerts', 'secure_guard_agent_uninstall_claims',
+      ];
+      const runtimeChecks = await ddl.query(`
+        SELECT table_name, privilege, has_table_privilege($1, format('public.%I', table_name), privilege) AS allowed
+        FROM unnest($2::text[]) AS table_name
+        CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']::text[]) AS privilege
+        ORDER BY table_name, privilege
+      `, [runtimeUser, businessTables]);
+      assert.equal(runtimeChecks.rowCount, 36);
+      assert.equal(runtimeChecks.rows.filter((row) => row.allowed).length, 36);
+      const runtimeBoundary = await ddl.query(`SELECT
+        has_schema_privilege($1, 'public', 'USAGE') AS schema_usage,
+        has_schema_privilege($1, 'public', 'CREATE') AS schema_create,
+        has_database_privilege($1, $2, 'CREATE') AS database_create,
+        has_sequence_privilege($1, 'public.secure_guard_overage_alerts_id_seq', 'USAGE') AS sequence_usage,
+        has_sequence_privilege($1, 'public.secure_guard_overage_alerts_id_seq', 'SELECT') AS sequence_select,
+        has_table_privilege($1, 'public.secure_guard_schema_migrations', 'SELECT') AS ledger_select
+      `, [runtimeUser, targetDatabase]);
+      assert.deepEqual(runtimeBoundary.rows[0], {
+        schema_usage: true, schema_create: false, database_create: false,
+        sequence_usage: true, sequence_select: true, ledger_select: false,
+      });
+
+      const overageBoundary = await ddl.query(`SELECT
+        has_schema_privilege($1, 'public', 'USAGE') AS schema_usage,
+        has_schema_privilege($1, 'public', 'CREATE') AS schema_create,
+        has_database_privilege($1, $2, 'CREATE') AS database_create,
+        has_table_privilege($1, 'public.customer_organizations', 'SELECT') AS org_select,
+        has_table_privilege($1, 'public.dnsfilter_organization_mappings', 'SELECT') AS mapping_select,
+        has_table_privilege($1, 'public.secure_guard_overage_alerts', 'SELECT') AS alerts_select,
+        has_table_privilege($1, 'public.secure_guard_overage_alerts', 'INSERT') AS alerts_insert,
+        has_table_privilege($1, 'public.secure_guard_overage_alerts', 'UPDATE') AS alerts_update,
+        has_sequence_privilege($1, 'public.secure_guard_overage_alerts_id_seq', 'USAGE') AS sequence_usage,
+        has_sequence_privilege($1, 'public.secure_guard_overage_alerts_id_seq', 'SELECT') AS sequence_select,
+        has_table_privilege($1, 'public.customer_organizations', 'UPDATE') AS org_update,
+        has_table_privilege($1, 'public.dnsfilter_organization_mappings', 'UPDATE') AS mapping_update,
+        has_table_privilege($1, 'public.secure_guard_overage_alerts', 'DELETE') AS alerts_delete,
+        has_table_privilege($1, 'public.portal_users', 'SELECT') AS users_select,
+        has_table_privilege($1, 'public.customer_memberships', 'SELECT') AS memberships_select,
+        has_table_privilege($1, 'public.msp_role_grants', 'SELECT') AS grants_select,
+        has_table_privilege($1, 'public.secure_guard_audit_events', 'SELECT') AS audit_select,
+        has_table_privilege($1, 'public.secure_guard_schema_migrations', 'SELECT') AS ledger_select
+      `, [overageUser, targetDatabase]);
+      const overage = overageBoundary.rows[0];
+      assert.deepEqual([
+        overage.org_select, overage.mapping_select, overage.alerts_select, overage.alerts_insert,
+        overage.alerts_update, overage.sequence_usage, overage.sequence_select,
+      ], Array(7).fill(true));
+      assert.deepEqual([
+        overage.org_update, overage.mapping_update, overage.alerts_delete, overage.users_select,
+        overage.memberships_select, overage.grants_select, overage.audit_select, overage.ledger_select,
+      ], Array(8).fill(false));
+      assert.equal(overage.schema_usage, true);
+      assert.equal(overage.schema_create, false);
+      assert.equal(overage.database_create, false);
     } finally {
       await ddl.end();
     }

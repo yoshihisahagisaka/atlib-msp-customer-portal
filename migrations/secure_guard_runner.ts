@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   );
   const manifestPath = path.resolve(
     process.env.SECURE_GUARD_MIGRATION_MANIFEST
-      ?? '/app/migration-manifests/secure-guard-staging-001-004.json',
+      ?? '/app/migration-manifests/secure-guard-staging-001-005.json',
   );
   const verifierPath = path.resolve(
     process.env.SECURE_GUARD_MIGRATION_VERIFIER
