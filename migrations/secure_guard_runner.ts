@@ -5,6 +5,13 @@ import { execFileSync } from 'child_process';
 import type { PoolClient } from 'pg';
 import { createSecureGuardDatabasePool, readSecureGuardDatabaseSettings } from '../src/db/secureGuardDatabase';
 
+function approvedMigrationSha256(sql: string): string {
+  // Keep this rule identical to verifySecureGuardMigrationManifest.cjs: only line endings are
+  // canonicalized. SQL tokens, whitespace, encoding and the trailing newline remain significant.
+  const canonicalSql = sql.replace(/\r?\n/g, '\r\n');
+  return createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
+}
+
 async function shutdownCloudSqlProxy(): Promise<void> {
   const url = process.env.CLOUD_SQL_PROXY_ADMIN_URL;
   if (!url) return;
@@ -85,7 +92,7 @@ async function main(): Promise<void> {
 
     for (const filename of names) {
       const sql = fs.readFileSync(path.join(migrationDir, filename), 'utf8');
-      const sha256 = createHash('sha256').update(sql).digest('hex');
+      const sha256 = approvedMigrationSha256(sql);
       const existing = await client.query<{ sha256: string }>(
         'SELECT sha256 FROM secure_guard_schema_migrations WHERE filename = $1', [filename],
       );

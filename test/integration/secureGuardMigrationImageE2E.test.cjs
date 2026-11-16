@@ -9,6 +9,7 @@ const database = 'secure_guard_staging';
 const role = 'secure_guard_migration_staging';
 const password = 'local_ci_fixture_password_not_a_secret';
 const image = 'secure-guard-migration-ci:current';
+const approvedManifest = require('../../migration-manifests/secure-guard-staging-001-004.json');
 
 function client(databaseName = 'postgres') {
   return new Client({ host, port, database: databaseName, user: 'postgres', password });
@@ -75,6 +76,10 @@ test('dedicated migration image applies and safely replays exact 001-004', { tim
         '003_license_alert_snapshot.sql',
         '004_agent_uninstall_claims.sql',
       ]);
+      assert.deepEqual(
+        ledger.rows.map((row) => row.sha256),
+        approvedManifest.migrations.map((entry) => entry.sha256),
+      );
     } finally {
       await migrated.end();
     }

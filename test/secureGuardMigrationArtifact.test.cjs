@@ -84,6 +84,8 @@ test('runner verifies manifest, configured identity and server identity before l
   assert.match(source, /settings\.name !== 'secure_guard_staging'/);
   assert.match(source, /settings\.user !== 'secure_guard_migration_staging'/);
   assert.match(source, /SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION/);
+  assert.match(source, /sql\.replace\(\/\\r\?\\n\/g, '\\r\\n'\)/);
+  assert.match(source, /const sha256 = approvedMigrationSha256\(sql\)/);
 });
 
 test('migration Job template is one-shot, migration-only and uses only its Secret', () => {
