@@ -31,8 +31,12 @@ function verify(manifestPath, migrationsDirectory, strict = true) {
   }
   for (const entry of manifest.migrations) {
     if (!/^[0-9a-f]{64}$/.test(entry.sha256)) fail(`invalid SHA-256 for ${entry.filename}`);
-    const content = fs.readFileSync(path.join(migrationsDirectory, entry.filename));
-    const actual = crypto.createHash('sha256').update(content).digest('hex');
+    // The approved hashes were recorded from the Windows review worktree. Canonicalize only
+    // line endings so the same reviewed SQL has one digest in Windows and Linux image builds.
+    // No whitespace, encoding, SQL token, or trailing-newline normalization is permitted.
+    const content = fs.readFileSync(path.join(migrationsDirectory, entry.filename), 'utf8');
+    const canonicalContent = content.replace(/\r?\n/g, '\r\n');
+    const actual = crypto.createHash('sha256').update(canonicalContent, 'utf8').digest('hex');
     if (actual !== entry.sha256) fail(`SHA-256 mismatch for ${entry.filename}`);
   }
   if (strict) {

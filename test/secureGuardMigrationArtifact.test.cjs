@@ -17,6 +17,19 @@ test('SG migration manifest fixes exactly 001-004 and their approved SHA-256 val
   assert.deepEqual(result.filenames, verifier.expectedNames);
 });
 
+test('approved migration hashes are stable across Windows and Linux checkout line endings', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-migration-lf-'));
+  try {
+    for (const name of verifier.expectedNames) {
+      const content = fs.readFileSync(path.join(migrationsDirectory, name), 'utf8');
+      fs.writeFileSync(path.join(temporary, name), content.replace(/\r\n/g, '\n'));
+    }
+    assert.equal(verifier.verify(manifestPath, temporary, true).count, 4);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test('manifest verifier stops on missing, extra, reordered or changed SQL before execution', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-migration-manifest-'));
   try {
