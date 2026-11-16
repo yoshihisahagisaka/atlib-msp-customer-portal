@@ -50,6 +50,11 @@ jobs:
         run: npm test
       - name: Dedicated SG migration typecheck
         run: npm run typecheck:secure-guard-migration
+      - name: Build dedicated SG migration image
+        run: >-
+          docker build --file Dockerfile.secure-guard-migration
+          --build-arg SOURCE_REVISION=${{ github.sha }}
+          --tag secure-guard-migration-ci:current .
       - name: Isolated PG16 migration and role-boundary acceptance
         run: npm run test:secure-guard-db-e2e
         env:
@@ -58,3 +63,8 @@ jobs:
           SECURE_GUARD_DB_E2E_ENABLED: 'true'
           SECURE_GUARD_DB_E2E_HOST: '127.0.0.1'
           SECURE_GUARD_DB_E2E_PORT: '55432'
+      - name: Dedicated migration image startup and replay acceptance
+        run: npm run test:secure-guard-migration-image-e2e
+        env:
+          CI: 'true'
+          SECURE_GUARD_MIGRATION_IMAGE_E2E_ENABLED: 'true'

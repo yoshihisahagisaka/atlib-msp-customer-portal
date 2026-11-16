@@ -1,0 +1,29 @@
+FROM node:20-alpine AS build
+WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.secure-guard-migration.json tsconfig.secure-guard-migration-build.json ./
+COPY src ./src
+COPY migrations ./migrations
+RUN npm run build:secure-guard-migration
+
+FROM node:20-alpine AS production-deps
+WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine
+WORKDIR /app
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+ENV NODE_ENV=production
+COPY --from=production-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist-secure-guard-migration ./dist-secure-guard-migration
+COPY migrations/secure_guard ./migrations/secure_guard
+COPY migration-manifests/secure-guard-staging-001-004.json ./migration-manifests/secure-guard-staging-001-004.json
+COPY scripts/readiness/verifySecureGuardMigrationManifest.cjs ./scripts/readiness/verifySecureGuardMigrationManifest.cjs
+RUN node scripts/readiness/verifySecureGuardMigrationManifest.cjs migration-manifests/secure-guard-staging-001-004.json migrations/secure_guard true
+USER node
+CMD ["node", "dist-secure-guard-migration/migrations/secure_guard_runner.js"]

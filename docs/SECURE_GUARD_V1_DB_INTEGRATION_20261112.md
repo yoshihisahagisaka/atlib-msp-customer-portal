@@ -25,6 +25,14 @@
 - 専用DBモードで通知を送れるのは定期Jobのみ。Jobは承認・Webhook設定までOFF。既存の手動通知用Slack設定が残っていても専用DBモードの手動APIから送信されないことを合成テストで確認する。Stagingでは定期Jobの通知episodeと人手対応の受入が別途必要。
 - PostgreSQL 16実DBによる001〜004 Migration再実行、Runtime/Overageの否定権限、Agent claim一意制約は使い捨てCIで検証し、PASSを確認してから次Gateへ。
 
+## 2026-11-16 Gate S4実行経路 Fit／Gap
+
+Fit：既存自動試験は、ログイン・認証、Organization／Scope境界、監査、公式Usageと割当・超過判定、episode、Slack抑止・重複防止、Agent解除の無効状態、専用runtime／overage DB権限分離を検証する。PostgreSQL 16試験は合成レコードだけを使用し、使い捨てDB／Roleを後処理する。
+
+Gap：GCPのRead-only確認ではSecure Guard StagingアプリServiceは存在しなかった。該当した`sales-tools-staging`はSecure Guard S4の承認済み環境ではなく流用しない。実環境S4には、既存runtime／overage Identityを使用する、別途レビュー済みのApplication／E2E ArtifactとStaging限定実行経路が必要である。DNSFilter書込み、Agent DELETE、Slack送信を明示的に無効化し、合成データ投入・確定的な後処理・残存0件を定義する必要がある。新規Cloud Run Service／Job、Deploy、IAM、Secret参照またはNetwork変更は別承認とする。
+
+このGapはGate S3 Migration Artifactのレビューを妨げないが、S4は実行Artifactと環境が承認されるまでNo-Goを維持する。本確認によるGCP変更は0件である。
+
 ## オフライン受入
 
 - `npm run build`、`npm run typecheck:secure-guard-migration`：PASS。

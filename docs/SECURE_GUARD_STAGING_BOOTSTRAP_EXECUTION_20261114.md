@@ -182,3 +182,25 @@ The reviewed but unapplied migration hashes remain:
 - `004_agent_uninstall_claims.sql`: `ea58e4196dcf02e2181cb6505e2065b58d17ba433f549dc5ad96019552334ebd`
 
 No Migration, ledger creation, Synthetic E2E, Job definition change, Secret/IAM/VPC change or Production change followed. Cloud SQL remained `RUNNABLE` on PostgreSQL 16.15 and all existing services remained Ready. S3-S5 remain STOP pending a separately reviewed SG migration execution artifact and path.
+
+## 2026-11-16 Gate S3 migration execution path readiness
+
+PR #6 HEAD `e28f0519e856c1d916b5ebcdcbbe8f00b6090f45` was confirmed as the actual GitHub head; the reported evidence SHA was not a transcription error. Gate S2 remains PASS and no environment operation was performed while preparing this path.
+
+The repository now contains a dedicated, non-web Secure Guard migration artifact. `Dockerfile.secure-guard-migration` compiles the existing TypeScript runner to JavaScript, installs production dependencies only, copies only the four approved SQL files, and performs the fixed-manifest check during image build. Runtime does not require `ts-node/register`, expose a port, or start the Portal application.
+
+The fail-closed manifest is `migration-manifests/secure-guard-staging-001-004.json`. Before opening a database pool or creating the ledger, the runner requires explicit approval, exact Staging target confirmation, database `secure_guard_staging`, role `secure_guard_migration_staging`, exactly four filenames in 001-004 order, and exact SHA-256 values. Existing advisory locking, independent ledger, checksum drift detection, and per-file transactions remain unchanged. After connection, database, role, and PostgreSQL 16 are revalidated before the first DDL.
+
+The reviewed Job template is `deploy/secure-guard-db-migrate-staging-once.yaml.template`. It uses the existing migration service account, the migration password Secret version 1 only, pool maximum one, one task, parallelism one, zero retries, 900-second timeout, fixed Cloud SQL Proxy/Private IP/Direct VPC configuration, and a digest-pinned migration image placeholder. Job creation and execution are separate actions; no scheduler is defined.
+
+Future separately approved execution must use this sequence:
+
+1. Build once from the reviewed commit with `cloudbuild.secure-guard-migration.yaml`, the existing Build SA, and `CLOUD_LOGGING_ONLY`; record the digest and pass the existing image-security gate.
+2. Substitute only that digest into a temporary copy of the reviewed Job template, create the absent Job, and read back every field. Do not execute during creation.
+3. Reconfirm the migration SA has Cloud SQL Client and Secret Accessor only on `secure-guard-stg-db-migration-password`; confirm Secret version 1 remains enabled.
+4. Execute exactly once only under a separate explicit approval. Stop without retry on any failed, unknown, manifest, identity, checksum, or SQL result.
+5. Require ledger 001-004 and manifest checksums to match exactly, verify owners and runtime/overage negative permissions, and preserve cross-database isolation before proceeding to S4.
+
+Local static regression, TypeScript build/typecheck, manifest verification and the existing suite pass. The disposable PostgreSQL 16 integration now also covers a file-level partial failure: 001 commits, 002 rolls back, and the ledger contains only 001. The dedicated image is built and exercised by GitHub Actions because the local Windows Docker engine was unavailable to this worktree. No Cloud Build, Artifact push, Job creation, IAM/Secret/VPC change, migration, or Production change was made.
+
+Gate S3 real execution remains No-Go pending the consolidated Staging execution approval.

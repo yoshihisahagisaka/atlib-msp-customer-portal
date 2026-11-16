@@ -1,0 +1,65 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: secure-guard-db-migrate-staging-once
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/container-dependencies: '{"migration":["cloud-sql-proxy"]}'
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/network-interfaces: '[{"network":"default","subnetwork":"default"}]'
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+    spec:
+      taskCount: 1
+      parallelism: 1
+      template:
+        spec:
+          serviceAccountName: secure-guard-db-migration-stg@msp-zabbix.iam.gserviceaccount.com
+          maxRetries: 0
+          timeoutSeconds: '900'
+          containers:
+            - name: migration
+              image: asia-northeast1-docker.pkg.dev/msp-zabbix/cloud-run-source-deploy/secure-guard-db-migration@sha256:__MIGRATION_IMAGE_DIGEST__
+              command: [node]
+              args: [dist-secure-guard-migration/migrations/secure_guard_runner.js]
+              env:
+                - { name: SECURE_GUARD_DB_MODE, value: dedicated }
+                - { name: SECURE_GUARD_DB_NAME, value: secure_guard_staging }
+                - { name: SECURE_GUARD_DB_HOST, value: 127.0.0.1 }
+                - { name: SECURE_GUARD_DB_PORT, value: '5432' }
+                - { name: SECURE_GUARD_MIGRATION_DB_USER, value: secure_guard_migration_staging }
+                - { name: SECURE_GUARD_MIGRATION_APPROVED, value: 'true' }
+                - { name: SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION, value: 'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging' }
+                - { name: SECURE_GUARD_MIGRATIONS_DIR, value: /app/migrations/secure_guard }
+                - { name: SECURE_GUARD_MIGRATION_MANIFEST, value: /app/migration-manifests/secure-guard-staging-001-004.json }
+                - { name: SECURE_GUARD_MIGRATION_VERIFIER, value: /app/scripts/readiness/verifySecureGuardMigrationManifest.cjs }
+                - { name: CLOUD_SQL_PROXY_ADMIN_URL, value: 'http://127.0.0.1:9091/quitquitquit' }
+                - name: SECURE_GUARD_MIGRATION_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: secure-guard-stg-db-migration-password
+                      key: '1'
+              resources:
+                limits: { cpu: '1', memory: 256Mi }
+            - name: cloud-sql-proxy
+              image: gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:e0cbea7b63455c1635d354ef456696d019dd02a5db47bf1994e849823e71ae89
+              args:
+                - --private-ip
+                - --address=127.0.0.1
+                - --port=5432
+                - --health-check
+                - --http-address=0.0.0.0
+                - --http-port=9090
+                - --quitquitquit
+                - --admin-port=9091
+                - --exit-zero-on-sigterm
+                - msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db
+              startupProbe:
+                initialDelaySeconds: 1
+                timeoutSeconds: 2
+                periodSeconds: 2
+                failureThreshold: 30
+                httpGet: { path: /startup, port: 9090 }
+              resources:
+                limits: { cpu: '1', memory: 256Mi }

@@ -61,3 +61,9 @@ Vanilla PostgreSQL 16では`createrole_self_grant`が空でも、非SUPERUSERの
 修正版SELECT専用Execution `secure-guard-db-bootstrap-staging-once-7dddm`で12項目を完全照合し、Gate S2はPASSへ更新した。DB owner、membership 0件、3 Role属性・ACL、PUBLIC撤回、双方向DB分離、空DB、ledger不存在はいずれも実測一致した。
 
 Gate S3はMigration適用前にSTOPした。SG専用Migration JobおよびSQLを含む承認済み実行Artifactが存在せず、Bootstrap runtime ImageにもSQL本文が含まれない。Insight Migration Jobの流用、ad-hoc override、新規Job／Imageは既存経路ではないため採用しない。DBとGate S2の正常状態を保持し、Migration、Synthetic E2E、Production No-Goを継続する。
+
+## 2026-11-16 Gate S3 Artifact判断
+
+空開始・専用DBの既存判断は維持する。Secure Guard Migrationは、Portal runtime Image、Bootstrap Image／Job、Insight Migration Jobを流用せず、非Webの専用Imageと一回限りの専用Jobを使用する。
+
+専用Imageに含めるのは既存Secure Guard Runnerと承認済みSQL 001〜004だけとし、DB接続・DDLより前に固定Manifestを検証する。実行主体は既存Migration Service AccountおよびDB Roleで、参照SecretはMigration Password Version 1だけとする。Job作成とExecutionは分離し、task／parallelism 1、retry 0、Schedulerなしを維持する。この判断は新規Schema設計、Migration改変、runtime権限追加、Production変更を承認しない。

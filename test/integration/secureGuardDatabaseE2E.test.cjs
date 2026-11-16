@@ -8,11 +8,11 @@ const { Client } = require('pg');
 // It cannot target GCP, a Cloud SQL proxy, a production database, or a remote address.
 const safeTestHost = '127.0.0.1';
 const safeTestPort = 55432;
-const targetDatabase = 'secure_guard_ci';
-const migrationUser = 'secure_guard_ci_ddl';
-const runtimeUser = 'secure_guard_ci_runtime';
-const overageUser = 'secure_guard_ci_overage';
-const secuUser = 'secumie_ci_runtime';
+const targetDatabase = 'secure_guard_staging';
+const migrationUser = 'secure_guard_migration_staging';
+const runtimeUser = 'secure_guard_runtime_staging';
+const overageUser = 'secure_guard_overage_staging';
+const secuUser = 'secumie_otp_staging';
 const fixturePassword = 'local_ci_fixture_password_not_a_secret';
 
 function client(database, user, password) {
@@ -22,7 +22,7 @@ function client(database, user, password) {
   });
 }
 
-function runMigration() {
+function runMigration(overrides = {}) {
   return spawnSync(process.execPath, ['-r', 'ts-node/register', 'migrations/secure_guard_runner.ts'], {
     cwd: path.join(__dirname, '../..'),
     encoding: 'utf8',
@@ -36,9 +36,17 @@ function runMigration() {
       SECURE_GUARD_MIGRATION_DB_USER: migrationUser,
       SECURE_GUARD_MIGRATION_DB_PASSWORD: fixturePassword,
       SECURE_GUARD_MIGRATION_APPROVED: 'true',
+      SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION:
+        'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging',
+      SECURE_GUARD_MIGRATIONS_DIR: path.join(__dirname, '../../migrations/secure_guard'),
+      SECURE_GUARD_MIGRATION_MANIFEST:
+        path.join(__dirname, '../../migration-manifests/secure-guard-staging-001-004.json'),
+      SECURE_GUARD_MIGRATION_VERIFIER:
+        path.join(__dirname, '../../scripts/readiness/verifySecureGuardMigrationManifest.cjs'),
       // Never use the legacy DB principal, socket or endpoint.
       SECURE_GUARD_DB_SOCKET_PATH: '',
       DB_NAME: 'legacy_portal_ci',
+      ...overrides,
     },
   });
 }
@@ -326,6 +334,38 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
     await admin.query('CREATE DATABASE secumie_insight_ci');
     await admin.query('REVOKE CONNECT ON DATABASE secumie_insight_ci FROM PUBLIC');
     await admin.query(`GRANT CONNECT ON DATABASE secumie_insight_ci TO ${secuUser}`);
+    await admin.query(`REVOKE CONNECT ON DATABASE ${targetDatabase} FROM PUBLIC`);
+    await admin.query(`GRANT CONNECT ON DATABASE ${targetDatabase} TO ${runtimeUser}, ${overageUser}`);
+
+    // A failure in 002 must roll back that file only: 001 and its ledger row stay
+    // consistent, while the conflicting fixture remains unchanged for review.
+    const faultSetup = client(targetDatabase, migrationUser, fixturePassword);
+    await faultSetup.connect();
+    try {
+      await faultSetup.query('CREATE TABLE secure_guard_overage_alerts (fixture_marker integer)');
+    } finally {
+      await faultSetup.end();
+    }
+    const partial = runMigration();
+    assert.notEqual(partial.status, 0, '002 conflict must stop without continuing to 003');
+    const partialState = client(targetDatabase, migrationUser, fixturePassword);
+    await partialState.connect();
+    try {
+      const ledger = await partialState.query(
+        'SELECT filename FROM secure_guard_schema_migrations ORDER BY filename',
+      );
+      assert.deepEqual(ledger.rows.map((row) => row.filename), ['001_identity_scope_baseline.sql']);
+      const marker = await partialState.query(`SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'secure_guard_overage_alerts'`);
+      assert.deepEqual(marker.rows.map((row) => row.column_name), ['fixture_marker']);
+    } finally {
+      await partialState.end();
+    }
+    await admin.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1', [targetDatabase],
+    );
+    await admin.query(`DROP DATABASE ${targetDatabase}`);
+    await admin.query(`CREATE DATABASE ${targetDatabase} OWNER ${migrationUser}`);
     await admin.query(`REVOKE CONNECT ON DATABASE ${targetDatabase} FROM PUBLIC`);
     await admin.query(`GRANT CONNECT ON DATABASE ${targetDatabase} TO ${runtimeUser}, ${overageUser}`);
 
