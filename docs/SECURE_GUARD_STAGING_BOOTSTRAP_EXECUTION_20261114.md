@@ -148,3 +148,20 @@ The next approval package may run the following sequence without intermediate ap
 8. Confirm Cloud SQL health/capacity, existing Insight services and existing Production services remain healthy. Production traffic/configuration remains unchanged.
 
 STOP immediately on Build ambiguity, any non-image Job diff, preflight drift, failed/unknown Execution, partial database configuration, unexpected membership/ACL/ledger, migration drift, retained synthetic data, Secret exposure, or existing-service degradation. On STOP, do not retry, delete the database, edit the ledger, expand IAM, rotate Secrets, or proceed to the next stage.
+
+## 2026-11-16 consolidated Staging gate execution — STOP at S2 acceptance
+
+Gate S0 passed against PR #6 commit `d2fd694e70039d73a964c9dbf4e717aa0834bd26`: both isolated PostgreSQL checks were successful, the worktree was clean, the shared Staging instance was `RUNNABLE` on PostgreSQL 16.15, the latest automated backup was successful, PITR remained enabled, no competing Cloud SQL operation was running, the four required Secret versions were enabled, the Job was Ready with four historical Executions, and existing services were Ready.
+
+Gate S1 used the existing Build SA and `CLOUD_LOGGING_ONLY` exactly once:
+
+- Build ID: `9b43b5c0-931e-44e0-bf93-a5768ae400a3`
+- Build status: `SUCCESS`
+- Image digest: `sha256:fe9f7dacb33331851ed550c732a7039cd0de9b114c9ed0ff2ec4bc49974516fa`
+- The existing Job was updated from digest `sha256:fa8d6c25e9417c3f7bb60f067baf52d65c2eec003e700fabc4dce0eced2b0290` to the new digest. Normalized read-back showed no spec difference other than the bootstrap image. Job generation became 5; Ready, task/parallelism one, retry zero, timeout 900 seconds, SA, four Secret version-1 references, Proxy and Direct VPC settings were preserved.
+
+The one approved normal Bootstrap invocation was Execution `secure-guard-db-bootstrap-staging-once-cv5tl` and completed successfully. Its fixed completion event reported database `secure_guard_staging`, all three roles with limits 2/2/1, cross-database isolation true, empty true, and migrations applied zero.
+
+S2 did not receive final acceptance. The first acceptance command was rejected by the CLI before creating an Execution because `--format` was parsed after the container override. The unchanged SELECT-only script (SHA-256 `9b4971cb176f2e27e2da10f7a903049fe1b7e550c39ac7390c61ba12d80192de`) was then submitted once as Execution `secure-guard-db-bootstrap-staging-once-hmlnf`; it failed and emitted only `sg_s2_acceptance_failed`. Static review found that this acceptance script used obsolete/nonexistent Insight role names instead of the five names fixed in the Bootstrap (`secumie_otp_staging`, `secumie_pira_staging`, `secumie_admin_staging`, `secumie_migration_staging`, `secumie_maintenance_staging`). Therefore the metadata privilege query could not complete. This was a verification-script defect, not evidence of an ACL mismatch, but the approved STOP contract prohibits retrying or treating incomplete acceptance as PASS.
+
+Final retained state at STOP: Job Ready, generation 5, Execution count 6, fixed new image digest, Cloud SQL `RUNNABLE`, all existing services Ready. No Migration 001-004, synthetic E2E, database deletion/recreation, ledger edit, role/membership correction, Secret rotation, IAM expansion, Production change, or automatic retry was performed. The created database and existing Job/IAM are retained for separately approved acceptance recovery.

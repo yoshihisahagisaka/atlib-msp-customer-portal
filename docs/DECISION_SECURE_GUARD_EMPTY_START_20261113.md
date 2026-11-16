@@ -51,3 +51,9 @@ Insight Recovery方式1を採用し、次を現行契約とする。
 Vanilla PostgreSQL 16では`createrole_self_grant`が空でも、非SUPERUSERのCREATEROLE主体へbootstrap superuserをgrantorとするADMIN membershipが自動生成され、作成者自身ではそのgrantを撤去できない。CIではfresh SQL経路を実Cloud SQLの0件状態を生成するsuperuser fixtureで、Recovery・Fail-closed経路を非SUPERUSERのCREATEDB／CREATEROLE主体で検証する。このfixture差は本番のmembership 0件Gateを緩和しない。
 
 接続容量式の差異は別Fit/Gapとして維持し、本修正には混在させない。本判断はImage Build、Job更新、Bootstrap実行、Migration、Production変更の承認を意味しない。
+
+## 2026-11-16 Staging Gate実行結果
+
+承認Commit `d2fd694e70039d73a964c9dbf4e717aa0834bd26`のImage Buildと、ImageだけのJob更新、通常Bootstrap 1回を実施した。Execution `secure-guard-db-bootstrap-staging-once-cv5tl`は成功し、固定完了イベントは空DB、3 Role、接続上限、DB間分離、Migration 0件を報告した。
+
+ただし後続のSELECT専用受入Execution `secure-guard-db-bootstrap-staging-once-hmlnf`は、受入スクリプトがBootstrap正本と異なるInsight Role名を使用していたため完了できなかった。実DBの不一致を示す証拠ではないが、受入未完了をPASSとは扱わない。既存DBとJobを保持し、Migration 001〜004、Synthetic E2E、Production工程はSTOPを維持する。自動再実行、DB削除・再作成、手動補正は行わない。
