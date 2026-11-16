@@ -106,7 +106,7 @@ async function setupBootstrapManagerAndInsight(admin) {
   );
 }
 
-async function createBootstrapRolesAsManager() {
+async function createBootstrapRolesAsManager(admin, { removeAutomaticMemberships = true } = {}) {
   const manager = client('postgres', bootstrapManager, fixturePassword);
   await manager.connect();
   try {
@@ -119,14 +119,19 @@ async function createBootstrapRolesAsManager() {
   } finally {
     await manager.end();
   }
+  if (removeAutomaticMemberships) {
+    for (const [name] of bootstrapRoles) {
+      await admin.query(`REVOKE ${name} FROM ${bootstrapManager} GRANTED BY postgres`);
+    }
+  }
 }
 
-async function assertCompletedBootstrap(admin) {
+async function assertCompletedBootstrap(admin, expectedOwner) {
   const owner = await admin.query(
     'SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1',
     [bootstrapTargetDatabase],
   );
-  assert.equal(owner.rows[0]?.owner, 'secure_guard_migration_staging');
+  assert.equal(owner.rows[0]?.owner, expectedOwner);
   const memberships = await admin.query(
     `SELECT target.rolname AS role_name, member.rolname AS member_name,
             grantor.rolname AS grantor_name, membership.admin_option,
@@ -140,20 +145,19 @@ async function assertCompletedBootstrap(admin) {
       ORDER BY target.rolname`,
     [bootstrapRoles.map(([name]) => name)],
   );
-  assert.equal(memberships.rowCount, 3);
-  assert.deepEqual(memberships.rows.map((row) => ({
-    member: row.member_name,
-    grantor: row.grantor_name,
-    admin: row.admin_option,
-    inherit: row.inherit_option,
-    set: row.set_option,
-  })), bootstrapRoles.map(() => ({
-    member: bootstrapManager,
-    grantor: 'postgres',
-    admin: true,
-    inherit: false,
-    set: false,
-  })));
+  assert.equal(memberships.rowCount, 0);
+  const privileges = await admin.query(
+    `SELECT rolname,
+            has_database_privilege(rolname, $1, 'CONNECT') AS connect,
+            has_database_privilege(rolname, $1, 'CREATE') AS create_privilege
+       FROM pg_roles WHERE rolname = ANY($2::text[]) ORDER BY rolname`,
+    [bootstrapTargetDatabase, bootstrapRoles.map(([name]) => name)],
+  );
+  assert.deepEqual(privileges.rows, [
+    { rolname: 'secure_guard_migration_staging', connect: true, create_privilege: true },
+    { rolname: 'secure_guard_overage_staging', connect: true, create_privilege: false },
+    { rolname: 'secure_guard_runtime_staging', connect: true, create_privilege: false },
+  ]);
 }
 
 async function targetMemberships(admin) {
@@ -212,55 +216,71 @@ test('PostgreSQL 16: bootstrap new, recovery and interrupted-state contracts',
     try {
       await cleanupBootstrapFixtures(admin);
 
-      // New installation: the non-superuser CREATEROLE/CREATEDB manager creates all
-      // three roles and keeps only PostgreSQL 16's automatic administration grants.
+      // New installation SQL path. Vanilla PostgreSQL's superuser fixture models
+      // Cloud SQL's measured zero-membership result after CREATE ROLE.
       await setupBootstrapManagerAndInsight(admin);
-      const fresh = runBootstrap();
+      const fresh = runBootstrap({
+        DB_BOOTSTRAP_USER: 'postgres',
+        DB_BOOTSTRAP_PASSWORD: fixturePassword,
+      });
       assert.equal(fresh.status, 0, `Fresh bootstrap must pass: ${fresh.stderr}`);
       assert.match(fresh.stdout, /secure_guard_staging_bootstrap_completed/);
-      await assertCompletedBootstrap(admin);
+      await assertCompletedBootstrap(admin, 'postgres');
       await cleanupBootstrapFixtures(admin);
 
-      // Recovery: all three exact roles exist, the database does not, and only the
-      // automatic ADMIN=true/SET=false/INHERIT=false grants are present.
+      // Recovery: all three exact roles exist, the database does not, and SG has
+      // no related membership rows, matching the measured Cloud SQL state.
       await setupBootstrapManagerAndInsight(admin);
-      await createBootstrapRolesAsManager();
+      await createBootstrapRolesAsManager(admin);
       const recovery = runBootstrap();
       assert.equal(recovery.status, 0, `Recovery bootstrap must pass: ${recovery.stderr}`);
-      await assertCompletedBootstrap(admin);
+      await assertCompletedBootstrap(admin, bootstrapManager);
       await cleanupBootstrapFixtures(admin);
 
-      // A failure after GRANT but during verification must revoke the bootstrap's
-      // own SET row, restore the exact three automatic rows, and never create DB.
+      // An unexpected membership must stop before database creation.
       await setupBootstrapManagerAndInsight(admin);
-      await createBootstrapRolesAsManager();
-      const verifyFailure = runBootstrap({
-        SG_BOOTSTRAP_TEST_FAIL_AFTER_TEMPORARY_GRANT: 'true',
-      });
-      assert.notEqual(verifyFailure.status, 0);
-      assert.match(verifyFailure.stderr, /"stage":"CREATE_DATABASE_TEMPORARY_SET_VERIFY"/);
-      const afterVerifyFailure = await targetMemberships(admin);
-      assert.equal(afterVerifyFailure.rowCount, 3);
-      assert.equal(afterVerifyFailure.rows.some((row) => row.set_option), false);
-      const noDatabaseAfterVerifyFailure = await admin.query(
+      await createBootstrapRolesAsManager(admin, { removeAutomaticMemberships: false });
+      const membershipFailure = runBootstrap();
+      assert.notEqual(membershipFailure.status, 0);
+      assert.match(membershipFailure.stderr, /"stage":"PREFLIGHT"/);
+      const unexpectedMemberships = await targetMemberships(admin);
+      assert.equal(unexpectedMemberships.rowCount, 3);
+      const noDatabaseAfterMembershipFailure = await admin.query(
         'SELECT 1 FROM pg_database WHERE datname = $1', [bootstrapTargetDatabase],
       );
-      assert.equal(noDatabaseAfterVerifyFailure.rowCount, 0);
+      assert.equal(noDatabaseAfterMembershipFailure.rowCount, 0);
       await cleanupBootstrapFixtures(admin);
 
-      // Connection loss during REVOKE is never reported as success and no final
-      // verification or later configuration can run. Superuser fixture cleanup
-      // is test-only and models the separately approved recovery requirement.
+      // Role attribute drift must stop before database creation.
       await setupBootstrapManagerAndInsight(admin);
-      await createBootstrapRolesAsManager();
-      const revokeFailure = runBootstrap({
-        SG_BOOTSTRAP_TEST_FAIL_TEMPORARY_REVOKE: 'true',
+      await createBootstrapRolesAsManager(admin);
+      await admin.query('ALTER ROLE secure_guard_runtime_staging CONNECTION LIMIT 3');
+      const attributeFailure = runBootstrap();
+      assert.notEqual(attributeFailure.status, 0);
+      assert.match(attributeFailure.stderr, /"stage":"PREFLIGHT"/);
+      const noDatabaseAfterAttributeFailure = await admin.query(
+        'SELECT 1 FROM pg_database WHERE datname = $1', [bootstrapTargetDatabase],
+      );
+      assert.equal(noDatabaseAfterAttributeFailure.rowCount, 0);
+      await cleanupBootstrapFixtures(admin);
+
+      // Configuration failure after CREATE DATABASE is fail-closed: the empty
+      // database remains for review and a second invocation refuses to proceed.
+      await setupBootstrapManagerAndInsight(admin);
+      await createBootstrapRolesAsManager(admin);
+      const configureFailure = runBootstrap({
+        SG_BOOTSTRAP_TEST_FAIL_AFTER_DATABASE_CREATE: 'true',
       });
-      assert.notEqual(revokeFailure.status, 0);
-      assert.match(revokeFailure.stderr, /"stage":"CREATE_DATABASE_TEMPORARY_SET_CLEANUP"/);
-      const afterRevokeFailure = await targetMemberships(admin);
-      assert.equal(afterRevokeFailure.rowCount, 4);
-      assert.equal(afterRevokeFailure.rows.filter((row) => row.set_option).length, 1);
+      assert.notEqual(configureFailure.status, 0);
+      assert.match(configureFailure.stderr, /"stage":"CONFIGURE_DATABASE"/);
+      const retainedDatabase = await admin.query(
+        'SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1',
+        [bootstrapTargetDatabase],
+      );
+      assert.equal(retainedDatabase.rows[0]?.owner, bootstrapManager);
+      const refusedRetry = runBootstrap();
+      assert.notEqual(refusedRetry.status, 0);
+      assert.match(refusedRetry.stderr, /"stage":"PREFLIGHT"/);
       await cleanupBootstrapFixtures(admin);
 
       // Partial role creation is ambiguous and must stop before database creation.

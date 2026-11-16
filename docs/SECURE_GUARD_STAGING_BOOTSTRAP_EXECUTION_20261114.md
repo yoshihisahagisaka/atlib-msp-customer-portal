@@ -118,3 +118,33 @@ Bootstrap execution remains No-Go until separately approved.
 - Per the failure contract, the Job, Roles, Secrets, version-1 Secret references, service accounts and temporary Secret IAM remain in place. No cleanup, migration, automatic recovery or production change was performed.
 
 Bootstrap and Migration 001-004 remain No-Go pending separate root-cause review and approval.
+
+## 2026-11-16 read-only diagnosis and Recovery method 1 implementation
+
+- The approved SELECT-only override used script SHA-256 `3b21990499ae9a50d469e6381f8792f3bbdaca0d14008f61cb0ca56041fa8a78`.
+- Diagnostic Execution `secure-guard-db-bootstrap-staging-once-hzbtb` succeeded with one task and zero retries. Its args were exactly `-e` and `eval(atob(process.env.INSPECT_B64))`; the normal Bootstrap module was not started.
+- Actual values: PostgreSQL 16.15, database/user `postgres`, max connections 400, reserved 3/0, observed connections 10, `secure_guard_staging` absent, `secumie_insight_staging` present and owned by `postgres`, `createrole_self_grant` empty, and OID 10 equal to `cloudsqladmin`.
+- All three Secure Guard role attributes and connection limits matched. Related membership rows were exactly zero.
+- Root cause was confirmed: the former preflight required three automatic memberships and raised `ROLE_MEMBERSHIP_VERIFY_FAILED` before database creation.
+- No database, role, membership, Secret, IAM, Job definition, network or Production change occurred during diagnosis. The diagnostic increased execution history from three to four entries.
+
+The Bootstrap implementation now follows Insight Recovery method 1. It requires zero memberships, removes the temporary SET flow, creates the database with the bootstrap executor as owner, revokes PUBLIC privileges, grants CONNECT to the three SG roles, and grants database CREATE plus schema USAGE/CREATE only to migration. Existing exact-role recovery is retained; partial roles, role drift, membership drift and an existing target database remain fail-closed. A post-CREATE configuration failure retains the database and a subsequent run refuses to continue.
+
+Disposable PostgreSQL 16 validation covers fresh SQL, the non-superuser three-role recovery state, partial roles, role drift, unexpected membership, owner/ACL, runtime/overage denial, Insight cross-database isolation, absent migration ledger, and retained database after an injected post-CREATE failure. Vanilla PostgreSQL's automatic creator membership differs from measured Cloud SQL behavior; the fixture treatment is documented in the Decision and does not weaken the Cloud SQL zero-membership requirement.
+
+Image build, Artifact push, Job update, Bootstrap execution and Migration 001-004 remain No-Go pending the next consolidated Staging gate approval.
+
+## Next consolidated Staging gate (prepared, not approved or executed)
+
+The next approval package may run the following sequence without intermediate approval only while every preceding gate passes:
+
+1. Build the Bootstrap image once from the reviewed PR #6 commit using the existing Build SA and `CLOUD_LOGGING_ONLY`; fix the resulting digest.
+2. Update only the existing Job's bootstrap image digest. Read back the full spec and require zero differences after normalizing that image field.
+3. Require Job Ready, task/parallelism one, retry zero, timeout 900 seconds, approved SA, four Secret version-1 references, fixed Proxy, Direct VPC, execution history four, target DB absent, exact three SG roles, exact five Insight roles, and zero SG memberships.
+4. Execute Bootstrap exactly once. No automatic retry.
+5. Require owner `postgres`, zero SG memberships, exact role attributes/limits, PUBLIC revocation, CONNECT for all three SG roles, CREATE plus schema USAGE/CREATE only for migration, runtime/overage CREATE denial, cross-database denial in both directions, empty public tables and absent SG migration ledger.
+6. Only after full Bootstrap acceptance, apply approved Migration 001-004 once with the fixed manifest/digests and dedicated migration identity.
+7. Require ledger 001-004 exact match, schema/object ownership and runtime/overage Positive/Negative tests, then run synthetic-data E2E with transaction cleanup and zero retained customer data.
+8. Confirm Cloud SQL health/capacity, existing Insight services and existing Production services remain healthy. Production traffic/configuration remains unchanged.
+
+STOP immediately on Build ambiguity, any non-image Job diff, preflight drift, failed/unknown Execution, partial database configuration, unexpected membership/ACL/ledger, migration drift, retained synthetic data, Secret exposure, or existing-service degradation. On STOP, do not retry, delete the database, edit the ledger, expand IAM, rotate Secrets, or proceed to the next stage.

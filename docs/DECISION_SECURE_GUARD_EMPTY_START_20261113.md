@@ -31,3 +31,23 @@
 Secure Guard Staging専用3 Roleについて、最終membership 0件という従来条件を変更する。非SUPERUSERの`CREATEROLE`主体がRoleを作成した際にPostgreSQL 16が自動付与する、作成者をmember、bootstrap superuserをgrantor、`ADMIN TRUE / SET FALSE / INHERIT FALSE`とする3件のみを最終状態として許容する。
 
 BootstrapはRole、member、grantorおよび3つのOptionを各行で完全一致検証する。不足、重複、追加membershipはすべてFail-closedとする。Migration Roleへの`SET TRUE`はDatabase作成中の別membershipとしてのみ許可し、同じgrantorが必ず撤去してから後続処理へ進む。この例外はBootstrap実行、Migration、Production変更の承認を意味しない。
+
+## 2026-11-16 実Cloud SQL membership判断
+
+上記2026-11-15の3 membership例外は履歴として維持するが、本節でSecure Guard Stagingの現行判断を置き換える。Read-only診断Execution `secure-guard-db-bootstrap-staging-once-hzbtb`では、PostgreSQL 16.15上のSecure Guard 3 Roleの属性は完全一致した一方、関連する`pg_auth_members`は0件だった。`createrole_self_grant`は空、`pg_get_userbyid(10)`は`cloudsqladmin`だった。
+
+Insight Recovery方式1を採用し、次を現行契約とする。
+
+- Secure Guard関連membershipはPreflight・最終状態とも0件だけを許容する。
+- Secure Guard Roleがroleまたはmemberとなる行が1件でもあればFail-closedとする。
+- 一時`SET` membershipは作成しない。
+- `secure_guard_staging`のownerはBootstrap実行主体（Cloud SQLでは`postgres`）とする。
+- Database／`public` schemaのPUBLIC権限を撤回する。
+- runtime／overage／migrationにはDatabase CONNECTだけを共通付与する。
+- migrationだけにDatabase CREATEおよび`public` schema USAGE／CREATEを付与する。
+- runtime／overageにはCREATE権限を付与しない。
+- CREATE DATABASE後の部分失敗ではDBを残して明示レビューへ戻し、自動削除・自動再試行しない。
+
+Vanilla PostgreSQL 16では`createrole_self_grant`が空でも、非SUPERUSERのCREATEROLE主体へbootstrap superuserをgrantorとするADMIN membershipが自動生成され、作成者自身ではそのgrantを撤去できない。CIではfresh SQL経路を実Cloud SQLの0件状態を生成するsuperuser fixtureで、Recovery・Fail-closed経路を非SUPERUSERのCREATEDB／CREATEROLE主体で検証する。このfixture差は本番のmembership 0件Gateを緩和しない。
+
+接続容量式の差異は別Fit/Gapとして維持し、本修正には混在させない。本判断はImage Build、Job更新、Bootstrap実行、Migration、Production変更の承認を意味しない。

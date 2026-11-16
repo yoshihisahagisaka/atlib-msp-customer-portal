@@ -156,86 +156,9 @@ async function targetMembershipFacts(client: Client): Promise<MembershipFact[]> 
   return result.rows;
 }
 
-async function verifyAutomaticMemberships(client: Client): Promise<void> {
-  const identity = await client.query<{ executor: string; bootstrap_superuser: string }>(
-    `SELECT current_user AS executor,
-            pg_get_userbyid(10) AS bootstrap_superuser`,
-  );
-  const expected = identity.rows[0];
+async function verifyNoTargetMemberships(client: Client): Promise<void> {
   const facts = await targetMembershipFacts(client);
-  const expectedNames = new Set<string>(Object.values(roles).map((role) => role.name));
-  if (!expected || facts.length !== 3 || facts.some((fact) => {
-    const expectedRole = expectedNames.delete(fact.role_name);
-    return !expectedRole
-      || fact.member_name !== expected.executor
-      || fact.grantor_name !== expected.bootstrap_superuser
-      || !fact.admin_option
-      || fact.inherit_option
-      || fact.set_option;
-  }) || expectedNames.size !== 0) {
-    throw new Error('ROLE_MEMBERSHIP_VERIFY_FAILED');
-  }
-}
-
-async function grantTemporaryMigrationSet(client: Client): Promise<void> {
-  const identity = await client.query<{ executor: string }>('SELECT current_user AS executor');
-  const executor = identity.rows[0]?.executor;
-  if (!executor) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
-  const sql = await formatted(
-    client,
-    'GRANT %I TO %I WITH ADMIN FALSE, SET TRUE, INHERIT FALSE',
-    roles.migration.name,
-    executor,
-  );
-  await client.query(sql);
-}
-
-async function verifyTemporaryMigrationSet(client: Client): Promise<void> {
-  const check = await client.query<{ can_set: boolean; count: string }>(
-    `SELECT pg_has_role(current_user, $1, 'SET') AS can_set,
-            (SELECT count(*)::text
-               FROM pg_auth_members membership
-               JOIN pg_roles target ON target.oid = membership.roleid
-               JOIN pg_roles member ON member.oid = membership.member
-               JOIN pg_roles grantor ON grantor.oid = membership.grantor
-              WHERE target.rolname = $1
-                AND member.rolname = current_user
-                AND grantor.rolname = current_user
-                AND NOT membership.admin_option
-                AND NOT membership.inherit_option
-                AND membership.set_option) AS count`,
-    [roles.migration.name],
-  );
-  if (!check.rows[0]?.can_set || check.rows[0]?.count !== '1') {
-    throw new Error('TEMPORARY_SET_GRANT_FAILED');
-  }
-}
-
-async function revokeTemporaryMigrationSet(client: Client): Promise<void> {
-  if (process.env.SG_BOOTSTRAP_TEST_FAIL_TEMPORARY_REVOKE === 'true') {
-    if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
-      || required('DB_BOOTSTRAP_HOST') !== '127.0.0.1') {
-      throw new Error('TEST_HOOK_ENVIRONMENT_INVALID');
-    }
-    await client.end();
-  }
-  const identity = await client.query<{ executor: string }>('SELECT current_user AS executor');
-  const executor = identity.rows[0]?.executor;
-  if (!executor) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
-  const sql = await formatted(
-    client,
-    'REVOKE %I FROM %I GRANTED BY %I',
-    roles.migration.name,
-    executor,
-    executor,
-  );
-  await client.query(sql);
-  await verifyAutomaticMemberships(client);
-  const setCheck = await client.query<{ can_set: boolean }>(
-    `SELECT pg_has_role(current_user, $1, 'SET') AS can_set`,
-    [roles.migration.name],
-  );
-  if (setCheck.rows[0]?.can_set) throw new Error('TEMPORARY_SET_REVOKE_FAILED');
+  if (facts.length !== 0) throw new Error('ROLE_MEMBERSHIP_VERIFY_FAILED');
 }
 
 async function main(): Promise<void> {
@@ -303,6 +226,7 @@ async function main(): Promise<void> {
           );
           await admin.query(sql);
         }
+        await verifyNoTargetMemberships(admin);
         await admin.query('COMMIT');
       } catch (error) {
         await admin.query('ROLLBACK').catch(() => undefined);
@@ -310,61 +234,39 @@ async function main(): Promise<void> {
       }
     }
     verifyRoleFacts(await targetRoleFacts(admin));
-    await verifyAutomaticMemberships(admin);
+    await verifyNoTargetMemberships(admin);
 
     stage = 'CREATE_DATABASE';
+    const executor = await admin.query<{ name: string }>('SELECT current_user AS name');
+    const databaseOwner = executor.rows[0]?.name;
+    if (!databaseOwner) throw new Error('BOOTSTRAP_EXECUTOR_UNKNOWN');
     const createDatabase = await formatted(
       admin,
       'CREATE DATABASE %I OWNER %I TEMPLATE template0 ENCODING %L LC_COLLATE %L LC_CTYPE %L',
       TARGET_DATABASE,
-      roles.migration.name,
+      databaseOwner,
       'UTF8',
       'en_US.UTF8',
       'en_US.UTF8',
     );
-    let primaryFailure: unknown;
-    let primaryFailureStage = stage;
-    let cleanupFailure: unknown;
-    try {
-      // Cleanup responsibility begins before GRANT so an unknown GRANT result is
-      // handled by the same narrowly scoped REVOKE and final membership check.
-      stage = 'CREATE_DATABASE_TEMPORARY_SET_GRANT';
-      await grantTemporaryMigrationSet(admin);
-      stage = 'CREATE_DATABASE_TEMPORARY_SET_VERIFY';
-      if (process.env.SG_BOOTSTRAP_TEST_FAIL_AFTER_TEMPORARY_GRANT === 'true') {
-        if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
-          || required('DB_BOOTSTRAP_HOST') !== '127.0.0.1') {
-          throw new Error('TEST_HOOK_ENVIRONMENT_INVALID');
-        }
-        throw new Error('TEST_TEMPORARY_SET_VERIFY_FAILURE');
-      }
-      await verifyTemporaryMigrationSet(admin);
-      stage = 'CREATE_DATABASE';
-      await admin.query(createDatabase);
-    } catch (error) {
-      primaryFailure = error;
-      primaryFailureStage = stage;
-    } finally {
-      stage = 'CREATE_DATABASE_TEMPORARY_SET_CLEANUP';
-      try {
-        await revokeTemporaryMigrationSet(admin);
-      } catch (error) {
-        cleanupFailure = error;
-      }
-    }
-    if (cleanupFailure) throw cleanupFailure;
-    if (primaryFailure) {
-      stage = primaryFailureStage;
-      throw primaryFailure;
-    }
+    await admin.query(createDatabase);
 
     stage = 'CONFIGURE_DATABASE';
-    const target = await connectAs('migration', TARGET_DATABASE);
+    if (process.env.SG_BOOTSTRAP_TEST_FAIL_AFTER_DATABASE_CREATE === 'true') {
+      if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
+        || required('DB_BOOTSTRAP_HOST') !== '127.0.0.1') {
+        throw new Error('TEST_HOOK_ENVIRONMENT_INVALID');
+      }
+      throw new Error('TEST_DATABASE_CONFIGURATION_FAILURE');
+    }
+    const target = new Client(adminSettings(TARGET_DATABASE));
+    await target.connect();
     try {
       await target.query('BEGIN');
       try {
         await target.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${TARGET_DATABASE} FROM PUBLIC`);
         await target.query(`GRANT CONNECT ON DATABASE ${TARGET_DATABASE} TO ${roles.runtime.name}, ${roles.overage.name}, ${roles.migration.name}`);
+        await target.query(`GRANT CREATE ON DATABASE ${TARGET_DATABASE} TO ${roles.migration.name}`);
         await target.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
         await target.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${roles.migration.name}`);
         await target.query('COMMIT');
@@ -379,15 +281,15 @@ async function main(): Promise<void> {
     stage = 'VERIFY_ROLE_FACTS';
     verifyRoleFacts(await targetRoleFacts(admin));
     stage = 'VERIFY_MEMBERSHIPS';
-    await verifyAutomaticMemberships(admin);
+    await verifyNoTargetMemberships(admin);
     stage = 'VERIFY_DATABASE_OWNER';
-    const databaseOwner = await admin.query<{ owner_name: string }>(
+    const ownerFact = await admin.query<{ owner_name: string }>(
       `SELECT pg_get_userbyid(datdba) AS owner_name
          FROM pg_database
         WHERE datname = $1`,
       [TARGET_DATABASE],
     );
-    if (databaseOwner.rows[0]?.owner_name !== roles.migration.name) {
+    if (ownerFact.rows[0]?.owner_name !== databaseOwner) {
       throw new Error('DATABASE_OWNER_VERIFY_FAILED');
     }
 
@@ -407,6 +309,14 @@ async function main(): Promise<void> {
             `SELECT to_regclass('public.secure_guard_schema_migrations')::text AS ledger`,
           );
           if (ledger.rows[0]?.ledger !== null) throw new Error('MIGRATION_LEDGER_UNEXPECTED');
+        }
+        const databasePrivileges = await client.query<{ connect: boolean; create_privilege: boolean }>(
+          `SELECT has_database_privilege(current_user, current_database(), 'CONNECT') AS connect,
+                  has_database_privilege(current_user, current_database(), 'CREATE') AS create_privilege`,
+        );
+        if (!databasePrivileges.rows[0]?.connect
+          || databasePrivileges.rows[0]?.create_privilege !== (role === 'migration')) {
+          throw new Error('DATABASE_PRIVILEGE_VERIFY_FAILED');
         }
         stage = `VERIFY_${role.toUpperCase()}_SCHEMA`;
         const schema = await client.query<{ usage: boolean; create_privilege: boolean }>(
