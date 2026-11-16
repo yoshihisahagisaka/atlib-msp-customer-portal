@@ -165,3 +165,20 @@ The one approved normal Bootstrap invocation was Execution `secure-guard-db-boot
 S2 did not receive final acceptance. The first acceptance command was rejected by the CLI before creating an Execution because `--format` was parsed after the container override. The unchanged SELECT-only script (SHA-256 `9b4971cb176f2e27e2da10f7a903049fe1b7e550c39ac7390c61ba12d80192de`) was then submitted once as Execution `secure-guard-db-bootstrap-staging-once-hmlnf`; it failed and emitted only `sg_s2_acceptance_failed`. Static review found that this acceptance script used obsolete/nonexistent Insight role names instead of the five names fixed in the Bootstrap (`secumie_otp_staging`, `secumie_pira_staging`, `secumie_admin_staging`, `secumie_migration_staging`, `secumie_maintenance_staging`). Therefore the metadata privilege query could not complete. This was a verification-script defect, not evidence of an ACL mismatch, but the approved STOP contract prohibits retrying or treating incomplete acceptance as PASS.
 
 Final retained state at STOP: Job Ready, generation 5, Execution count 6, fixed new image digest, Cloud SQL `RUNNABLE`, all existing services Ready. No Migration 001-004, synthetic E2E, database deletion/recreation, ledger edit, role/membership correction, Secret rotation, IAM expansion, Production change, or automatic retry was performed. The created database and existing Job/IAM are retained for separately approved acceptance recovery.
+
+## 2026-11-16 Gate S2 acceptance recovery and Gate S3 STOP
+
+Owner approval retained every prior S2-S5 condition and authorized one corrected SELECT-only acceptance Execution. Only the five Insight role names were corrected to `secumie_otp_staging`, `secumie_pira_staging`, `secumie_admin_staging`, `secumie_migration_staging`, and `secumie_maintenance_staging`. The former script hash was `9b4971cb176f2e27e2da10f7a903049fe1b7e550c39ac7390c61ba12d80192de`; the corrected, statically reviewed SELECT-only script hash was `d43b542683a7850a1e139152dd21a5313733e9cb90320f6bea6ccede1c94ce8c`.
+
+Execution `secure-guard-db-bootstrap-staging-once-7dddm` succeeded with one task, zero retries and no persistent Job change. Its fixed `sg_s2_acceptance_pass` event reported 12 checks passed: owner `postgres`; SG memberships zero; exact role limits 2/2/1 and attributes; PUBLIC database and schema ACL rows zero; CONNECT for all three SG roles; database CREATE only for migration; public schema USAGE/CREATE only for migration; runtime/overage CREATE denied; SG-to-Insight and Insight-to-SG CONNECT denied; public business tables zero; and migration ledger absent. Gate S2 is PASS.
+
+Gate S3 stopped before any database mutation. There is no Secure Guard migration Job or other committed Staging execution path. The existing Bootstrap runtime image copies compiled `dist` only and does not contain `migrations/secure_guard/*.sql`; therefore its compiled runner cannot apply the reviewed SQL files. The existing `secumie-db-migrate-staging` Job is Insight-specific: it targets `secumie_insight_staging`, uses Insight roles, image, manifest and SQL directory, and cannot be reused for Secure Guard. Embedding SQL in an ad-hoc override, changing that Job, creating a new Job, or building another image would introduce an unapproved execution path or infrastructure change.
+
+The reviewed but unapplied migration hashes remain:
+
+- `001_identity_scope_baseline.sql`: `19573cbc9c038b3f04ef72dc65a30dc49f328ff258af9993780a92f67d6f3f1e`
+- `002_overage_alerts.sql`: `4e5a2add9325aef108e10f312c80c6e4a03b4ed64bb73cac9bd05c71b410822a`
+- `003_license_alert_snapshot.sql`: `7d996cc7cfa9a1c1faa3a8a272c6fa82f279336d85869f640cb389b87810f802`
+- `004_agent_uninstall_claims.sql`: `ea58e4196dcf02e2181cb6505e2065b58d17ba433f549dc5ad96019552334ebd`
+
+No Migration, ledger creation, Synthetic E2E, Job definition change, Secret/IAM/VPC change or Production change followed. Cloud SQL remained `RUNNABLE` on PostgreSQL 16.15 and all existing services remained Ready. S3-S5 remain STOP pending a separately reviewed SG migration execution artifact and path.

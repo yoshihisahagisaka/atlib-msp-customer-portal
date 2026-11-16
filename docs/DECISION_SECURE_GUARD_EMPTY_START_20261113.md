@@ -57,3 +57,7 @@ Vanilla PostgreSQL 16では`createrole_self_grant`が空でも、非SUPERUSERの
 承認Commit `d2fd694e70039d73a964c9dbf4e717aa0834bd26`のImage Buildと、ImageだけのJob更新、通常Bootstrap 1回を実施した。Execution `secure-guard-db-bootstrap-staging-once-cv5tl`は成功し、固定完了イベントは空DB、3 Role、接続上限、DB間分離、Migration 0件を報告した。
 
 ただし後続のSELECT専用受入Execution `secure-guard-db-bootstrap-staging-once-hmlnf`は、受入スクリプトがBootstrap正本と異なるInsight Role名を使用していたため完了できなかった。実DBの不一致を示す証拠ではないが、受入未完了をPASSとは扱わない。既存DBとJobを保持し、Migration 001〜004、Synthetic E2E、Production工程はSTOPを維持する。自動再実行、DB削除・再作成、手動補正は行わない。
+
+修正版SELECT専用Execution `secure-guard-db-bootstrap-staging-once-7dddm`で12項目を完全照合し、Gate S2はPASSへ更新した。DB owner、membership 0件、3 Role属性・ACL、PUBLIC撤回、双方向DB分離、空DB、ledger不存在はいずれも実測一致した。
+
+Gate S3はMigration適用前にSTOPした。SG専用Migration JobおよびSQLを含む承認済み実行Artifactが存在せず、Bootstrap runtime ImageにもSQL本文が含まれない。Insight Migration Jobの流用、ad-hoc override、新規Job／Imageは既存経路ではないため採用しない。DBとGate S2の正常状態を保持し、Migration、Synthetic E2E、Production No-Goを継続する。
