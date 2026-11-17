@@ -30,9 +30,9 @@ function runImage(overrides = {}) {
       'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging',
     ...overrides,
   };
-  const args = ['run', '--rm', '--network', 'host'];
+  const args = ['run', '--rm', '--network', 'host', '--entrypoint', 'node'];
   for (const [key, value] of Object.entries(environment)) args.push('-e', `${key}=${value}`);
-  args.push(image);
+  args.push(image, 'dist-secure-guard-migration/migrations/secure_guard_runner.js');
   return spawnSync('docker', args, { encoding: 'utf8', timeout: 30000 });
 }
 
@@ -43,6 +43,16 @@ test('dedicated migration image applies and safely replays exact 001-005', { tim
   const admin = client();
   await admin.connect();
   try {
+    const runtimeIdentity = spawnSync('docker', [
+      'run', '--rm', '--entrypoint', 'node', image, '-e',
+      "console.log(JSON.stringify({version:process.versions.node,uid:process.getuid(),dependencies:require('/app/package.json').dependencies}))",
+    ], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(runtimeIdentity.status, 0, `node command must run in hardened image: ${runtimeIdentity.stderr}`);
+    const identity = JSON.parse(runtimeIdentity.stdout.trim());
+    assert.match(identity.version, /^24\./);
+    assert.notEqual(identity.uid, 0);
+    assert.deepEqual(identity.dependencies, { pg: '8.22.0' });
+
     await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1', [database]);
     await admin.query(`DROP DATABASE IF EXISTS ${database}`);
     await admin.query(`DROP ROLE IF EXISTS ${runtimeRole}`);

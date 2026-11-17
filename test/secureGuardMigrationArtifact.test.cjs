@@ -76,12 +76,23 @@ test('manifest verifier stops on missing, extra, reordered or changed SQL before
 
 test('dedicated migration artifact has no web startup and validates its manifest while building', () => {
   const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile.secure-guard-migration'), 'utf8');
+  const runtimePackage = JSON.parse(
+    fs.readFileSync(path.join(root, 'migration-runtime/package.json'), 'utf8'),
+  );
+  const runtimeLock = JSON.parse(
+    fs.readFileSync(path.join(root, 'migration-runtime/package-lock.json'), 'utf8'),
+  );
+  assert.match(dockerfile, /FROM node:24-bookworm-slim AS build/);
+  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs24-debian13:nonroot/);
   assert.match(dockerfile, /npm run build:secure-guard-migration/);
   assert.match(dockerfile, /verifySecureGuardMigrationManifest\.cjs/);
-  assert.match(dockerfile, /COPY migrations\/secure_guard \.\/migrations\/secure_guard/);
-  assert.match(dockerfile, /USER node/);
+  assert.match(dockerfile, /COPY --from=build --chown=nonroot:nonroot \/app\/migrations\/secure_guard \.\/migrations\/secure_guard/);
+  assert.match(dockerfile, /USER nonroot/);
   assert.match(dockerfile, /secure_guard_runner\.js/);
-  assert.doesNotMatch(dockerfile, /EXPOSE|dist\/server\.js|ts-node/);
+  assert.doesNotMatch(dockerfile, /EXPOSE|dist\/server\.js|ts-node|node:20|node:24-alpine/);
+  assert.deepEqual(runtimePackage.dependencies, { pg: '8.22.0' });
+  assert.equal(runtimeLock.packages['node_modules/pg'].version, '8.22.0');
+  assert.deepEqual(Object.keys(runtimeLock.packages[''].dependencies), ['pg']);
 
   const cloudbuild = fs.readFileSync(path.join(root, 'cloudbuild.secure-guard-migration.yaml'), 'utf8');
   assert.match(cloudbuild, /Dockerfile\.secure-guard-migration/);

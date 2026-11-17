@@ -268,3 +268,11 @@ The fixed allowlist is now `migration-manifests/secure-guard-staging-001-005.jso
 The PostgreSQL 16 contract no longer injects test-only GRANTs after migration. It validates fresh 001-005 application, an established 001-004 Ledger applying only 005, replay skipping all five with checksum verification, runtime's 36 named table privileges plus two sequence privileges, Ledger denial, overage's seven positive and eight negative privileges, DDL denial and cross-database isolation. Static regression and TypeScript build/typecheck are recorded with the implementation commit and CI run.
 
 This is an offline implementation only. No Cloud Build, Artifact push, Job update or Execution, Staging database change, IAM/Secret change, or Production change was performed. Gate S3 remains **STOP**; Gate S4, Synthetic E2E and Production remain No-Go until a separate execution approval.
+
+## 2026-11-17 Migration image hardening (offline only)
+
+The dedicated migration image is hardened without changing Migration SQL 001-005, the fixed manifest, runner behavior or the existing Job contract. The builder uses Node.js 24 on Debian Bookworm. Manifest verification remains a build-stage gate over exactly five migrations. The runtime is Distroless Node.js 24 Debian 13 `nonroot`, contains no npm CLI, TypeScript toolchain, development dependencies or Portal web dependency tree, and receives only the compiled runner, approved SQL/manifest/verifier assets and a dedicated runtime dependency tree.
+
+`migration-runtime/package.json` fixes the sole direct runtime dependency to `pg` 8.22.0; its independent lockfile resolves 14 production modules and reports zero known npm vulnerabilities at implementation time. PostgreSQL 16 image acceptance invokes the container with the persistent Job-compatible `node` command, requires Node 24, a nonzero UID and exactly the direct `pg` dependency before exercising fresh 001-005 application, 001-004 upgrade, checksum replay and role boundaries.
+
+This change is local/CI only. It does not build or scan an image in GCP, update the persistent Job, execute a migration, or change DB/IAM/Secret/Production state. A separately approved GCP build and Artifact Analysis scan remain mandatory before replacing the current fixed digest.
