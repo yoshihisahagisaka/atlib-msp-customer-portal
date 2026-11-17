@@ -84,6 +84,7 @@ test('dedicated migration artifact has no web startup and validates its manifest
   );
   assert.match(dockerfile, /FROM node:24-bookworm-slim AS build/);
   assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs24-debian13:nonroot/);
+  assert.match(dockerfile, /PATH=\/nodejs\/bin/);
   assert.match(dockerfile, /npm run build:secure-guard-migration/);
   assert.match(dockerfile, /verifySecureGuardMigrationManifest\.cjs/);
   assert.match(dockerfile, /COPY --from=build --chown=nonroot:nonroot \/app\/migrations\/secure_guard \.\/migrations\/secure_guard/);
