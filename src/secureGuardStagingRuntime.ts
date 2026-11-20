@@ -3,7 +3,6 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
-import type { Mailer } from './services/mailer';
 import { readSecureGuardDatabaseSettings, createSecureGuardDatabasePool } from './db/secureGuardDatabase';
 import { SecureGuardRepo } from './services/secureGuardRepo';
 import { SecureGuardIdentityService } from './services/secureGuardIdentityService';
@@ -72,7 +71,7 @@ export async function startIsolatedSecureGuardStaging(): Promise<void> {
     inventoryClient: new DnsFilterInventoryClient(undefined),
     // The global mutation barrier rejects all invitation requests before
     // reaching this fail-closed mailer. No SMTP credentials are loaded.
-    mailer: { sendSecureGuardInvitationEmail: async () => { throw new Error('STAGING_MAIL_DISABLED'); } } as unknown as Mailer,
+    mailer: { sendSecureGuardInvitationEmail: async () => { throw new Error('STAGING_MAIL_DISABLED'); } },
     portalBaseUrl: base.origin,
     overageStore: new SecureGuardOverageStore(pool),
     manualLicenseAlertDeliveryEnabled: false,
