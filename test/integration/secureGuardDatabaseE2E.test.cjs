@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, spawn } = require('node:child_process');
+const net = require('node:net');
+const bcrypt = require('bcrypt');
 const { Client } = require('pg');
 const { SecureGuardRepo } = require('../../dist/services/secureGuardRepo');
 
@@ -652,6 +654,142 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
     const secuOtherDb = client(targetDatabase, secuUser, fixturePassword);
     await assert.rejects(secuOtherDb.connect(), (error) => error.code === '42501');
     await secuOtherDb.end().catch(() => undefined);
+
+    // Real HTTP + PostgreSQL acceptance of the EXISTING shared SG Staging runtime.
+    // Only the disposable CI PostgreSQL 16 on fixed loopback port is used.
+    // No GCP, real DNSFilter, SMTP, Slack, or Production credentials are inherited.
+    const fixtureDb = client(targetDatabase, runtimeUser, fixturePassword);
+    await fixtureDb.connect();
+    let liveServer;
+    let liveLog = '';
+    let ids;
+    try {
+      const password = 'synthetic-ci-only-password-2026!';
+      const passwordHash = await bcrypt.hash(password, 4);
+      const users = await fixtureDb.query(`INSERT INTO portal_users (email, password_hash, status)
+        VALUES ('live-a@ci.invalid', $1, 'active'), ('live-b@ci.invalid', $1, 'active')
+        RETURNING id`, [passwordHash]);
+      const orgs = await fixtureDb.query(`INSERT INTO customer_organizations (organization_name, status)
+        VALUES ('Live Tenant A', 'active'), ('Live Tenant B', 'active') RETURNING id`);
+      const [userA, userB] = users.rows.map((row) => row.id);
+      const [orgA, orgB] = orgs.rows.map((row) => row.id);
+      const memberA = await fixtureDb.query(`INSERT INTO customer_memberships
+        (user_id, customer_organization_id, role, status, accepted_at)
+        VALUES ($1, $2, 'org_admin', 'active', now()) RETURNING id`, [userA, orgA]);
+      const memberB = await fixtureDb.query(`INSERT INTO customer_memberships
+        (user_id, customer_organization_id, role, status, accepted_at)
+        VALUES ($1, $2, 'viewer', 'active', now()) RETURNING id`, [userB, orgB]);
+      ids = { userA, userB, orgA, orgB, memberA: memberA.rows[0].id, memberB: memberB.rows[0].id };
+      await fixtureDb.query(`INSERT INTO msp_role_grants (user_id, role) VALUES ($1, 'msp_admin')`, [userA]);
+
+      const portServer = net.createServer();
+      await new Promise((resolve) => portServer.listen(0, safeTestHost, resolve));
+      const appPort = portServer.address().port;
+      await new Promise((resolve) => portServer.close(resolve));
+      const base = `http://${safeTestHost}:${appPort}`;
+      liveServer = spawn(process.execPath, ['dist/server.js'], {
+        cwd: path.join(__dirname, '../..'),
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: 'production',
+          PORT: String(appPort),
+          SECURE_GUARD_STAGING_ISOLATED: 'true',
+          SECURE_GUARD_DB_MODE: 'dedicated',
+          SECURE_GUARD_DB_REQUIRE_DEDICATED: 'true',
+          SECURE_GUARD_DB_HOST: safeTestHost,
+          SECURE_GUARD_DB_PORT: String(safeTestPort),
+          SECURE_GUARD_DB_NAME: targetDatabase,
+          SECURE_GUARD_DB_USER: runtimeUser,
+          SECURE_GUARD_DB_PASSWORD: fixturePassword,
+          SECURE_GUARD_JWT_SECRET: 'synthetic-live-ci-jwt-secret-longer-than-32',
+          SECURE_GUARD_BASE_URL: 'https://secure-guard-ci.invalid/',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      for (const stream of [liveServer.stdout, liveServer.stderr]) {
+        stream.on('data', (chunk) => { liveLog = (liveLog + String(chunk)).slice(-4096); });
+      }
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (liveServer.exitCode !== null) throw new Error('Live server exited: ' + liveLog);
+        try {
+          const health = await fetch(base + '/healthz', { signal: AbortSignal.timeout(200) });
+          if (health.status === 200) { ready = true; break; }
+        } catch { /* loopback startup only */ }
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+      assert.ok(ready, 'Live Secure Guard server must start using only the SG DB');
+
+      const login = async (email) => {
+        const response = await fetch(base + '/api/secure-guard/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        assert.equal(response.status, 204);
+        const setCookie = response.headers.get('set-cookie');
+        assert.match(setCookie, /secure_guard_session=/);
+        assert.match(setCookie, /HttpOnly/i);
+        assert.match(setCookie, /Secure/i);
+        return setCookie.split(';')[0];
+      };
+      const cookieA = await login('live-a@ci.invalid');
+      const cookieB = await login('live-b@ci.invalid');
+      const get = (url, cookie, membershipId) => fetch(base + url, {
+        headers: { Cookie: cookie, ...(membershipId ? { 'X-Secure-Guard-Membership': membershipId } : {}) },
+      });
+
+      const aMe = await get('/api/secure-guard/me', cookieA);
+      assert.equal(aMe.status, 200);
+      const aMeBody = await aMe.json();
+      assert.equal(aMeBody.mspAdmin, true);
+      assert.deepEqual(aMeBody.memberships.map((scope) => scope.customerOrganizationId), [orgA]);
+      const bMe = await get('/api/secure-guard/me', cookieB);
+      assert.equal(bMe.status, 200);
+      const bMeBody = await bMe.json();
+      assert.equal(bMeBody.mspAdmin, false);
+      assert.deepEqual(bMeBody.memberships.map((scope) => scope.customerOrganizationId), [orgB]);
+
+      assert.equal((await get('/api/secure-guard/memberships', cookieA, ids.memberB)).status, 403);
+      assert.equal((await get('/api/secure-guard/memberships', cookieB, ids.memberA)).status, 403);
+      const ownA = await get('/api/secure-guard/memberships', cookieA, ids.memberA);
+      assert.equal(ownA.status, 200);
+      assert.equal((await ownA.json()).memberships.length, 1);
+      assert.equal((await get('/secure-guard-admin.html', cookieA)).status, 200);
+      assert.equal((await get('/secure-guard-admin.html', cookieB)).status, 403);
+      assert.equal((await get('/api/secure-guard/admin/organizations', cookieB)).status, 403);
+      assert.equal((await get('/api/secure-guard/admin/organizations', cookieA)).status, 200);
+      // No DNSFilter key: even a valid tenant must receive UNKNOWN, not other-tenant inventory.
+      assert.equal((await get('/api/secure-guard/overview', cookieA, ids.memberA)).status, 502);
+      const forbidden = await fetch(base + '/api/secure-guard/admin/dnsfilter/organizations', {
+        method: 'POST', headers: { Cookie: cookieA, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      assert.equal(forbidden.status, 503);
+
+      // Mutate only disposable DB fixture to prove live permission revocation.
+      await fixtureDb.query(`UPDATE customer_memberships SET status = 'revoked', revoked_at = now()
+        WHERE id = $1`, [ids.memberB]);
+      assert.equal((await get('/api/secure-guard/memberships', cookieB, ids.memberB)).status, 403);
+      await fixtureDb.query(`UPDATE customer_organizations SET status = 'suspended' WHERE id = $1`, [orgA]);
+      assert.equal((await get('/api/secure-guard/memberships', cookieA, ids.memberA)).status, 403);
+      await fixtureDb.query(`UPDATE portal_users SET status = 'disabled' WHERE id = $1`, [ids.userB]);
+      assert.equal((await get('/api/secure-guard/me', cookieB)).status, 403);
+    } finally {
+      if (liveServer && liveServer.exitCode === null) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(() => { liveServer.kill('SIGKILL'); resolve(); }, 3000);
+          liveServer.once('exit', () => { clearTimeout(timer); resolve(); });
+          liveServer.kill('SIGTERM');
+        });
+      }
+      if (ids) {
+        await fixtureDb.query('DELETE FROM msp_role_grants WHERE user_id = $1', [ids.userA]);
+        await fixtureDb.query('DELETE FROM customer_memberships WHERE id = ANY($1::uuid[])', [[ids.memberA, ids.memberB]]);
+        await fixtureDb.query('DELETE FROM customer_organizations WHERE id = ANY($1::uuid[])', [[ids.orgA, ids.orgB]]);
+        await fixtureDb.query('DELETE FROM portal_users WHERE id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
+      }
+      await fixtureDb.end();
+    }
 
     const driftDdl = client(targetDatabase, migrationUser, fixturePassword);
     await driftDdl.connect();
