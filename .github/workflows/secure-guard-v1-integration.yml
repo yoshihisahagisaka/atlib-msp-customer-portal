@@ -72,3 +72,57 @@ jobs:
         env:
           CI: 'true'
           SECURE_GUARD_MIGRATION_IMAGE_E2E_ENABLED: 'true'
+      - name: Build current application image (no new service or Dockerfile)
+        run: >-
+          docker build --file Dockerfile
+          --tag secure-guard-app-ci:${{ github.sha }} .
+      - name: Smoke current application image with isolated Secure Guard Staging profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="secure-guard-isolated-smoke-${{ github.run_id }}"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run --detach --name "$name" \
+            --publish 127.0.0.1:18080:8080 \
+            --env NODE_ENV=production \
+            --env SECURE_GUARD_STAGING_ISOLATED=true \
+            --env SECURE_GUARD_DB_MODE=dedicated \
+            --env SECURE_GUARD_DB_REQUIRE_DEDICATED=true \
+            --env SECURE_GUARD_DB_NAME=secure_guard_staging \
+            --env SECURE_GUARD_DB_HOST=127.0.0.1 \
+            --env SECURE_GUARD_DB_USER=secure_guard_runtime_staging \
+            --env SECURE_GUARD_DB_PASSWORD=synthetic-ci-no-real-db \
+            --env SECURE_GUARD_JWT_SECRET=synthetic-ci-only-session-key-not-for-deployment \
+            --env SECURE_GUARD_BASE_URL=https://secure-guard.example.test/ \
+            secure-guard-app-ci:${{ github.sha }} >/dev/null
+
+          ready=0
+          for i in {1..30}; do
+            if [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz || true)" == "200" ]]; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != "1" ]]; then
+            docker logs "$name" | tail -n 60
+            exit 1
+          fi
+          expect_status() {
+            local want="$1" path="$2" method="${3:-GET}"
+            local actual
+            actual="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X "$method" "http://127.0.0.1:18080$path")"
+            if [[ "$actual" != "$want" ]]; then
+              echo "FAIL: $method $path expected=$want actual=$actual"
+              exit 1
+            fi
+          }
+          expect_status 200 /secure-guard-login.html
+          expect_status 404 /login.html
+          expect_status 404 /api/hosts
+          expect_status 401 /api/secure-guard/me
+          expect_status 503 /api/secure-guard/auth/invitations/accept POST
+          expect_status 503 /api/secure-guard/agents/00000000-0000-4000-8000-000000000000/queued-uninstall POST
+          expect_status 503 /api/secure-guard/admin/dnsfilter/organizations POST
+          echo "PASS: existing image, isolated Secure Guard, legacy routes absent, mutations denied"
