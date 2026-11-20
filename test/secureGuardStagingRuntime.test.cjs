@@ -76,6 +76,13 @@ test('one shared Secure Guard process starts without Portal/Zabbix/SMTP/OAuth an
     assert.equal(root.status, 302);
     assert.equal(root.headers.get('location'), '/secure-guard-login.html');
     assert.equal((await fetch(`${base}/secure-guard-login.html`)).status, 200);
+    // Public assets are an explicit Secure Guard allowlist, not the entire legacy Portal directory.
+    for (const url of ['/css/style.css', '/js/secureGuard.js', '/js/secureGuardHome.js', '/js/secureGuardAdmin.js']) {
+      assert.equal((await fetch(base + url)).status, 200, url);
+    }
+    for (const url of ['/js/api.js', '/js/not-a-guard-script.js', '/secure-guard-accept.html']) {
+      assert.equal((await fetch(base + url)).status, 404, url);
+    }
     assert.equal((await fetch(`${base}/secure-guard-home.html`)).status, 401);
     assert.equal((await fetch(`${base}/secure-guard-admin.html`)).status, 401);
 
