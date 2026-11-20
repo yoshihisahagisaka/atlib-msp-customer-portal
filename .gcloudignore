@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-batch/
+dist-secure-guard-migration/
 .env
 *.env
 !*.env.example

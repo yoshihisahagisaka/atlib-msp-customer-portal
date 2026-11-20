@@ -1,0 +1,23 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - Dockerfile.secure-guard-migration
+      - --build-arg
+      - SOURCE_REVISION=${_SOURCE_REVISION}
+      - --tag
+      - ${_IMAGE}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args: ['push', '${_IMAGE}']
+
+images:
+  - '${_IMAGE}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _SOURCE_REVISION: review-required
+  _IMAGE: asia-northeast1-docker.pkg.dev/msp-zabbix/cloud-run-source-deploy/secure-guard-db-migration:review-required
