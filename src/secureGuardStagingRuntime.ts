@@ -72,7 +72,7 @@ export async function startIsolatedSecureGuardStaging(): Promise<void> {
     inventoryClient: new DnsFilterInventoryClient(undefined),
     // The global mutation barrier rejects all invitation requests before
     // reaching this fail-closed mailer. No SMTP credentials are loaded.
-    mailer: { sendSecureGuardInvitationEmail: async () => { throw new Error('STAGING_MAIL_DISABLED'); } } as Mailer,
+    mailer: { sendSecureGuardInvitationEmail: async () => { throw new Error('STAGING_MAIL_DISABLED'); } } as unknown as Mailer,
     portalBaseUrl: base.origin,
     overageStore: new SecureGuardOverageStore(pool),
     manualLicenseAlertDeliveryEnabled: false,
