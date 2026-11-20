@@ -1,4 +1,5 @@
 import path from 'path';
+import { startIsolatedSecureGuardStaging } from './secureGuardStagingRuntime';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import pinoHttp from 'pino-http';
@@ -53,6 +54,16 @@ import { DnsFilterManagementClient } from './services/dnsFilterManagementClient'
 import { safeHttpLogRedactions, safeHttpLogSerializers } from './lib/httpLog';
 
 async function main(): Promise<void> {
+  // Same server entrypoint, one shared SG app for all tenants.
+  // Staging isolation is explicit; legacy Portal startup is unchanged.
+  const stagingMode = process.env.SECURE_GUARD_STAGING_ISOLATED;
+  if (stagingMode !== undefined && stagingMode !== 'true' && stagingMode !== 'false') {
+    throw new Error('Invalid SECURE_GUARD_STAGING_ISOLATED');
+  }
+  if (stagingMode === 'true') {
+    await startIsolatedSecureGuardStaging();
+    return;
+  }
   const config = await loadConfig();
   const logger = pino({ level: config.nodeEnv === 'production' ? 'info' : 'debug' });
 
