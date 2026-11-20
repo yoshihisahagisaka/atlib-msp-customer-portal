@@ -119,6 +119,12 @@ jobs:
             fi
           }
           expect_status 200 /secure-guard-login.html
+          expect_status 200 /css/style.css
+          expect_status 200 /js/secureGuard.js
+          expect_status 200 /js/secureGuardHome.js
+          expect_status 200 /js/secureGuardAdmin.js
+          expect_status 404 /js/api.js
+          expect_status 404 /secure-guard-accept.html
           expect_status 404 /login.html
           expect_status 404 /api/hosts
           expect_status 401 /api/secure-guard/me
