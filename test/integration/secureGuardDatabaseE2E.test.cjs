@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { Client } = require('pg');
+const { SecureGuardRepo } = require('../../dist/services/secureGuardRepo');
 
 // The test may only operate on the disposable local PostgreSQL 16 service in CI.
 // It cannot target GCP, a Cloud SQL proxy, a production database, or a remote address.
@@ -554,6 +555,62 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         (error) => error.code === '42501');
       await assert.rejects(runtime.query('SELECT * FROM secure_guard_schema_migrations'),
         (error) => error.code === '42501');
+
+      // The SAME runtime role, tables and repository serve multiple tenants.
+      // Verify SQL-level Membership isolation, not only mocked HTTP requests.
+      // Roll back only this synthetic transaction; the original fixture stays
+      // unchanged for the following overage/permission checks.
+      await runtime.query('BEGIN');
+      try {
+        const tenantUsers = await runtime.query(`INSERT INTO portal_users (email, status)
+          VALUES ('tenant-a@fixture.invalid', 'active'), ('tenant-b@fixture.invalid', 'active')
+          RETURNING id`);
+        const tenantOrgs = await runtime.query(`INSERT INTO customer_organizations
+          (organization_name, status)
+          VALUES ('CI Tenant A', 'active'), ('CI Tenant B', 'active')
+          RETURNING id`);
+        const [userA, userB] = tenantUsers.rows.map((row) => row.id);
+        const [orgA, orgB] = tenantOrgs.rows.map((row) => row.id);
+        const a = await runtime.query(`INSERT INTO customer_memberships
+          (user_id, customer_organization_id, role, status, accepted_at)
+          VALUES ($1, $2, 'org_admin', 'active', now()) RETURNING id`, [userA, orgA]);
+        const b = await runtime.query(`INSERT INTO customer_memberships
+          (user_id, customer_organization_id, role, status, accepted_at)
+          VALUES ($1, $2, 'viewer', 'active', now()) RETURNING id`, [userB, orgB]);
+        await runtime.query(`INSERT INTO dnsfilter_organization_mappings
+          (customer_organization_id, dnsfilter_organization_id)
+          VALUES ($1, '990001'), ($2, '990002')`, [orgA, orgB]);
+
+        // Reuse the actual repository SQL and a single transactional DB client.
+        const tenantRepo = new SecureGuardRepo(runtime);
+        assert.equal((await tenantRepo.findActiveScope(userA, a.rows[0].id)).customerOrganizationId, orgA);
+        assert.equal((await tenantRepo.findActiveScope(userB, b.rows[0].id)).customerOrganizationId, orgB);
+        assert.equal(await tenantRepo.findActiveScope(userA, b.rows[0].id), null);
+        assert.equal(await tenantRepo.findActiveScope(userB, a.rows[0].id), null);
+        assert.equal((await tenantRepo.listActiveMemberships(userA)).length, 1);
+        assert.equal((await tenantRepo.listActiveMemberships(userB)).length, 1);
+        assert.equal(await tenantRepo.findActiveDnsFilterOrganization(orgA), '990001');
+        assert.equal(await tenantRepo.findActiveDnsFilterOrganization(orgB), '990002');
+
+        // MSP authorization is independent from Customer Membership.
+        assert.equal(await tenantRepo.hasActiveMspAdminGrant(userA), false);
+        await runtime.query(`INSERT INTO msp_role_grants (user_id, role)
+          VALUES ($1, 'msp_admin')`, [userA]);
+        assert.equal(await tenantRepo.hasActiveMspAdminGrant(userA), true);
+        assert.equal(await tenantRepo.findActiveScope(userA, b.rows[0].id), null);
+
+        // Revoked membership and suspended organization immediately deny scope.
+        await runtime.query(`UPDATE customer_memberships
+          SET status = 'revoked', revoked_at = now() WHERE id = $1`, [b.rows[0].id]);
+        assert.equal(await tenantRepo.findActiveScope(userB, b.rows[0].id), null);
+        assert.deepEqual(await tenantRepo.listActiveMemberships(userB), []);
+        await runtime.query(`UPDATE customer_organizations
+          SET status = 'suspended' WHERE id = $1`, [orgA]);
+        assert.equal(await tenantRepo.findActiveScope(userA, a.rows[0].id), null);
+        assert.equal(await tenantRepo.findActiveDnsFilterOrganization(orgA), null);
+      } finally {
+        await runtime.query('ROLLBACK');
+      }
     } finally {
       await runtime.end();
     }
