@@ -83,8 +83,13 @@ export async function startIsolatedSecureGuardStaging(): Promise<void> {
     res.sendFile(path.join(__dirname, '../public/secure-guard-home.html')));
   app.get('/secure-guard-admin.html', requireSecureGuardIdentity(identity), requireMspAdmin(repo), (_req, res) =>
     res.sendFile(path.join(__dirname, '../public/secure-guard-admin.html')));
-  app.use('/css', express.static(path.join(__dirname, '../public/css')));
-  app.use('/js', express.static(path.join(__dirname, '../public/js')));
+  // The shared Staging profile exposes only Secure Guard assets, not Portal JS.
+  app.get('/css/style.css', (_req, res) =>
+    res.sendFile(path.join(__dirname, '../public/css/style.css')));
+  for (const filename of ['secureGuard.js', 'secureGuardHome.js', 'secureGuardAdmin.js']) {
+    app.get(`/js/${filename}`, (_req, res) =>
+      res.sendFile(path.join(__dirname, '../public/js', filename)));
+  }
 
   const listener = app.listen(port, () => logger.info('Secure Guard shared Staging profile ready'));
   let stopping = false;
