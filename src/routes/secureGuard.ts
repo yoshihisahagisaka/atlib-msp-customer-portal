@@ -69,7 +69,7 @@ export function createSecureGuardRouter(input: {
   identityService: SecureGuardIdentityService;
   repo: SecureGuardRepo;
   inventoryClient: DnsFilterInventoryClient;
-  mailer: Mailer;
+  mailer: Pick<Mailer, 'sendSecureGuardInvitationEmail'>;
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
   roamingUsageClient?: DnsFilterRoamingUsageClient;
