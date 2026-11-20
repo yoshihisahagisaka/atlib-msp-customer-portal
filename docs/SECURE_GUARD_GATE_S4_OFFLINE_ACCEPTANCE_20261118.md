@@ -39,3 +39,19 @@
 - 変更：合成HTTP受入テスト1件、テスト実行導線と本Fit/Gap文書。
 - 非変更：業務仕様、DB Migration 001〜005とSHA、Cloud Run Job／SA／Secret、Application Router、DNSFilter API、Slack、Production。
 - GitはDraft PR #6の既存積み上げ方針を維持。Merge／Productionデプロイなし。
+
+## 2026-11-20 共有アプリのStaging限定起動（最小Fit/Gap修正）
+
+ユーザー再確認の設計原則は**1つのSecure Guardアプリ＋1つのSecure Guard DB（複数OrganizationがMembership Scopeで共有）**。顧客別アプリ、顧客別DB、新Identity、追加テナント管理レイヤーは作成しない。
+
+実GitのFit/Gapでは、既存 `src/server.ts` をそのままStaging専用DBへ配備すると `loadConfig()` が既存Portal DB・Zabbix・SMTP・Staff OAuthの秘密情報を要求し、レガシーPortal APIも起動する。これは共通マルチテナントの要件ではなく同居アプリの起動依存であり、SG専用DBの設計不備ではない。
+
+解消のため**既存 `dist/server.js` を唯一の起動エントリポイントのまま**、`SECURE_GUARD_STAGING_ISOLATED=true` のときのみ既存Secure Guard RouterをStaging制限付きで起動する。独立した商用サービスや顧客別プロセスを追加するものではない。既存Portalは未設定／false時に従来経路を継続する。
+
+- 前提条件：`SECURE_GUARD_DB_MODE=dedicated`、`SECURE_GUARD_DB_REQUIRE_DEDICATED=true`、SG runtime DB接続設定、`SECURE_GUARD_JWT_SECRET`、`SECURE_GUARD_BASE_URL`。失敗時にPortal DBやPortal JWTへフォールバックしない。
+- 起動：既存SG Repository・Identity・Routerを一組だけ起動。従来PortalのDB／Zabbix／Google OAuth／SMTP／月次報告／Admin APIは一切初期化・マウントしない。
+- Staging安全境界：SGログイン・ログアウト以外のPOST/PATCH/PUT/DELETE等をRouter到達**前**に503停止する。Agent queued uninstall、DNSFilter Organization/Site作成、招待作成、Slack実送信、SMTPを無効化。DNSFilter API keyや管理Clientを注入せず、外部GETも原則UnavailableでFail closed。既存のエンドユーザー操作UIと専用DBの権限モデルは変更しない。
+- 影響範囲：`src/server.ts` の冒頭条件分岐と `src/secureGuardStagingRuntime.ts` のStaging限定組立、隔離起動／API露出／書込み拒否のオフラインテスト。Migration 001–005、DNSFilter API実装、既存Production server動作は変更しない。
+- 受入：`npm test` と `npm run test:secure-guard-staging-isolated`、隔離PG16／Image CIで判定。ローカル・CIのPASSは**Staging配備承認／Gate S4 PASSではない**。
+
+**未完了**：実Cloud SQL Migration 005権限受入、OpenSSL High 4件のSecurity Gate、Staging専用Cloud Run配備および認証/MFA/合成データcleanupを含む実Synthetic E2E、顧客向け本番の招待／操作有効化。Stagingの書込み禁止は試験用制限であり、将来の商用機能を恒久的に削除・仕様変更する決定ではない。これらの作業は別レビュー・別承認。Gate S3 STOP、Gate S4およびProduction No-Go、Draft状態を維持する。
