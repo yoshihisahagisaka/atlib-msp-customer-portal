@@ -78,6 +78,7 @@ test('SG-only baseline has all domain tables but no legacy customer FK or global
     '003_license_alert_snapshot.sql',
     '004_agent_uninstall_claims.sql',
     '005_runtime_overage_privileges.sql',
+    '006_mfa_identity.sql',
   ]);
   const sql = filenames.map((name) => fs.readFileSync(path.join(dir, name), 'utf8')).join('\n');
   const tables = [
