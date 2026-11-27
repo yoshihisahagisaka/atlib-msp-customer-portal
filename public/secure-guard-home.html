@@ -108,6 +108,17 @@
         <button class="btn" type="submit">招待する</button>
       </form>
       <p id="customer-invitation-status" role="status"></p>
+      <section id="mfa-reset-panel" hidden aria-label="利用者のMFA再設定">
+        <h3>MFAの再設定</h3>
+        <p id="mfa-reset-target"></p>
+        <p>対象者のMFAを再設定するには、管理者ご自身のMFAによる再認証が必要です。対象者の既存ログインも無効になります。</p>
+        <form id="mfa-reauth-form">
+          <label>管理者の6桁認証コード<input id="mfa-reauth-code" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" required></label>
+          <button type="submit" class="btn btn-danger">再認証してMFA再設定</button>
+        </form>
+        <button id="mfa-reset-cancel" type="button" class="btn btn-secondary">キャンセル</button>
+        <p id="mfa-reset-status" role="status"></p>
+      </section>
     </section>
     <details class="card sg-home-help">
       <summary>導入・運用のご案内</summary>
@@ -116,7 +127,7 @@
       <h3>サイトがブロックされた場合</h3>
       <p>安全上の理由で遮断しています。業務に必要なサイトは、遮断画面の情報を添えて社内管理者へご相談ください。自動解除は行いません。</p>
       <h3>ログイン・MFAの復旧</h3>
-      <p>ログインできない場合は社内管理者またはatLIB担当者へご連絡ください。MFAの再設定機能は準備中です。</p>
+      <p>ログインできない場合は社内管理者またはatLIB担当者へご連絡ください。バックアップコードによる再登録、または同じ組織の別の管理者によるMFA再設定を利用してください。</p>
       <h3>利用者の追加・権限変更</h3>
       <p>管理者権限の利用者が本画面の「利用者管理」で操作できます。</p>
       <h3>契約・請求・解約</h3>

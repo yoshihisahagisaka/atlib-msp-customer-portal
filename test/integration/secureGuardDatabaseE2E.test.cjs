@@ -1160,3 +1160,233 @@ test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomi
     } finally { await admin.end(); }
   });
 
+
+test('PostgreSQL 16: M3 recovery, admin MFA reauth, scoped reset and session revocation', { timeout: 90000 }, async () => {
+  assert.equal(process.env.CI, 'true');
+  assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true');
+  assert.equal(process.env.NODE_ENV, 'test');
+  const { Pool } = require('pg');
+  const { SecureGuardIdentityService } = require('../../dist/services/secureGuardIdentityService');
+  const {
+    SecureGuardMfaCrypto, totpAtStep, hashMfaChallengeToken, createMfaChallenge,
+  } = require('../../dist/services/secureGuardMfa');
+  const pool = new Pool({
+    host: safeTestHost, port: safeTestPort, database: targetDatabase,
+    user: runtimeUser, password: fixturePassword, max: 3,
+  });
+  const repo = new SecureGuardRepo(pool);
+  const keys = {
+    SECURE_GUARD_MFA_ENCRYPTION_KEY_V1: Buffer.alloc(32, 31).toString('base64'),
+    SECURE_GUARD_MFA_OTP_PEPPER: Buffer.alloc(32, 32).toString('base64'),
+  };
+  const cryptoMfa = new SecureGuardMfaCrypto(keys);
+  const service = new SecureGuardIdentityService(
+    repo, 'synthetic-m3-jwt-key-2026-only-test', '1h', undefined, keys,
+  );
+  let ids = [];
+  let organizations = [];
+  let memberships = [];
+  try {
+    const password = 'password-m3-only-synthetic';
+    const hash = await bcrypt.hash(password, 4);
+    const insertedUsers = await pool.query(
+      `INSERT INTO portal_users(email,password_hash,status) VALUES
+       ('m3-admin@ci.invalid',$1,'active'),
+       ('m3-other-admin@ci.invalid',$1,'active'),
+       ('m3-target@ci.invalid',$1,'active'),
+       ('m3-multi@ci.invalid',$1,'active'),
+       ('m3-msp@ci.invalid',$1,'active'),
+       ('m3-foreign@ci.invalid',$1,'active'),
+       ('m3-viewer@ci.invalid',$1,'active'),
+       ('m3-disabled@ci.invalid',$1,'disabled'),
+       ('m3-recovery@ci.invalid',$1,'active') RETURNING id,email`,
+      [hash],
+    );
+    ids = insertedUsers.rows.map((r) => r.id);
+    const [admin, otherAdmin, target, multi, msp, foreign, viewer, disabled, recover] = ids;
+    const orgs = await pool.query(
+      `INSERT INTO customer_organizations(organization_name,status)
+       VALUES ('M3 fixture A','active'),('M3 fixture B','active') RETURNING id`,
+    );
+    organizations = orgs.rows.map((r) => r.id);
+    const [orgA, orgB] = organizations;
+    const grant = async (userId, orgId, role) => {
+      const { rows } = await pool.query(
+        `INSERT INTO customer_memberships
+         (user_id,customer_organization_id,role,status,accepted_at)
+         VALUES($1,$2,$3,'active',now()) RETURNING id`,
+        [userId, orgId, role],
+      );
+      memberships.push(rows[0].id);
+      return rows[0].id;
+    };
+    const adminMembership = await grant(admin, orgA, 'org_admin');
+    await grant(otherAdmin, orgA, 'org_admin');
+    const targetMembership = await grant(target, orgA, 'viewer');
+    const multiMembership = await grant(multi, orgA, 'viewer');
+    await grant(multi, orgB, 'viewer');
+    const mspMembership = await grant(msp, orgA, 'viewer');
+    const foreignMembership = await grant(foreign, orgB, 'viewer');
+    const viewerMembership = await grant(viewer, orgA, 'viewer');
+    const disabledMembership = await grant(disabled, orgA, 'viewer');
+    await pool.query(`INSERT INTO msp_role_grants(user_id,role,status)
+      VALUES($1,'msp_admin','active')`, [msp]);
+
+    const secrets = new Map();
+    for (const userId of [admin, otherAdmin, target, multi, msp, foreign, viewer, disabled, recover]) {
+      const secret = cryptoMfa.generateTotpSecret();
+      secrets.set(userId, secret);
+      const encrypted = cryptoMfa.encryptTotp(userId, secret);
+      await repo.mfaPutSetting({
+        userId, method: 'totp', state: 'active',
+        totpCiphertext: encrypted.ciphertext, totpNonce: encrypted.nonce,
+        totpTag: encrypted.tag, keyVersion: encrypted.keyVersion,
+      });
+    }
+    const attrs = (id, sessionVersion = 1) => ({
+      userId: id, sessionVersion, mfaVerified: true, mfaMethod: 'totp',
+    });
+    assert.ok(await service.verifyActiveSession(attrs(target)));
+    assert.equal(await repo.mfaResetByOrgAdmin({
+      actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
+      targetMembershipId: targetMembership, reauthTokenHash: '0'.repeat(64),
+    }), null, 'normal session without fresh MFA proof cannot reset');
+
+    // Recovery is password-verified and MUST consume code + invalidate prior sessions.
+    const recoveryCodes = cryptoMfa.createRecoveryCodes(recover);
+    await repo.mfaReplaceRecoveryHashes(recover, recoveryCodes.hashes);
+    const login = await service.login('m3-recovery@ci.invalid', password);
+    assert.equal(login.flow, 'MFA_REQUIRED');
+    assert.equal(await service.recoverMfa(login.challengeToken, '0'.repeat(32)), null);
+    const simultaneousRecovery = await Promise.all([
+      service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]),
+      service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]),
+    ]);
+    assert.equal(simultaneousRecovery.filter(Boolean).length, 1, 'only one recovery may win');
+    const recovered = simultaneousRecovery.find(Boolean);
+    assert.equal(recovered.flow, 'MFA_ENROLLMENT_REQUIRED');
+    assert.match(recovered.challengeToken, /^[a-f0-9]{64}$/);
+    assert.equal(await service.verifyActiveSession(attrs(recover)), null);
+    const resetFactor = await repo.mfaGetSetting(recover);
+    assert.equal(resetFactor.state, 'reset_required');
+    assert.equal(resetFactor.totpCiphertext, null);
+    assert.equal(await service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]), null);
+    assert.equal((await pool.query(
+      'SELECT count(*)::integer AS count FROM secure_guard_mfa_recovery_codes WHERE user_id=$1 AND consumed_at IS NULL',
+      [recover],
+    )).rows[0].count, 0);
+    const reEnroll = await repo.mfaFindChallenge(hashMfaChallengeToken(recovered.challengeToken));
+    assert.equal(reEnroll.purpose, 'enroll');
+    assert.equal(reEnroll.method, null);
+    assert.equal(await service.verifyMfa(login.challengeToken, totpAtStep(secrets.get(recover),
+      BigInt(Math.floor(Date.now()/30000)))), null);
+
+    // Even a verified-at marker cannot authorize a proof past the 5-minute TTL.
+    const expiredReauth = createMfaChallenge('admin_reauth', Date.now() - 10*60*1000);
+    await repo.mfaIssueChallenge({
+      userId: admin, tokenHash: expiredReauth.tokenHash, purpose: 'admin_reauth',
+      method: 'totp', expiresAt: expiredReauth.expiresAt,
+    });
+    await pool.query(
+      "UPDATE secure_guard_mfa_challenges SET verified_at=now()-interval '6 minutes' WHERE token_hash=$1",
+      [expiredReauth.tokenHash],
+    );
+    assert.equal(await repo.mfaResetByOrgAdmin({
+      actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
+      targetMembershipId: targetMembership, reauthTokenHash: expiredReauth.tokenHash,
+    }), null, 'expired reauthentication cannot reset eligible target');
+    assert.equal((await repo.mfaGetSetting(target)).state, 'active');
+    assert.equal(await service.startAdminReauth(viewer), null, 'viewer cannot initiate admin proof');
+
+    // Prove a fresh MFA code and use the resulting 5-minute proof exactly once.
+    const reauth = await service.startAdminReauth(admin);
+    assert.equal(reauth.method, 'totp');
+    const step = BigInt(Math.floor(Date.now() / 30000));
+    const code = totpAtStep(secrets.get(admin), step);
+    assert.equal(await service.verifyAdminReauth(admin, reauth.challengeToken, code), true);
+    assert.equal(await service.verifyAdminReauth(admin, reauth.challengeToken, code), false);
+    const oldBackup = cryptoMfa.createRecoveryCodes(target);
+    await repo.mfaReplaceRecoveryHashes(target, oldBackup.hashes);
+    const oldChallenge = createMfaChallenge('login');
+    assert.equal(await repo.mfaIssueChallenge({
+      userId: target, tokenHash: oldChallenge.tokenHash, purpose: 'login',
+      method: 'totp', expiresAt: oldChallenge.expiresAt,
+    }), true);
+    const resetRequests = Array.from({ length: 2 }, () => repo.mfaResetByOrgAdmin({
+      actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
+      targetMembershipId: targetMembership,
+      reauthTokenHash: hashMfaChallengeToken(reauth.challengeToken),
+    }));
+    const resetResults = await Promise.all(resetRequests);
+    assert.equal(resetResults.filter(Boolean).length, 1, 'same proof cannot reset twice concurrently');
+    assert.equal(resetResults.find(Boolean).email, 'm3-target@ci.invalid');
+    assert.equal(await service.verifyActiveSession(attrs(target)), null);
+    assert.equal((await pool.query('SELECT session_version FROM portal_users WHERE id=$1', [target]))
+      .rows[0].session_version, 2);
+    const targetFactor = await repo.mfaGetSetting(target);
+    assert.equal(targetFactor.state, 'reset_required');
+    assert.equal(targetFactor.totpCiphertext, null);
+    assert.equal(targetFactor.totpTag, null);
+    assert.equal((await repo.mfaFindChallenge(oldChallenge.tokenHash)).consumedAt !== null, true);
+    assert.equal((await pool.query(
+      'SELECT count(*)::integer AS count FROM secure_guard_mfa_recovery_codes WHERE user_id=$1 AND consumed_at IS NULL',
+      [target],
+    )).rows[0].count, 0);
+    assert.equal(await repo.mfaResetByOrgAdmin({
+      actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
+      targetMembershipId: targetMembership,
+      reauthTokenHash: hashMfaChallengeToken(reauth.challengeToken),
+    }), null, 'used proof must not reset twice');
+
+    // New proof with another 30-second TOTP step, avoiding replay.
+    const freshProof = async () => {
+      const fresh = await service.startAdminReauth(admin);
+      const last = (await repo.mfaGetSetting(admin)).lastTotpStep;
+      const nextStep = (last ?? BigInt(Math.floor(Date.now()/30000))) + 1n;
+      // Use the next 30-second step in a synthetic callback with a fixed test clock.
+      assert.equal(await repo.mfaVerifyAdminReauth({
+        userId: admin, tokenHash: hashMfaChallengeToken(fresh.challengeToken),
+        verify: () => ({ valid: true, totpStep: nextStep }),
+      }), true);
+      return hashMfaChallengeToken(fresh.challengeToken);
+    };
+    const makeReset = (actorUserId, actorMembershipId, targetMembershipId, hash) =>
+      repo.mfaResetByOrgAdmin({
+        actorUserId, actorSessionVersion: 1, actorMembershipId,
+        targetMembershipId, reauthTokenHash: hash,
+      });
+
+    assert.equal(await makeReset(admin, adminMembership, adminMembership, await freshProof()), null,
+      'self reset denied');
+    assert.equal(await makeReset(admin, adminMembership, foreignMembership, await freshProof()), null,
+      'foreign organization denied');
+    assert.equal(await makeReset(admin, adminMembership, multiMembership, await freshProof()), null,
+      'multi-organization identity denied');
+    assert.equal(await makeReset(admin, adminMembership, mspMembership, await freshProof()), null,
+      'MSP-granted target denied');
+    assert.equal(await makeReset(admin, adminMembership, disabledMembership, await freshProof()), null,
+      'disabled target denied');
+    assert.equal(await makeReset(viewer, viewerMembership, foreignMembership, await freshProof()), null,
+      'viewer denied');
+    const audit = await pool.query(
+      `SELECT action,result,actor_user_id,membership_id FROM secure_guard_audit_events
+       WHERE action IN ('mfa.reset','mfa.recovery') AND actor_user_id=ANY($1::uuid[])`,
+      [ids],
+    );
+    assert.equal(audit.rows.filter(r=>r.action==='mfa.reset' && r.result==='success').length, 1);
+    assert.equal(audit.rows.filter(r=>r.action==='mfa.recovery' && r.result==='success').length, 1);
+  } finally {
+    if (ids.length) {
+      await pool.query('DELETE FROM secure_guard_audit_events WHERE actor_user_id=ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM secure_guard_mfa_challenges WHERE user_id=ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM secure_guard_mfa_recovery_codes WHERE user_id=ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM secure_guard_mfa_settings WHERE user_id=ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM msp_role_grants WHERE user_id=ANY($1::uuid[])', [ids]);
+      if (memberships.length) await pool.query('DELETE FROM customer_memberships WHERE id=ANY($1::uuid[])', [memberships]);
+      if (organizations.length) await pool.query('DELETE FROM customer_organizations WHERE id=ANY($1::uuid[])', [organizations]);
+      await pool.query('DELETE FROM portal_users WHERE id=ANY($1::uuid[])', [ids]);
+    }
+    await pool.end();
+  }
+});
+

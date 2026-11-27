@@ -8,6 +8,7 @@ import {
   requireSecureGuardIdentity,
 } from '../middleware/secureGuardAuth';
 import type { Mailer } from '../services/mailer';
+import { hashMfaChallengeToken } from '../services/secureGuardMfa';
 import type { SecureGuardIdentityService } from '../services/secureGuardIdentityService';
 import { SecureGuardConflictError, type SecureGuardRepo } from '../services/secureGuardRepo';
 import { DnsFilterInventoryClient } from '../services/dnsFilterInventoryClient';
@@ -31,6 +32,7 @@ const organizationSchema = z.object({ organizationName: z.string().trim().min(1)
 const organizationPatchSchema = z.object({ organizationName: z.string().trim().min(1).max(255).optional(), status: z.enum(['active', 'suspended']).optional(), dnsfilterOrganizationId: z.string().regex(/^\d+$/).optional() }).refine((value) => Object.keys(value).length > 0);
 const managedInvitationSchema = z.object({ email: z.string().email(), role: membershipRoleSchema });
 const roleUpdateSchema = z.object({ role: membershipRoleSchema });
+const mfaResetSchema = z.object({ reauthChallengeToken: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const provisioningSchema = z.object({ organizationName: z.string().trim().min(1).max(255) });
 const importSchema = z.object({ organizationName: z.string().trim().min(1).max(255), dnsfilterOrganizationId: z.string().regex(/^\d+$/) });
 const networkIdSchema = z.string().regex(/^[1-9]\d*$/).refine((value) => Number.isSafeInteger(Number(value)));
@@ -69,7 +71,7 @@ export function createSecureGuardRouter(input: {
   identityService: SecureGuardIdentityService;
   repo: SecureGuardRepo;
   inventoryClient: DnsFilterInventoryClient;
-  mailer: Pick<Mailer, 'sendSecureGuardInvitationEmail'>;
+  mailer: Pick<Mailer, 'sendSecureGuardInvitationEmail'> & Partial<Pick<Mailer, 'sendSecureGuardMfaResetEmail'>>;
   portalBaseUrl: string;
   managementClient?: DnsFilterManagementClient;
   roamingUsageClient?: DnsFilterRoamingUsageClient;
@@ -440,6 +442,48 @@ export function createSecureGuardRouter(input: {
       if (!toError(error, res)) throw error;
     }
   });
+
+
+  router.post('/memberships/:membershipId/mfa/reset',
+    requireIdentity, requireCustomerScope, async (req, res) => {
+      if (req.secureGuardScope?.role !== 'org_admin' || !req.secureGuardUserId
+        || !req.secureGuardSessionVersion) {
+        res.status(403).json({ error: 'MFA_RESET_DENIED' }); return;
+      }
+      const targetMembershipId = req.params.membershipId;
+      const body = mfaResetSchema.safeParse(req.body);
+      if (!targetMembershipId || !z.string().uuid().safeParse(targetMembershipId).success
+        || !body.success) {
+        res.status(400).json({ error: 'INVALID_REQUEST' }); return;
+      }
+      // Missing notification transport fails before making irreversible DB changes.
+      if (!input.mailer.sendSecureGuardMfaResetEmail) {
+        res.status(503).json({ error: 'MFA_RESET_UNAVAILABLE' }); return;
+      }
+      try {
+        const target = await input.repo.mfaResetByOrgAdmin({
+          actorUserId: req.secureGuardUserId,
+          actorSessionVersion: req.secureGuardSessionVersion,
+          actorMembershipId: req.secureGuardScope.membershipId,
+          targetMembershipId,
+          reauthTokenHash: hashMfaChallengeToken(body.data.reauthChallengeToken),
+        });
+        if (!target) {
+          res.status(403).json({ error: 'MFA_RESET_DENIED' }); return;
+        }
+        // State and audit have already COMMITTED; delivery failure must not undo reset.
+        try {
+          await input.mailer.sendSecureGuardMfaResetEmail(target.email);
+        } catch {
+          await input.repo.recordSystemAudit(
+            req.secureGuardUserId, 'mfa.reset.notification.failed', 'failed',
+          ).catch(() => undefined); // unknown outcome requires manual review, no retry
+        }
+        res.status(204).end();
+      } catch {
+        res.status(503).json({ error: 'MFA_RESET_OUTCOME_UNKNOWN_NO_RETRY' });
+      }
+    });
 
   router.post('/memberships/:membershipId/revoke', requireIdentity, requireCustomerScope, async (req, res) => {
     if (req.secureGuardScope!.role !== 'org_admin') {

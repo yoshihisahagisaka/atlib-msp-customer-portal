@@ -10,6 +10,7 @@ declare global {
   namespace Express {
     interface Request {
       secureGuardUserId?: string;
+      secureGuardSessionVersion?: number;
       secureGuardScope?: CustomerScope;
     }
   }
@@ -30,6 +31,7 @@ export function requireSecureGuardIdentity(identityService: SecureGuardIdentityS
         return;
       }
       req.secureGuardUserId = user.id;
+      req.secureGuardSessionVersion = payload.sessionVersion;
       next();
     } catch {
       res.status(401).json({ error: 'AUTH_REQUIRED' });
