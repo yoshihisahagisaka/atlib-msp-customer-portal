@@ -48,8 +48,15 @@ function inMemoryRepo(user, initialSetting = null) {
       challenge.otpHmac = mac;
       challenge.sendCount++;
       challenge.lastSentAt = now;
-      return 'recorded';
+      return mac === null ? { status: 'reserved', sendCount: challenge.sendCount } : 'recorded';
     },
+    mfaConfirmEmailDelivery: async (_userId, hash, mac, sendCount) => {
+      if (!challenge || challenge.tokenHash !== hash || challenge.otpHmac !== null
+        || challenge.consumedAt || challenge.sendCount !== sendCount) return false;
+      challenge.otpHmac = mac;
+      return true;
+    },
+    currentOtpHash: () => challenge?.otpHmac ?? null,
     mfaConsumeChallenge: async (input) => {
       if (!challenge || challenge.tokenHash !== input.tokenHash || challenge.consumedAt) {
         return { status: 'consumed' };
@@ -79,7 +86,10 @@ function inMemoryRepo(user, initialSetting = null) {
 async function withAuth(repo, delivery, run) {
   const service = new SecureGuardIdentityService(
     repo, 'synthetic-secure-guard-session-secret-for-ci', '1h',
-    async (to, otp) => delivery.push({ to, otp }), keys);
+    async (to, otp) => {
+      delivery.push({ to, otp });
+      if (delivery.fail) throw new Error('synthetic-unknown-email-delivery');
+    }, keys);
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -216,6 +226,23 @@ test('TOTP enrollment exposes an otpauth URI once and accepts only a real authen
     assert.equal(verified.status, 200);
     assert.equal((await verified.json()).backupCodes.length, 10);
     assert.match(verified.headers.get('set-cookie'), /secure_guard_session=/);
+  });
+});
+
+test('SMTP failure cannot leave a verifiable email OTP or issue a normal session', async () => {
+  const password = 'secure-unknown-delivery';
+  const user = { id: 'unknown-mail', email: 'unknown@example.test',
+    passwordHash: await bcrypt.hash(password, 4), status: 'active', sessionVersion: 1 };
+  const repo = inMemoryRepo(user, { userId: user.id, method: 'email', state: 'active' });
+  const delivery = [];
+  delivery.fail = true;
+  await withAuth(repo, delivery, async (post) => {
+    const response = await post('/login', { email: user.email, password });
+    assert.equal(response.status, 503);
+    assertNoSessionCookie(response);
+    assert.equal((await response.json()).error, 'MFA_UNAVAILABLE');
+    assert.equal(delivery.length, 1);
+    assert.equal(repo.currentOtpHash(), null);
   });
 });
 
