@@ -20,6 +20,7 @@ on:
   push:
     branches:
       - feat/sg-v1-dedicated-integration-20261112
+      - feat/secure-guard-mfa-v1-20261127
 
 permissions:
   contents: read
