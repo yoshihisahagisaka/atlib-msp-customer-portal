@@ -59,12 +59,16 @@ export async function startIsolatedSecureGuardStaging(): Promise<void> {
   const offlineMfaPaths = new Set([
     '/auth/mfa/verify', '/auth/mfa/enroll/start',
     '/auth/mfa/enroll/verify', '/auth/mfa/email/resend',
+    '/auth/mfa/recovery', '/auth/mfa/reauth/start', '/auth/mfa/reauth/verify',
     '/auth/invitations/accept',
   ]);
   app.use('/api/secure-guard', (req, res, next) => {
     const authSession = req.method === 'POST' &&
       (req.path === '/auth/login' || req.path === '/auth/logout'
-        || (offlineMfaFixture && offlineMfaPaths.has(req.path)));
+        || (offlineMfaFixture && (
+          offlineMfaPaths.has(req.path)
+          || /^\/memberships\/[0-9a-f-]{36}\/mfa\/reset$/.test(req.path)
+        )));
     if (req.method !== 'GET' && !authSession) {
       res.status(503).json({ error: 'SECURE_GUARD_STAGING_WRITES_DISABLED' });
       return;
