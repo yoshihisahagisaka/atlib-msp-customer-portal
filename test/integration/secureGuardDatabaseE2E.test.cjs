@@ -1276,6 +1276,23 @@ test('PostgreSQL 16: M3 recovery, admin MFA reauth, scoped reset and session rev
     assert.equal(await service.verifyMfa(login.challengeToken, totpAtStep(secrets.get(recover),
       BigInt(Math.floor(Date.now()/30000)))), null);
 
+    // Even a verified-at marker cannot authorize a proof past the 5-minute TTL.
+    const expiredReauth = createMfaChallenge('admin_reauth', Date.now() - 10*60*1000);
+    await repo.mfaIssueChallenge({
+      userId: admin, tokenHash: expiredReauth.tokenHash, purpose: 'admin_reauth',
+      method: 'totp', expiresAt: expiredReauth.expiresAt,
+    });
+    await pool.query(
+      "UPDATE secure_guard_mfa_challenges SET verified_at=now()-interval '6 minutes' WHERE token_hash=$1",
+      [expiredReauth.tokenHash],
+    );
+    assert.equal(await repo.mfaResetByOrgAdmin({
+      actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
+      targetMembershipId: targetMembership, reauthTokenHash: expiredReauth.tokenHash,
+    }), null, 'expired reauthentication cannot reset eligible target');
+    assert.equal((await repo.mfaGetSetting(target)).state, 'active');
+    assert.equal(await service.startAdminReauth(viewer), null, 'viewer cannot initiate admin proof');
+
     // Prove a fresh MFA code and use the resulting 5-minute proof exactly once.
     const reauth = await service.startAdminReauth(admin);
     assert.equal(reauth.method, 'totp');
@@ -1344,12 +1361,6 @@ test('PostgreSQL 16: M3 recovery, admin MFA reauth, scoped reset and session rev
       'disabled target denied');
     assert.equal(await makeReset(viewer, viewerMembership, foreignMembership, await freshProof()), null,
       'viewer denied');
-    const expired = createMfaChallenge('admin_reauth', Date.now()-10*60*1000);
-    await repo.mfaIssueChallenge({
-      userId: admin, tokenHash: expired.tokenHash, purpose: 'admin_reauth',
-      method: 'totp', expiresAt: expired.expiresAt,
-    });
-    assert.equal(await makeReset(admin, adminMembership, mspMembership, expired.tokenHash), null);
     const audit = await pool.query(
       `SELECT action,result,actor_user_id,membership_id FROM secure_guard_audit_events
        WHERE action IN ('mfa.reset','mfa.recovery') AND actor_user_id=ANY($1::uuid[])`,
