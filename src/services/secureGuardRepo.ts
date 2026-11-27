@@ -176,9 +176,11 @@ export class SecureGuardRepo {
 
   // Replacement email OTP invalidates the previous code; failures never extend TTL.
   async mfaRecordEmailOtp(
-    userId: string, tokenHash: string, otpHmac: string, at = new Date(),
-  ): Promise<'recorded' | 'denied' | 'rate_limited'> {
-    return this.withMfaTransaction<'recorded' | 'denied' | 'rate_limited'>(async (client) => {
+    userId: string, tokenHash: string, otpHmac: string | null, at = new Date(),
+  ): Promise<'recorded' | 'denied' | 'rate_limited' | { status: 'reserved'; sendCount: number }> {
+    return this.withMfaTransaction<
+      'recorded' | 'denied' | 'rate_limited' | { status: 'reserved'; sendCount: number }
+    >(async (client) => {
       const actor = await client.query(
         "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE", [userId],
       );
@@ -203,12 +205,53 @@ export class SecureGuardRepo {
         || (row.last_sent_at && at.getTime() - row.last_sent_at.getTime() < MFA_EMAIL_RESEND_INTERVAL_MS)) {
         return 'rate_limited';
       }
-      await client.query(
+      const changed = await client.query(
         `UPDATE secure_guard_mfa_challenges
            SET otp_hmac=$1, send_count=send_count+1, last_sent_at=$2
-         WHERE token_hash=$3`, [otpHmac, at, tokenHash],
+         WHERE token_hash=$3 RETURNING send_count`, [otpHmac, at, tokenHash],
       );
-      return 'recorded';
+      // Null stores no valid code while delivery is pending or uncertain.
+      return otpHmac === null
+        ? { status: 'reserved', sendCount: Number(changed.rows[0].send_count) }
+        : 'recorded';
+    });
+  }
+
+
+  // Delivery must be acknowledged BEFORE an email OTP hash becomes verifiable.
+  // If SMTP fails/unknown, otp_hmac stays NULL and never authenticates.
+  async mfaConfirmEmailDelivery(
+    userId: string, tokenHash: string, otpHmac: string, reservedSendCount: number,
+    at = new Date(),
+  ): Promise<boolean> {
+    if (!/^[a-f0-9]{64}$/.test(otpHmac) || !Number.isInteger(reservedSendCount)
+      || reservedSendCount < 1 || reservedSendCount > MFA_MAX_EMAIL_SENDS) return false;
+    return this.withMfaTransaction(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [userId],
+      );
+      if (!actor.rowCount) return false;
+      const result = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE token_hash=$1 AND user_id=$2 FOR UPDATE`, [tokenHash, userId],
+      );
+      const row = result.rows[0];
+      if (!row || row.consumed_at || row.expires_at <= at
+        || row.method !== 'email' || row.otp_hmac !== null
+        || Number(row.send_count) !== reservedSendCount
+        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS
+        || (row.purpose !== 'login' && row.purpose !== 'enroll')) return false;
+      const setting = await client.query(
+        'SELECT method, state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE', [userId],
+      );
+      const expectedState = row.purpose === 'login' ? 'active' : 'enrolling';
+      if (setting.rows[0]?.method !== 'email' || setting.rows[0]?.state !== expectedState) return false;
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET otp_hmac=$1 WHERE token_hash=$2',
+        [otpHmac, tokenHash],
+      );
+      return true;
     });
   }
 
