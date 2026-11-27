@@ -224,3 +224,23 @@ test('email admin reauthentication requires a delivered OTP and yields a one-use
   assert.equal(await service.verifyAdminReauth(user.id, start.challengeToken, delivered.otp), false);
 });
 
+test('existing MFA pages and scripts expose only the recovery/reset controls and parse as JavaScript', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const root = path.join(__dirname, '..');
+  for (const html of ['public/secure-guard-login.html', 'public/secure-guard-accept.html']) {
+    const markup = fs.readFileSync(path.join(root, html), 'utf8');
+    assert.match(markup, /id="mfa-recovery-form"/);
+    assert.match(markup, /id="mfa-recovery-code"/);
+  }
+  const home = fs.readFileSync(path.join(root, 'public/secure-guard-home.html'), 'utf8');
+  assert.match(home, /id="mfa-reset-panel"/);
+  assert.match(home, /id="mfa-reauth-form"/);
+  assert.match(home, /id="mfa-reauth-code"/);
+  for (const file of ['public/js/secureGuard.js', 'public/js/secureGuardHome.js']) {
+    assert.doesNotThrow(() => new vm.Script(fs.readFileSync(path.join(root, file), 'utf8'), {
+      filename: file,
+    }));
+  }
+});
