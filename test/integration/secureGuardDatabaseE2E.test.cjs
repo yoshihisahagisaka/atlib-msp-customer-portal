@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const { spawnSync, spawn } = require('node:child_process');
 const net = require('node:net');
 const bcrypt = require('bcrypt');
@@ -17,6 +19,18 @@ const runtimeUser = 'secure_guard_runtime_staging';
 const overageUser = 'secure_guard_overage_staging';
 const secuUser = 'secumie_otp_staging';
 const fixturePassword = 'local_ci_fixture_password_not_a_secret';
+// Keep the existing 001-005 acceptance independent from the MFA-only SQL file.
+const approved005Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-migration-005-'));
+for (const name of [
+  '001_identity_scope_baseline.sql', '002_overage_alerts.sql',
+  '003_license_alert_snapshot.sql', '004_agent_uninstall_claims.sql',
+  '005_runtime_overage_privileges.sql',
+]) {
+  fs.copyFileSync(path.join(__dirname, '../../migrations/secure_guard', name),
+    path.join(approved005Dir, name));
+}
+process.once('exit', () => fs.rmSync(approved005Dir, { recursive: true, force: true }));
+
 
 function client(database, user, password) {
   return new Client({
@@ -41,7 +55,7 @@ function runMigration(overrides = {}) {
       SECURE_GUARD_MIGRATION_APPROVED: 'true',
       SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION:
         'msp-zabbix:asia-northeast1:secumie-sg-shared-staging-db/secure_guard_staging',
-      SECURE_GUARD_MIGRATIONS_DIR: path.join(__dirname, '../../migrations/secure_guard'),
+      SECURE_GUARD_MIGRATIONS_DIR: approved005Dir,
       SECURE_GUARD_MIGRATION_MANIFEST:
         path.join(__dirname, '../../migration-manifests/secure-guard-staging-001-005.json'),
       SECURE_GUARD_MIGRATION_VERIFIER:
