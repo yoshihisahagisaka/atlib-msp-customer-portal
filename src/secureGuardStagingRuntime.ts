@@ -51,11 +51,20 @@ export async function startIsolatedSecureGuardStaging(): Promise<void> {
   app.get('/healthz', (_req, res) => res.status(200).send('ok'));
   app.get('/', (_req, res) => res.redirect('/secure-guard-login.html'));
 
-  // Reject all business mutations BEFORE loading their handlers (including
-  // invitation token creation or a local DNSFilter provisioning draft).
-  // Login/logout only mutate an HttpOnly cookie, not a database or remote service.
+  // Business writes are always rejected. Additional MFA writes are permitted
+  // only in the isolated CI fixture (not when deployed to real Staging).
+  const offlineMfaFixture = process.env.SECURE_GUARD_MFA_OFFLINE_E2E === 'true'
+    && process.env.CI === 'true' && process.env.NODE_ENV === 'test'
+    && settings.host === '127.0.0.1' && settings.port === 55432 && !settings.socketPath;
+  const offlineMfaPaths = new Set([
+    '/auth/mfa/verify', '/auth/mfa/enroll/start',
+    '/auth/mfa/enroll/verify', '/auth/mfa/email/resend',
+    '/auth/invitations/accept',
+  ]);
   app.use('/api/secure-guard', (req, res, next) => {
-    const authSession = req.method === 'POST' && (req.path === '/auth/login' || req.path === '/auth/logout');
+    const authSession = req.method === 'POST' &&
+      (req.path === '/auth/login' || req.path === '/auth/logout'
+        || (offlineMfaFixture && offlineMfaPaths.has(req.path)));
     if (req.method !== 'GET' && !authSession) {
       res.status(503).json({ error: 'SECURE_GUARD_STAGING_WRITES_DISABLED' });
       return;
