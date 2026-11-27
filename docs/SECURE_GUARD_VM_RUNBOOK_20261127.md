@@ -29,41 +29,26 @@ gcloud compute ssh atlib-test-runner \
 
 IAP/OS Login認可不足、VM停止、SSH不可であればそこでSTOP。公開IPへ直結する方法へ切替えない。
 
-## 3. VM内のSecure Guard専用Workspace
+## 3. VM内の既存Secure Guard Git（重複Clone禁止）
 
-VMにログイン後、**別プロジェクト領域へ触れずに**次だけ実行。
+VMにログインしたら**ユーザー指定の既存パスだけ**を確認する。
 
 ```bash
 set -euo pipefail
 test "$HOME" = "/home/yoshihisa_hagisaka_atlib_jp"
 test "$(id -u)" != 0
-umask 077
-ROOT="$HOME/projects/secure-guard"
-test ! -L "$ROOT"
-mkdir -p "$ROOT"/{evidence,tmp}
-chmod 700 "$ROOT" "$ROOT/evidence" "$ROOT/tmp"
+ROOT="$HOME/atlib-test/atlib-msp-customer-portal"
+test -d "$ROOT" && test ! -L "$ROOT"
+test "$(git -C "$ROOT" rev-parse --show-toplevel)" = "$ROOT"
+git -C "$ROOT" remote -v
+git -C "$ROOT" rev-parse HEAD
+git -C "$ROOT" status --short
+bash "$ROOT/scripts/readiness/secureGuardVmPreflight.sh"
 ```
 
-この後、GitHubのrepo read permissionがVM上で使える場合のみ：
+確認対象は`/home/yoshihisa_hagisaka_atlib_jp/atlib-test/atlib-msp-customer-portal`。既に取得したGitを再利用し、`~/atlib-test/atlib-msp-customer-portal/source`を新設・再Cloneしない。Gitに未Commitの変更があればSTOPして保全し、`git reset --hard`や`git clean -fd`を実行しない。Clone・再認証・sudoでのGit変更を自動実施しない。
 
-```bash
-set -euo pipefail
-ROOT="$HOME/projects/secure-guard"
-test ! -e "$ROOT/source" || {
-  echo "STOP: source already exists; inspect before reusing"
-  exit 1
-}
-git clone --single-branch \
-  --branch feat/sg-v1-dedicated-integration-20261112 \
-  https://github.com/yoshihisahagisaka/atlib-msp-customer-portal.git \
-  "$ROOT/source"
-cd "$ROOT/source"
-git status --porcelain
-git rev-parse HEAD
-bash scripts/readiness/secureGuardVmPreflight.sh
-```
-
-`git clone`の認証失敗時はSTOP。VMにPATを平文配置、Git credentialを全プロジェクト共用、`sudo`で資格情報を追加することを禁止。Sourceが既存の場合は上書きcloneせず、元の作業内容を保全し、別途整合レビュー。
+ユーザーが意図せず作成した`~/atlib-test/atlib-msp-customer-portal/`は、既存Gitの存在、重複Cloneの完全一致、差分なし、他資産なしを確認したうえで**利用者が明示実行する安全な削除手順のみ**で整理する。新規スクリプトの一括削除に依存せず、不要なら触れない。
 
 ## 4. Offlineテスト（必要なツールが実測存在する場合だけ）
 
@@ -71,7 +56,7 @@ bash scripts/readiness/secureGuardVmPreflight.sh
 
 ```bash
 set -euo pipefail
-cd "$HOME/projects/secure-guard/source"
+cd "$HOME/atlib-test/atlib-msp-customer-portal"
 test -z "$(git status --porcelain)"
 export PUPPETEER_SKIP_DOWNLOAD=true
 npm ci --no-audit --no-fund
@@ -84,7 +69,7 @@ PostgreSQL16統合は、手元の実Cloud SQLへ接続せず、**VM上の一時D
 
 ```bash
 set -Eeuo pipefail
-cd "$HOME/projects/secure-guard/source"
+cd "$HOME/atlib-test/atlib-msp-customer-portal"
 NAME="sg-pg16-verify-$(id -u)"
 if docker container inspect "$NAME" >/dev/null 2>&1; then
   echo "STOP: exact named container already exists"
@@ -122,7 +107,7 @@ CI=true NODE_ENV=test \
 
 ## 5. 証跡とCodex引継ぎ
 
-- `git rev-parse HEAD`／ブランチ／VM hostname／日時、`npm test`件数、隔離PG16件数、失敗の固定コード、`git diff --check`を `~/projects/secure-guard/evidence/` のプロジェクト内に保存する。
+- `git rev-parse HEAD`／ブランチ／VM hostname／日時、`npm test`件数、隔離PG16件数、失敗の固定コード、`git diff --check`を `~/atlib-test/evidence/atlib-msp-customer-portal/` のプロジェクト内に保存する。
 - 機密（JWT、API key、DB password、OTP、session Cookie、実顧客メール、Secret参照値）をログ・Issue・Gitへ載せない。
 - 検証用DBはローカルの`127.0.0.1:55432`、アプリはローカルloopbackのみ。VM外部IPにHTTP/PG portを公開しない。
 - VM結果は補助証跡であり、GitHub Actions結果と一致しない場合はSTOP。VM環境不足を理由に仕様を変更しない。
