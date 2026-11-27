@@ -936,9 +936,82 @@ test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomi
           now: new Date(last.expiresAt.getTime() + 1000),
           verify: () => ({ valid: true }),
         });
-        assert.equal(limitResult.status, 'expired');
+assert.equal(limitResult.status, 'expired');
+
+        // Five wrong codes exhaust a challenge permanently.
+        const locked = createMfaChallenge('login');
+        await repo.mfaIssueChallenge({
+          userId, tokenHash: locked.tokenHash, purpose: 'login',
+          method: 'email', expiresAt: locked.expiresAt,
+        });
+        for (let attempt = 0; attempt < 5; attempt++) {
+          assert.equal((await repo.mfaConsumeChallenge({
+            userId, tokenHash: locked.tokenHash, purpose: 'login',
+            verify: () => ({ valid: false }),
+          })).status, 'invalid');
+        }
+        assert.equal((await repo.mfaConsumeChallenge({
+          userId, tokenHash: locked.tokenHash, purpose: 'login',
+          verify: () => ({ valid: true }),
+        })).status, 'attempts_exhausted');
+
+        // Email resends replace the previous HMAC, have a 60s interval,
+        // and are limited to three total sends (including the first).
+        const sent = createMfaChallenge('login');
+        await repo.mfaIssueChallenge({
+          userId, tokenHash: sent.tokenHash, purpose: 'login',
+          method: 'email', expiresAt: sent.expiresAt,
+        });
+        const time = new Date();
+        for (let index = 0; index < 3; index++) {
+          assert.equal(await repo.mfaRecordEmailOtp(userId, sent.tokenHash,
+            mfa.emailOtpHmac(userId, sent.tokenHash, mfa.generateEmailOtp()),
+            new Date(time.getTime() + index * 61_000)), 'recorded');
+          assert.equal(await repo.mfaRecordEmailOtp(userId, sent.tokenHash,
+            mfa.emailOtpHmac(userId, sent.tokenHash, mfa.generateEmailOtp()),
+            new Date(time.getTime() + index * 61_000 + 1)), 'rate_limited');
+        }
+        assert.equal(await repo.mfaRecordEmailOtp(userId, sent.tokenHash,
+          mfa.emailOtpHmac(userId, sent.tokenHash, mfa.generateEmailOtp()),
+          new Date(time.getTime() + 240_000)), 'rate_limited');
+
+        // TOTP replay is rejected against the persisted and locked last step.
+        const { totpAtStep, verifyTotp } = require('../../dist/services/secureGuardMfa');
+        const secret = mfa.generateTotpSecret();
+        const encrypted = mfa.encryptTotp(userId, secret);
+        await repo.mfaPutSetting({
+          userId, method: 'totp', state: 'active',
+          totpCiphertext: encrypted.ciphertext,
+          totpNonce: encrypted.nonce, totpTag: encrypted.tag, keyVersion: encrypted.keyVersion,
+        });
+        const totpLogin = createMfaChallenge('login');
+        await repo.mfaIssueChallenge({
+          userId, tokenHash: totpLogin.tokenHash, purpose: 'login',
+          method: 'totp', expiresAt: totpLogin.expiresAt,
+        });
+        const at = Date.now();
+        const step = BigInt(Math.floor(at / 30_000));
+        const code = totpAtStep(secret, step);
+        assert.equal((await repo.mfaConsumeChallenge({
+          userId, tokenHash: totpLogin.tokenHash, purpose: 'login',
+          verify: (setting) => {
+            const found = verifyTotp(secret, code, at, setting.lastTotpStep);
+            return { valid: found !== null, totpStep: found ?? undefined };
+          },
+        })).status, 'verified');
+
+        const replayTotp = createMfaChallenge('login');
+        await repo.mfaIssueChallenge({
+          userId, tokenHash: replayTotp.tokenHash, purpose: 'login',
+          method: 'totp', expiresAt: replayTotp.expiresAt,
+        });
+        assert.equal((await repo.mfaConsumeChallenge({
+          userId, tokenHash: replayTotp.tokenHash, purpose: 'login',
+          verify: () => ({ valid: true, totpStep: step }),
+        })).status, 'invalid');
 
         const { hashes } = mfa.createRecoveryCodes(userId);
+
         await repo.mfaReplaceRecoveryHashes(userId, hashes);
         const oneTime = await Promise.all([
           repo.mfaConsumeRecoveryCode(userId, hashes[0]),
