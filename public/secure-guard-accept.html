@@ -19,6 +19,11 @@
         <button type="submit">認証してログイン</button>
       </form>
       <button id="mfa-resend" type="button" hidden>メール認証コードを再送する</button>
+      <form id="mfa-recovery-form" hidden>
+        <p>認証アプリやメールが利用できない場合、事前に保管したバックアップコードで再登録できます。</p>
+        <label>バックアップコード（32桁）<input id="mfa-recovery-code" type="text" inputmode="text" minlength="32" maxlength="32" autocomplete="off" pattern="[0-9a-f]{32}" required></label>
+        <button type="submit">コードを使ってMFAを再登録</button>
+      </form>
       <section id="mfa-backup" hidden aria-label="バックアップコード">
         <p>バックアップコードは今回だけ表示されます。安全な場所に保存してください。次回は表示できません。</p>
         <pre id="mfa-backup-codes"></pre>
