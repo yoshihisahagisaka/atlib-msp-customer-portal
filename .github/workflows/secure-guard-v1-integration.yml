@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - feature/secure-guard-daily-management
+      - feat/sg-v1-dedicated-integration-20261112
     paths:
       - 'src/**'
       - 'test/**'
