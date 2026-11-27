@@ -819,3 +819,153 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
     await admin.end();
   }
 });
+
+
+test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomic challenge use',
+  { timeout: 90000 }, async () => {
+    assert.equal(process.env.CI, 'true');
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_ENABLED, 'true');
+    assert.equal(process.env.NODE_ENV, 'test');
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_HOST, safeTestHost);
+    assert.equal(process.env.SECURE_GUARD_DB_E2E_PORT, String(safeTestPort));
+
+    const { Pool } = require('pg');
+    const { SecureGuardMfaCrypto, createMfaChallenge } =
+      require('../../dist/services/secureGuardMfa');
+    const offline = {
+      SECURE_GUARD_MFA_OFFLINE_006: 'true',
+      SECURE_GUARD_MIGRATIONS_DIR: path.join(__dirname, '../../migrations/secure_guard'),
+      SECURE_GUARD_MIGRATION_MANIFEST: path.join(__dirname,
+        '../../migration-manifests/secure-guard-staging-001-006.json'),
+    };
+    const resetDb = async (admin) => {
+      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1', [targetDatabase]);
+      await admin.query(`DROP DATABASE IF EXISTS ${targetDatabase}`);
+      await admin.query(`CREATE DATABASE ${targetDatabase} OWNER ${migrationUser}`);
+      await admin.query(`REVOKE CONNECT ON DATABASE ${targetDatabase} FROM PUBLIC`);
+      await admin.query(`GRANT CONNECT ON DATABASE ${targetDatabase} TO ${runtimeUser}, ${overageUser}`);
+    };
+    const admin = client('postgres', 'postgres', fixturePassword);
+    await admin.connect();
+    try {
+      await resetDb(admin);
+      const full = runMigration(offline);
+      assert.equal(full.status, 0, `Offline MFA 001-006 fresh must pass: ${full.stderr}`);
+      assert.match(full.stdout, /applied: 006_mfa_identity\.sql/);
+      const repeat = runMigration(offline);
+      assert.equal(repeat.status, 0, 'MFA 006 replay must skip every verified migration');
+      assert.match(repeat.stdout, /skip verified: 006_mfa_identity\.sql/);
+
+      const migration = client(targetDatabase, migrationUser, fixturePassword);
+      await migration.connect();
+      try {
+        const ledger = await migration.query(
+          'SELECT filename FROM secure_guard_schema_migrations ORDER BY filename');
+        assert.equal(ledger.rowCount, 6);
+        assert.equal(ledger.rows[5].filename, '006_mfa_identity.sql');
+        const privileges = await migration.query(`SELECT
+          has_table_privilege($1, 'public.secure_guard_mfa_settings', 'SELECT') AS runtime_settings,
+          has_table_privilege($1, 'public.secure_guard_mfa_challenges', 'UPDATE') AS runtime_challenges,
+          has_table_privilege($1, 'public.secure_guard_mfa_recovery_codes', 'DELETE') AS runtime_recovery,
+          has_table_privilege($2, 'public.secure_guard_mfa_settings', 'SELECT') AS overage_settings,
+          has_table_privilege($2, 'public.secure_guard_mfa_challenges', 'SELECT') AS overage_challenges,
+          has_table_privilege($2, 'public.secure_guard_mfa_recovery_codes', 'SELECT') AS overage_recovery
+        `, [runtimeUser, overageUser]);
+        assert.deepEqual(privileges.rows[0], {
+          runtime_settings: true, runtime_challenges: true, runtime_recovery: true,
+          overage_settings: false, overage_challenges: false, overage_recovery: false,
+        });
+      } finally { await migration.end(); }
+
+      const pool = new Pool({
+        host: safeTestHost, port: safeTestPort, database: targetDatabase,
+        user: runtimeUser, password: fixturePassword, max: 2,
+      });
+      try {
+        const repo = new SecureGuardRepo(pool);
+        const actor = await pool.query(
+          "INSERT INTO portal_users(email, status) VALUES('mfa-m1@ci.invalid','active') RETURNING id");
+        const userId = actor.rows[0].id;
+        const keys = {
+          SECURE_GUARD_MFA_ENCRYPTION_KEY_V1: Buffer.alloc(32, 42).toString('base64'),
+          SECURE_GUARD_MFA_OTP_PEPPER: Buffer.alloc(32, 43).toString('base64'),
+        };
+        const mfa = new SecureGuardMfaCrypto(keys);
+        await repo.mfaPutSetting({ userId, method: 'email', state: 'active' });
+        const first = createMfaChallenge('login');
+        assert.equal(await repo.mfaIssueChallenge({
+          userId, tokenHash: first.tokenHash, purpose: 'login',
+          method: 'email', expiresAt: first.expiresAt,
+        }), true);
+        const otp = mfa.generateEmailOtp();
+        const otpHmac = mfa.emailOtpHmac(userId, first.tokenHash, otp);
+        assert.equal(await repo.mfaRecordEmailOtp(userId, first.tokenHash, otpHmac), 'recorded');
+        assert.equal(await repo.mfaRecordEmailOtp(userId, first.tokenHash, otpHmac), 'rate_limited');
+        const wrong = await repo.mfaConsumeChallenge({
+          userId, tokenHash: first.tokenHash, purpose: 'login',
+          verify: () => ({ valid: false }),
+        });
+        assert.equal(wrong.status, 'invalid');
+
+        const check = () => repo.mfaConsumeChallenge({
+          userId, tokenHash: first.tokenHash, purpose: 'login',
+          verify: (_setting, challenge) => ({
+            valid: mfa.matchesEmailOtp(userId, challenge.tokenHash, otp, challenge.otpHmac || ''),
+          }),
+        });
+        const concurrent = await Promise.all([check(), check()]);
+        assert.deepEqual(concurrent.map((result) => result.status).sort(), ['consumed', 'verified']);
+
+        const next = createMfaChallenge('login');
+        assert.equal(await repo.mfaIssueChallenge({
+          userId, tokenHash: next.tokenHash, purpose: 'login',
+          method: 'email', expiresAt: next.expiresAt,
+        }), true);
+        const last = createMfaChallenge('login');
+        assert.equal(await repo.mfaIssueChallenge({
+          userId, tokenHash: last.tokenHash, purpose: 'login',
+          method: 'email', expiresAt: last.expiresAt,
+        }), true);
+        const stale = await repo.mfaConsumeChallenge({
+          userId, tokenHash: next.tokenHash, purpose: 'login',
+          verify: () => ({ valid: true }),
+        });
+        assert.equal(stale.status, 'consumed');
+        const limitResult = await repo.mfaConsumeChallenge({
+          userId, tokenHash: last.tokenHash, purpose: 'login',
+          now: new Date(last.expiresAt.getTime() + 1000),
+          verify: () => ({ valid: true }),
+        });
+        assert.equal(limitResult.status, 'expired');
+
+        const { hashes } = mfa.createRecoveryCodes(userId);
+        await repo.mfaReplaceRecoveryHashes(userId, hashes);
+        const oneTime = await Promise.all([
+          repo.mfaConsumeRecoveryCode(userId, hashes[0]),
+          repo.mfaConsumeRecoveryCode(userId, hashes[0]),
+        ]);
+        assert.deepEqual(oneTime.sort(), [false, true]);
+        await repo.mfaPutSetting({ userId, method: 'totp', state: 'reset_required' });
+        assert.equal((await repo.mfaGetSetting(userId)).state, 'reset_required');
+        await assert.rejects(repo.mfaPutSetting({ userId, method: 'totp', state: 'active' }),
+          (error) => error.code === '23514');
+      } finally { await pool.end(); }
+
+      // Old approved 001-005 followed by offline 006, with no re-application of 005.
+      await resetDb(admin);
+      const old = runMigration();
+      assert.equal(old.status, 0, `Approved five-file migration must remain valid: ${old.stderr}`);
+      assert.match(old.stdout, /applied: 005_runtime_overage_privileges\.sql/);
+      const upgrade = runMigration(offline);
+      assert.equal(upgrade.status, 0, `MFA-only upgrade must pass: ${upgrade.stderr}`);
+      assert.match(upgrade.stdout, /skip verified: 005_runtime_overage_privileges\.sql/);
+      assert.match(upgrade.stdout, /applied: 006_mfa_identity\.sql/);
+      const blocked = runMigration({
+        SECURE_GUARD_MIGRATION_MANIFEST: offline.SECURE_GUARD_MIGRATION_MANIFEST,
+        SECURE_GUARD_MIGRATIONS_DIR: offline.SECURE_GUARD_MIGRATIONS_DIR,
+        SECURE_GUARD_MFA_OFFLINE_006: 'false',
+      });
+      assert.notEqual(blocked.status, 0, '006 must reject deployment without offline guard');
+    } finally { await admin.end(); }
+  });
+
