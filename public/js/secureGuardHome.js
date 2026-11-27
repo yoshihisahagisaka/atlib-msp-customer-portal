@@ -11,6 +11,11 @@ let sgHomeInventorySequence = 0;
 let sgHomeMembershipSequence = 0;
 let sgHomeInvitationAttempted = false;
 const sgHomeUnknownMemberActions = new Set();
+const sgHomeUnknownMfaResets = new Set();
+let sgHomeMfaResetTarget = null;
+let sgHomeMfaReauthToken = null;
+let sgHomeMfaResetScope = null;
+let sgHomeMfaResetBusy = false;
 
 async function sgHomeFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -235,7 +240,33 @@ function sgHomeRenderMemberships(memberships) {
         if (!window.confirm(`${member.email} の利用を停止しますか？\nログインできなくなります。最後の管理者は停止できません。`)) return;
         await sgHomeChangeMembership(member, 'revoke', null, [update, revoke]);
       });
-      actions.append(update, revoke);
+      const reset = document.createElement('button');
+      reset.type = 'button';
+      reset.className = 'btn btn-secondary btn-small';
+      reset.textContent = 'MFAを再設定';
+      reset.disabled = unknown || member.status !== 'active' || sgHomeUnknownMfaResets.has(member.id);
+      reset.addEventListener('click', async () => {
+        if (!sgHomeMembership || sgHomeMembership.role !== 'org_admin' || sgHomeMfaResetBusy
+          || sgHomeUnknownMfaResets.has(member.id)) return;
+        if (!window.confirm(`${member.email} のMFAを再設定しますか？対象者の既存ログインは無効になります。`)) return;
+        sgHomeMfaResetBusy = true;
+        sgHomeStatus('mfa-reset-status', '管理者の再認証を開始しています。');
+        try {
+          const proof = await sgHomeFetch('/auth/mfa/reauth/start', { method: 'POST', body: '{}' });
+          sgHomeMfaResetTarget = member.id;
+          sgHomeMfaResetScope = sgHomeMembership.membershipId;
+          sgHomeMfaReauthToken = proof.challengeToken;
+          sgHomeNode('mfa-reset-panel').hidden = false;
+          sgHomeNode('mfa-reauth-code').value = '';
+          sgHomeStatus('mfa-reset-target', `${member.email}：管理者の認証コードを入力してください。`);
+          sgHomeStatus('mfa-reset-status', proof.method === 'email'
+            ? '管理者の登録済みメールアドレスへ認証コードを送信しました。'
+            : '管理者の認証アプリに表示されるコードを入力してください。');
+        } catch {
+          sgHomeStatus('mfa-reset-status', '再認証を開始できませんでした。管理者権限・メール配送をご確認ください。');
+        } finally { sgHomeMfaResetBusy = false; }
+      });
+      actions.append(update, revoke, reset);
       row.append(actions);
     }
     return row;
@@ -285,6 +316,11 @@ function sgHomeSelectMembership(membership) {
   ++sgHomeInventorySequence; ++sgHomeMembershipSequence;
   sgHomeInvitationAttempted = false;
   sgHomeUnknownMemberActions.clear();
+  sgHomeMfaResetTarget = null;
+  sgHomeMfaReauthToken = null;
+  sgHomeMfaResetScope = null;
+  sgHomeNode('mfa-reset-panel').hidden = true;
+  sgHomeStatus('mfa-reset-status', '');
   sgHomeNode('customer-invitation-form').querySelector('button[type="submit"]').disabled = false;
   sgHomeStatus('customer-invitation-status', '');
   sgHomeStatus('organization-name', membership.organizationName);
@@ -298,6 +334,53 @@ function sgHomeSelectMembership(membership) {
   sgHomeLoadInventory();
   sgHomeLoadMemberships();
 }
+
+
+sgHomeNode('mfa-reset-cancel').addEventListener('click', () => {
+  if (sgHomeMfaResetBusy) return;
+  sgHomeMfaResetTarget = null;
+  sgHomeMfaReauthToken = null;
+  sgHomeMfaResetScope = null;
+  sgHomeNode('mfa-reauth-code').value = '';
+  sgHomeNode('mfa-reset-panel').hidden = true;
+  sgHomeStatus('mfa-reset-status', '');
+});
+
+sgHomeNode('mfa-reauth-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!sgHomeMfaResetTarget || !sgHomeMfaReauthToken || sgHomeMfaResetBusy
+    || sgHomeMfaResetScope !== sgHomeMembership?.membershipId) return;
+  const memberId = sgHomeMfaResetTarget;
+  const proof = sgHomeMfaReauthToken;
+  const code = sgHomeNode('mfa-reauth-code').value;
+  const button = event.target.querySelector('button[type="submit"]');
+  sgHomeMfaResetBusy = true;
+  button.disabled = true;
+  try {
+    await sgHomeFetch('/auth/mfa/reauth/verify', {
+      method: 'POST', body: JSON.stringify({ challengeToken: proof, code }),
+    });
+    // Re-verification and reset are two separate calls. As soon as the reset
+    // is sent, an uncertain response must never trigger a second reset.
+    sgHomeUnknownMfaResets.add(memberId);
+    sgHomeStatus('mfa-reset-status', '再認証が完了しました。対象者のMFAを再設定しています。');
+    await sgHomeFetch(`/memberships/${encodeURIComponent(memberId)}/mfa/reset`, {
+      method: 'POST', body: JSON.stringify({ reauthChallengeToken: proof }),
+    });
+    sgHomeMfaResetTarget = null;
+    sgHomeMfaReauthToken = null;
+    sgHomeNode('mfa-reset-panel').hidden = true;
+    sgHomeStatus('membership-status', 'MFAの再登録待ちに変更しました。本人通知が届かない場合は管理者が個別にご案内ください。');
+    await sgHomeLoadMemberships();
+  } catch {
+    sgHomeStatus('mfa-reset-status',
+      '再認証またはリセットの結果を確定できません。同じ操作を再送せず、管理者に確認してください。');
+  } finally {
+    sgHomeNode('mfa-reauth-code').value = '';
+    sgHomeMfaResetBusy = false;
+    button.disabled = sgHomeMfaResetTarget === null;
+  }
+});
 
 sgHomeNode('scope').addEventListener('change', () => {
   const membership = sgHomeAvailableMemberships.find((item) => item.membershipId === sgHomeNode('scope').value);
