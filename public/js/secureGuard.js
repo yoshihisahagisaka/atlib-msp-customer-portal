@@ -30,26 +30,158 @@ function renderList(id, items, text) {
   }));
 }
 
+const mfaState = { token: null, flow: null, method: null };
 const loginForm = document.getElementById('login-form');
+const acceptForm = document.getElementById('accept-form');
+const mfaSection = document.getElementById('mfa-section');
+
+async function mfaRequest(path, data) {
+  const response = await fetch('/api/secure-guard/auth' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    if (response.status === 429) {
+      const error = document.getElementById('error');
+      if (error) error.textContent = '認証コードの再送または試行上限です。後ほどやり直してください。';
+    }
+    throw new Error('MFA_REQUEST_DENIED');
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+function startMfaFlow(data) {
+  if (!mfaSection) return;
+  if (loginForm) loginForm.hidden = true;
+  if (acceptForm) acceptForm.hidden = true;
+  mfaSection.hidden = false;
+  mfaState.token = data.challengeToken ?? null;
+  mfaState.flow = data.flow;
+  mfaState.method = data.method ?? null;
+  const methodForm = document.getElementById('mfa-method-form');
+  const codeForm = document.getElementById('mfa-code-form');
+  const instructions = document.getElementById('mfa-instructions');
+  if (data.flow === 'MFA_LOGIN_REQUIRED') {
+    instructions.textContent = '既に登録済みの個人アカウントです。通常のログイン画面からパスワードとMFAで認証してください。';
+    const link = document.createElement('a');
+    link.href = '/secure-guard-login.html';
+    link.textContent = 'ログイン画面へ';
+    mfaSection.appendChild(link);
+    return;
+  }
+  if (data.flow === 'MFA_ENROLLMENT_REQUIRED') {
+    instructions.textContent = '初回ログインにMFAの登録が必要です。認証方式を選択してください。';
+    methodForm.hidden = false;
+    codeForm.hidden = true;
+  } else if (data.flow === 'MFA_REQUIRED') {
+    instructions.textContent = data.method === 'email'
+      ? '登録済みメールアドレスへ認証コードを送信しました。'
+      : '認証アプリに表示される6桁のコードを入力してください。';
+    methodForm.hidden = true;
+    codeForm.hidden = false;
+    document.getElementById('mfa-resend').hidden = data.method !== 'email';
+  } else {
+    mfaSection.hidden = true;
+    showError();
+  }
+}
+
 if (loginForm) loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    await secureGuardFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
-    location.href = '/secure-guard-home.html';
+    const flow = await mfaRequest('/login', {
+      email: document.getElementById('email').value,
+      password: document.getElementById('password').value,
+    });
+    startMfaFlow(flow);
   } catch { showError(); }
 });
 
-const acceptForm = document.getElementById('accept-form');
 if (acceptForm) acceptForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const token = new URLSearchParams(location.hash.slice(1)).get('token');
   if (!token) return showError();
+  // Invitation token is fragment-only, not persisted in local/sessionStorage.
+  history.replaceState(null, '', '/secure-guard-accept.html');
   try {
-    await secureGuardFetch('/auth/invitations/accept', { method: 'POST', body: JSON.stringify({ token, password: document.getElementById('password').value }) });
-    history.replaceState(null, '', '/secure-guard-home.html');
-    location.href = '/secure-guard-home.html';
+    const flow = await mfaRequest('/invitations/accept', {
+      token, password: document.getElementById('password').value,
+    });
+    startMfaFlow(flow);
   } catch { showError(); }
 });
+
+const mfaMethodForm = document.getElementById('mfa-method-form');
+if (mfaMethodForm) mfaMethodForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!mfaState.token || mfaState.flow !== 'MFA_ENROLLMENT_REQUIRED') return showError();
+  const method = document.getElementById('mfa-method').value;
+  try {
+    const result = await mfaRequest('/mfa/enroll/start', {
+      challengeToken: mfaState.token, method,
+    });
+    mfaState.method = method;
+    mfaMethodForm.hidden = true;
+    document.getElementById('mfa-code-form').hidden = false;
+    if (method === 'totp') {
+      const url = new URL(result.otpauthUrl);
+      const secret = url.searchParams.get('secret');
+      if (!secret) throw new Error('MFA_TOTP_CONFIG_UNAVAILABLE');
+      const details = document.getElementById('mfa-totp-details');
+      details.hidden = false;
+      details.textContent = '認証アプリで atLIB Secure Guard を登録し、次のキーを手動入力してください（再表示はできません）: ' + secret;
+      document.getElementById('mfa-instructions').textContent = '登録した認証アプリの6桁のコードを入力してください。';
+    } else {
+      document.getElementById('mfa-instructions').textContent = '登録メールアドレスへ認証コードを送信しました。';
+      document.getElementById('mfa-resend').hidden = false;
+    }
+  } catch { showError(); }
+});
+
+const mfaCodeForm = document.getElementById('mfa-code-form');
+if (mfaCodeForm) mfaCodeForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!mfaState.token) return showError();
+  const code = document.getElementById('mfa-code').value;
+  const isEnroll = mfaState.flow === 'MFA_ENROLLMENT_REQUIRED';
+  try {
+    const result = await mfaRequest(isEnroll ? '/mfa/enroll/verify' : '/mfa/verify', {
+      challengeToken: mfaState.token, code,
+    });
+    mfaState.token = null;
+    mfaCodeForm.hidden = true;
+    document.getElementById('mfa-resend').hidden = true;
+    document.getElementById('mfa-totp-details').hidden = true;
+    if (isEnroll) {
+      const backup = document.getElementById('mfa-backup');
+      backup.hidden = false;
+      document.getElementById('mfa-instructions').textContent = 'MFAの登録が完了しました。';
+      document.getElementById('mfa-backup-codes').textContent = result.backupCodes.join('\n');
+    } else {
+      location.href = '/secure-guard-home.html';
+    }
+  } catch { showError(); }
+});
+
+const resendMfa = document.getElementById('mfa-resend');
+if (resendMfa) resendMfa.addEventListener('click', async () => {
+  if (!mfaState.token || mfaState.method !== 'email') return showError();
+  try {
+    resendMfa.disabled = true;
+    await mfaRequest('/mfa/email/resend', { challengeToken: mfaState.token });
+    document.getElementById('mfa-instructions').textContent = '新しい認証コードを送信しました。以前のコードは無効です。';
+  } catch { showError(); }
+  finally { resendMfa.disabled = false; }
+});
+
+const mfaDone = document.getElementById('mfa-done');
+if (mfaDone) mfaDone.addEventListener('click', () => {
+  document.getElementById('mfa-backup-codes').textContent = '';
+  location.href = '/secure-guard-home.html';
+});
+
 
 const scopeSelect = document.getElementById('scope');
 if (scopeSelect) (async () => {
