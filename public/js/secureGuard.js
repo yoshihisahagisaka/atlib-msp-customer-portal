@@ -62,6 +62,8 @@ function startMfaFlow(data) {
   mfaState.method = data.method ?? null;
   const methodForm = document.getElementById('mfa-method-form');
   const codeForm = document.getElementById('mfa-code-form');
+  const recoveryForm = document.getElementById('mfa-recovery-form');
+  if (recoveryForm) recoveryForm.hidden = true;
   const instructions = document.getElementById('mfa-instructions');
   if (data.flow === 'MFA_LOGIN_REQUIRED') {
     instructions.textContent = '既に登録済みの個人アカウントです。通常のログイン画面からパスワードとMFAで認証してください。';
@@ -81,6 +83,7 @@ function startMfaFlow(data) {
       : '認証アプリに表示される6桁のコードを入力してください。';
     methodForm.hidden = true;
     codeForm.hidden = false;
+    if (recoveryForm) recoveryForm.hidden = false;
     document.getElementById('mfa-resend').hidden = data.method !== 'email';
   } else {
     mfaSection.hidden = true;
@@ -111,6 +114,28 @@ if (acceptForm) acceptForm.addEventListener('submit', async (event) => {
     });
     startMfaFlow(flow);
   } catch { showError(); }
+});
+
+const mfaRecoveryForm = document.getElementById('mfa-recovery-form');
+if (mfaRecoveryForm) mfaRecoveryForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!mfaState.token || mfaState.flow !== 'MFA_REQUIRED') return showError();
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await mfaRequest('/mfa/recovery', {
+      challengeToken: mfaState.token,
+      backupCode: document.getElementById('mfa-recovery-code').value.trim(),
+    });
+    document.getElementById('mfa-recovery-code').value = '';
+    mfaRecoveryForm.hidden = true;
+    document.getElementById('mfa-code-form').hidden = true;
+    document.getElementById('mfa-resend').hidden = true;
+    startMfaFlow(result);
+    document.getElementById('mfa-instructions').textContent =
+      'バックアップコードを使用しました。新しいMFA方式の登録を完了するまでログインできません。';
+  } catch { showError(); }
+  finally { button.disabled = false; }
 });
 
 const mfaMethodForm = document.getElementById('mfa-method-form');
