@@ -176,6 +176,12 @@ export class SecureGuardRepo {
         [input.userId],
       );
       const setting = factor.rows[0] ? this.mapMfaSetting(factor.rows[0]) : null;
+      // A caller cannot bypass MFA by returning a successful verifier for an
+      // unregistered or reset-required factor.
+      const requiredState = input.purpose === 'enroll' ? 'enrolling' : 'active';
+      if (!setting || setting.state !== requiredState || setting.method !== challenge.method) {
+        return { status: 'invalid' };
+      }
       const checked = await input.verify(setting, challenge);
       const step = checked.totpStep;
       const replay = step !== undefined && (!setting
