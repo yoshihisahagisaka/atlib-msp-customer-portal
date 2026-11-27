@@ -200,12 +200,12 @@ export class SecureGuardRepo {
       const row = rows[0];
       if (!row || row.method !== 'email' || row.consumed_at || row.expires_at <= at
         || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS
-        || (row.purpose !== 'login' && row.purpose !== 'enroll')) return 'denied';
+        || (row.purpose !== 'login' && row.purpose !== 'enroll' && row.purpose !== 'admin_reauth')) return 'denied';
       const factor = await client.query(
         'SELECT method, state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
         [userId],
       );
-      const expected = row.purpose === 'login' ? 'active' : 'enrolling';
+      const expected = row.purpose === 'enroll' ? 'enrolling' : 'active';
       if (factor.rows[0]?.method !== 'email' || factor.rows[0]?.state !== expected) {
         return 'denied';
       }
@@ -249,11 +249,11 @@ export class SecureGuardRepo {
         || row.method !== 'email' || row.otp_hmac !== null
         || Number(row.send_count) !== reservedSendCount
         || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS
-        || (row.purpose !== 'login' && row.purpose !== 'enroll')) return false;
+        || (row.purpose !== 'login' && row.purpose !== 'enroll' && row.purpose !== 'admin_reauth')) return false;
       const setting = await client.query(
         'SELECT method, state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE', [userId],
       );
-      const expectedState = row.purpose === 'login' ? 'active' : 'enrolling';
+      const expectedState = row.purpose === 'enroll' ? 'enrolling' : 'active';
       if (setting.rows[0]?.method !== 'email' || setting.rows[0]?.state !== expectedState) return false;
       await client.query(
         'UPDATE secure_guard_mfa_challenges SET otp_hmac=$1 WHERE token_hash=$2',
@@ -347,6 +347,253 @@ export class SecureGuardRepo {
         [input.userId, input.purpose === 'enroll' ? 'mfa.enroll.verify' : 'mfa.login.verify'],
       );
       return { status: 'verified' };
+    });
+  }
+
+
+  // Recovery always begins from an unexpired password-verified login challenge.
+  // Success invalidates every session, factor secret, and old recovery code.
+  async mfaRecoverWithBackup(input: {
+    userId: string; tokenHash: string; recoveryHmac: string;
+    enrollmentTokenHash: string; enrollmentExpiresAt: Date;
+  }): Promise<boolean> {
+    return this.withMfaTransaction(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [input.userId],
+      );
+      if (!actor.rowCount) return false;
+      const result = await client.query(
+        'SELECT * FROM secure_guard_mfa_challenges WHERE token_hash=$1 AND user_id=$2 FOR UPDATE',
+        [input.tokenHash, input.userId],
+      );
+      const row = result.rows[0];
+      if (!row || row.purpose !== 'login' || row.consumed_at || row.expires_at <= new Date()
+        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS) return false;
+      const setting = await client.query(
+        'SELECT state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [input.userId],
+      );
+      if (setting.rows[0]?.state !== 'active') return false;
+      if (!/^[a-f0-9]{64}$/.test(input.recoveryHmac)
+        || !/^[a-f0-9]{64}$/.test(input.enrollmentTokenHash)) return false;
+      const proof = await client.query(
+        `UPDATE secure_guard_mfa_recovery_codes SET consumed_at=now()
+         WHERE user_id=$1 AND code_hmac=$2 AND consumed_at IS NULL RETURNING user_id`,
+        [input.userId, input.recoveryHmac],
+      );
+      if (proof.rowCount !== 1) {
+        await client.query(
+          'UPDATE secure_guard_mfa_challenges SET failed_attempts=LEAST(failed_attempts+1,$1) WHERE token_hash=$2',
+          [MFA_MAX_FAILED_ATTEMPTS, input.tokenHash],
+        );
+        await client.query(
+          "INSERT INTO secure_guard_audit_events(actor_user_id,action,result) VALUES($1,'mfa.recovery','denied')",
+          [input.userId],
+        );
+        return false;
+      }
+      await client.query(
+        `UPDATE secure_guard_mfa_settings
+         SET state='reset_required', totp_ciphertext=NULL, totp_nonce=NULL,
+             totp_tag=NULL, key_version=NULL, last_totp_step=NULL, updated_at=now()
+         WHERE user_id=$1`, [input.userId],
+      );
+      await client.query(
+        'UPDATE secure_guard_mfa_recovery_codes SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',
+        [input.userId],
+      );
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',
+        [input.userId],
+      );
+      await client.query(
+        'UPDATE portal_users SET session_version=session_version+1, updated_at=now() WHERE id=$1',
+        [input.userId],
+      );
+      await client.query(
+        `INSERT INTO secure_guard_mfa_challenges
+         (token_hash,user_id,purpose,method,expires_at)
+         VALUES($1,$2,'enroll',NULL,$3)`,
+        [input.enrollmentTokenHash, input.userId, input.enrollmentExpiresAt],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id,action,result) VALUES($1,'mfa.recovery','success')",
+        [input.userId],
+      );
+      return true;
+    });
+  }
+
+  async mfaHasOrgAdminMembership(userId: string): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `SELECT 1 FROM customer_memberships m
+       JOIN customer_organizations o ON o.id=m.customer_organization_id
+       WHERE m.user_id=$1 AND m.role='org_admin' AND m.status='active'
+         AND o.status='active' LIMIT 1`, [userId],
+    );
+    return rows.length === 1;
+  }
+
+  // A successful reauth marks a five-minute proof, but must not mint a new JWT.
+  async mfaVerifyAdminReauth(input: {
+    userId: string; tokenHash: string; now?: Date;
+    verify: (
+      setting: SecureGuardMfaSetting, challenge: SecureGuardMfaChallenge,
+    ) => Promise<{ valid: boolean; totpStep?: bigint }> | { valid: boolean; totpStep?: bigint };
+  }): Promise<boolean> {
+    return this.withMfaTransaction(async (client) => {
+      const user = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [input.userId],
+      );
+      if (!user.rowCount) return false;
+      const proof = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE token_hash=$1 AND user_id=$2 FOR UPDATE`, [input.tokenHash, input.userId],
+      );
+      const row = proof.rows[0];
+      const now = input.now ?? new Date();
+      if (!row || row.purpose !== 'admin_reauth' || row.consumed_at || row.verified_at
+        || row.expires_at <= now || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS) return false;
+      const factor = await client.query(
+        "SELECT * FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE", [input.userId],
+      );
+      const setting = factor.rows[0] ? this.mapMfaSetting(factor.rows[0]) : null;
+      if (!setting || setting.state !== 'active' || setting.method !== row.method) return false;
+      const checked = await input.verify(setting, this.mapMfaChallenge(row));
+      const replay = checked.totpStep !== undefined &&
+        (setting.lastTotpStep !== null && checked.totpStep <= setting.lastTotpStep);
+      if (!checked.valid || replay) {
+        await client.query(
+          'UPDATE secure_guard_mfa_challenges SET failed_attempts=LEAST(failed_attempts+1,$1) WHERE token_hash=$2',
+          [MFA_MAX_FAILED_ATTEMPTS, input.tokenHash],
+        );
+        await client.query(
+          "INSERT INTO secure_guard_audit_events(actor_user_id,action,result) VALUES($1,'mfa.admin_reauth','denied')",
+          [input.userId],
+        );
+        return false;
+      }
+      if (checked.totpStep !== undefined) {
+        await client.query(
+          'UPDATE secure_guard_mfa_settings SET last_totp_step=$1,updated_at=now() WHERE user_id=$2',
+          [checked.totpStep.toString(), input.userId],
+        );
+      }
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET verified_at=$1 WHERE token_hash=$2', [now, input.tokenHash],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id,action,result) VALUES($1,'mfa.admin_reauth','success')",
+        [input.userId],
+      );
+      return true;
+    });
+  }
+
+  // Each requirement is checked again inside a single SERIALIZED transaction.
+  // There is no atLIB override or bypass endpoint.
+  async mfaResetByOrgAdmin(input: {
+    actorUserId: string; actorSessionVersion: number; actorMembershipId: string;
+    targetMembershipId: string; reauthTokenHash: string;
+  }): Promise<{ email: string } | null> {
+    return this.withMfaTransaction(async (client) => {
+      const lookup = await client.query(
+        'SELECT user_id FROM customer_memberships WHERE id=$1',
+        [input.targetMembershipId],
+      );
+      const targetUserId = lookup.rows[0]?.user_id as string | undefined;
+      if (!targetUserId || targetUserId === input.actorUserId) return null;
+      // Lock both identities in deterministic order to prevent reciprocal reset deadlocks.
+      const users = await client.query(
+        'SELECT id,email,status,session_version FROM portal_users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',
+        [[input.actorUserId, targetUserId]],
+      );
+      if (users.rowCount !== 2) return null;
+      const actor = users.rows.find((row) => row.id === input.actorUserId);
+      const target = users.rows.find((row) => row.id === targetUserId);
+      if (actor?.status !== 'active' || target?.status !== 'active'
+        || Number(actor.session_version) !== input.actorSessionVersion) return null;
+      const current = await client.query(
+        `SELECT m.id,m.user_id,m.role,m.customer_organization_id,o.status AS org_status
+         FROM customer_memberships m JOIN customer_organizations o
+           ON o.id=m.customer_organization_id
+         WHERE m.id=$1 AND m.user_id=$2 AND m.status='active' FOR UPDATE OF m, o`,
+        [input.actorMembershipId, input.actorUserId],
+      );
+      const scope = current.rows[0];
+      if (!scope || scope.role !== 'org_admin' || scope.org_status !== 'active') return null;
+      const targetMembership = await client.query(
+        `SELECT id,user_id,customer_organization_id,status
+         FROM customer_memberships WHERE id=$1 FOR UPDATE`,
+        [input.targetMembershipId],
+      );
+      if (targetMembership.rows[0]?.user_id !== targetUserId
+        || targetMembership.rows[0]?.status !== 'active'
+        || targetMembership.rows[0]?.customer_organization_id !== scope.customer_organization_id) {
+        return null;
+      }
+      const memberships = await client.query(
+        `SELECT id,customer_organization_id FROM customer_memberships
+         WHERE user_id=$1 AND status='active' ORDER BY id FOR UPDATE`,
+        [targetUserId],
+      );
+      if (memberships.rowCount !== 1
+        || memberships.rows[0]?.id !== input.targetMembershipId) return null;
+      const msp = await client.query(
+        "SELECT id FROM msp_role_grants WHERE user_id=$1 AND status='active' FOR UPDATE",
+        [targetUserId],
+      );
+      if (msp.rowCount !== 0) return null;
+      const factor = await client.query(
+        'SELECT state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [targetUserId],
+      );
+      if (factor.rows[0]?.state !== 'active') return null;
+      const actorFactor = await client.query(
+        'SELECT state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [input.actorUserId],
+      );
+      if (actorFactor.rows[0]?.state !== 'active') return null;
+      const proof = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE user_id=$1 AND token_hash=$2 AND purpose='admin_reauth' FOR UPDATE`,
+        [input.actorUserId, input.reauthTokenHash],
+      );
+      const challenge = proof.rows[0];
+      const now = new Date();
+      if (!challenge || challenge.consumed_at || !challenge.verified_at
+        || challenge.expires_at <= now || challenge.verified_at > now) return null;
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET consumed_at=$1 WHERE token_hash=$2',
+        [now, input.reauthTokenHash],
+      );
+      await client.query(
+        `UPDATE secure_guard_mfa_settings
+         SET state='reset_required',totp_ciphertext=NULL,totp_nonce=NULL,totp_tag=NULL,
+             key_version=NULL,last_totp_step=NULL,updated_at=now()
+         WHERE user_id=$1`, [targetUserId],
+      );
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',
+        [targetUserId],
+      );
+      await client.query(
+        'UPDATE secure_guard_mfa_recovery_codes SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL',
+        [targetUserId],
+      );
+      await client.query(
+        'UPDATE portal_users SET session_version=session_version+1,updated_at=now() WHERE id=$1',
+        [targetUserId],
+      );
+      await client.query(
+        `INSERT INTO secure_guard_audit_events
+         (actor_user_id,customer_organization_id,membership_id,action,result)
+         VALUES($1,$2,$3,'mfa.reset','success')`,
+        [input.actorUserId, scope.customer_organization_id, input.targetMembershipId],
+      );
+      return { email: String(target.email) };
     });
   }
 
