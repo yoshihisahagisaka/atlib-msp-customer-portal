@@ -1,0 +1,32 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.secure-guard-migration.json tsconfig.secure-guard-migration-build.json ./
+COPY src ./src
+COPY migrations ./migrations
+COPY migration-manifests/secure-guard-staging-001-005.json ./migration-manifests/secure-guard-staging-001-005.json
+COPY scripts/readiness/verifySecureGuardMigrationManifest.cjs ./scripts/readiness/verifySecureGuardMigrationManifest.cjs
+RUN npm run build:secure-guard-migration
+RUN node scripts/readiness/verifySecureGuardMigrationManifest.cjs migration-manifests/secure-guard-staging-001-005.json migrations/secure_guard true
+
+FROM node:24-bookworm-slim AS production-deps
+WORKDIR /runtime
+COPY migration-runtime/package.json migration-runtime/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+FROM gcr.io/distroless/nodejs24-debian13:nonroot
+WORKDIR /app
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+ENV NODE_ENV=production \
+    PATH=/nodejs/bin
+COPY --chown=nonroot:nonroot migration-runtime/package.json ./package.json
+COPY --from=production-deps --chown=nonroot:nonroot /runtime/node_modules ./node_modules
+COPY --from=build --chown=nonroot:nonroot /app/dist-secure-guard-migration ./dist-secure-guard-migration
+COPY --from=build --chown=nonroot:nonroot /app/migrations/secure_guard ./migrations/secure_guard
+COPY --from=build --chown=nonroot:nonroot /app/migration-manifests/secure-guard-staging-001-005.json ./migration-manifests/secure-guard-staging-001-005.json
+COPY --from=build --chown=nonroot:nonroot /app/scripts/readiness/verifySecureGuardMigrationManifest.cjs ./scripts/readiness/verifySecureGuardMigrationManifest.cjs
+USER nonroot
+CMD ["dist-secure-guard-migration/migrations/secure_guard_runner.js"]

@@ -23,15 +23,15 @@ test('Slack payload contains only the bounded alert projection', async () => {
   assert.match(request.init.body, /Example/); assert.doesNotMatch(request.init.body, /Agent|Authorization|secret|UUID/i);
 });
 
-async function withAlertApp({ usage, allocation, configured = true, delivery = 'sent' }, run) {
-  let sends = 0; let claimed = false;
+async function withAlertApp({ usage, allocation, configured = true, delivery = 'sent', manualDeliveryEnabled = true }, run) {
+  let sends = 0; let claimed = false; let claimCalls = 0; let clearCalls = 0;
   const repo = {
     hasActiveMspAdminGrant: async () => true,
     getLicenseAlertState: async () => ({ organizationId: 'org-1', organizationName: 'Example', dnsfilterOrganizationId: '10222523', allocatedLicenses: allocation, licenseSnapshotUpdatedAt: '2026-11-10T00:00:00.000Z' }),
-    claimLicenseAlert: async () => { if (claimed) return 'duplicate'; claimed = true; return 'claimed'; },
+    claimLicenseAlert: async () => { claimCalls += 1; if (claimed) return 'duplicate'; claimed = true; return 'claimed'; },
     completeLicenseAlert: async () => true,
     failLicenseAlert: async () => { claimed = false; },
-    clearResolvedLicenseAlert: async () => {},
+    clearResolvedLicenseAlert: async () => { clearCalls += 1; },
   };
   const app = express(); app.use(express.json()); app.use(cookieParser());
   app.use('/api/secure-guard', createSecureGuardRouter({
@@ -39,10 +39,30 @@ async function withAlertApp({ usage, allocation, configured = true, delivery = '
     repo, inventoryClient: {}, mailer: {}, portalBaseUrl: 'https://portal.example.test',
     managementClient: { getOrganizationLicenseUsage: async () => ({ usage, checkedAt: '2026-11-10T00:00:00.000Z' }) },
     licenseAlertSlack: { isConfigured: () => configured, send: async () => { sends += 1; return delivery; } },
+    manualLicenseAlertDeliveryEnabled: manualDeliveryEnabled,
   }));
   const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
-  try { await run(`http://127.0.0.1:${server.address().port}`, () => sends); } finally { await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve())); }
+  try { await run(`http://127.0.0.1:${server.address().port}`, () => sends, { claims: () => claimCalls, clears: () => clearCalls }); } finally { await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve())); }
 }
+
+test('dedicated scheduled mode makes manual alert POST read-only even with configured legacy Slack', async () => {
+  for (const [usage, expectedStatus] of [[4, 'OVERAGE'], [1, 'OK'], [null, 'UNKNOWN']]) {
+    await withAlertApp({ usage, allocation: 2, configured: true, manualDeliveryEnabled: false },
+      async (base, sends, writes) => {
+        const path = `${base}/api/secure-guard/admin/organizations/org-1/license-alerts/check`;
+        for (let repeat = 0; repeat < 2; repeat++) {
+          const response = await fetch(path, { method: 'POST', headers: { Cookie: 'secure_guard_session=test' } });
+          assert.equal(response.status, 200);
+          const data = await response.json();
+          assert.equal(data.status, expectedStatus);
+          assert.equal(data.notification, 'managed_by_scheduled_monitor');
+        }
+        assert.equal(sends(), 0);
+        assert.equal(writes.claims(), 0);
+        assert.equal(writes.clears(), 0);
+      });
+  }
+});
 
 test('UNKNOWN and unconfigured Slack never send', async () => {
   await withAlertApp({ usage: null, allocation: 2 }, async (base, sends) => { const r = await fetch(`${base}/api/secure-guard/admin/organizations/org-1/license-alerts/check`, { method: 'POST', headers: { Cookie: 'secure_guard_session=test' } }); assert.equal((await r.json()).notification, 'not_sent_unknown'); assert.equal(sends(), 0); });

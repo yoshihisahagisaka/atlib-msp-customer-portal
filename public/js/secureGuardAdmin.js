@@ -61,6 +61,85 @@ async function sgLoadAudit() {
   } catch { sgStatus('audit-status', '監査履歴を取得できませんでした。'); }
 }
 
+let sgOverageLoading = false;
+async function sgLoadOverageAlerts() {
+  if (sgOverageLoading) return;
+  sgOverageLoading = true;
+  sgNode('refresh-overage-alerts').disabled = true;
+  sgStatus('overage-alerts-status', '未解消の超過を取得しています。');
+  const container = sgNode('overage-alerts');
+  try {
+    const data = await sgAdminFetch('/overage-alerts');
+    if (!Array.isArray(data?.alerts)) throw new Error('INVALID_ALERTS');
+    const cards = data.alerts.map((alert) => {
+      const card = document.createElement('div');
+      card.className = 'sg-overage-item';
+      const heading = document.createElement('h3');
+      heading.textContent = alert.organizationName;
+      card.append(heading);
+      card.append(sgText(`割当 ${alert.allocated}台 / 利用 ${alert.usage}台 / 超過 ${alert.overBy}台`));
+      const notification = {
+        pending: '通知待ち', attempting: '送信処理中',
+        sent: '通知済み', needs_review: '送信要確認（自動再送しません）',
+      }[alert.notificationStatus] || '通知状況不明';
+      card.append(sgText(`検出: ${new Date(alert.openedAt).toLocaleString('ja-JP')} / 最終確認: ${new Date(alert.lastObservedAt).toLocaleString('ja-JP')}`));
+      card.append(sgText(`対応: ${alert.handlingStatus === 'in_progress' ? '対応中' : '未対応'} / Slack: ${notification}`));
+
+      const form = document.createElement('form');
+      const choiceLabel = document.createElement('label');
+      choiceLabel.textContent = '対応方針';
+      const choice = document.createElement('select');
+      choice.required = true;
+      choice.append(
+        new Option('選択してください', ''),
+        new Option('不要な端末を整理する', 'reduce_clients'),
+        new Option('割当ライセンス数を増やす', 'increase_allocation'),
+      );
+      choice.value = alert.responseChoice || '';
+      choiceLabel.append(choice);
+      const noteLabel = document.createElement('label');
+      noteLabel.textContent = '対応メモ（任意・500文字以内）';
+      const note = document.createElement('textarea');
+      note.maxLength = 500;
+      note.value = alert.responseNote || '';
+      noteLabel.append(note);
+      const save = document.createElement('button');
+      save.type = 'submit';
+      save.className = 'btn btn-secondary';
+      save.textContent = '対応内容を記録';
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      form.append(choiceLabel, noteLabel, save, status);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!choice.value || save.disabled) return;
+        save.disabled = true;
+        status.textContent = '記録しています。';
+        try {
+          await sgAdminFetch(`/overage-alerts/${encodeURIComponent(alert.id)}/handling`, {
+            method: 'PATCH',
+            body: JSON.stringify({ responseChoice: choice.value, responseNote: note.value.trim() || null }),
+          });
+          await sgLoadOverageAlerts();
+        } catch {
+          // The server may have committed; do not silently issue another PATCH.
+          status.textContent = '結果が不明です。再送する前に対応状況と監査履歴を確認してください。';
+        }
+      });
+      card.append(form);
+      return card;
+    });
+    container.replaceChildren(...(cards.length ? cards : [sgText('未解消の超過記録はありません。定期監視が未稼働の場合、未検出であることを意味しません。')]));
+    sgStatus('overage-alerts-status', `未解消の超過 ${cards.length}件（直近の定期取得結果）`);
+  } catch {
+    container.replaceChildren();
+    sgStatus('overage-alerts-status', '超過対応状況を取得できません。専用DBまたは定期監視が未稼働の可能性があります。');
+  } finally {
+    sgOverageLoading = false;
+    sgNode('refresh-overage-alerts').disabled = false;
+  }
+}
+
 async function sgLoadDetails() {
   const sequence = ++sgDetailSequence;
   const org = sgSelectedOrganization();
@@ -135,6 +214,7 @@ async function sgSynchronize() {
 
 sgScope.addEventListener('change', () => { sgInvitationAttempted = false; sgStatus('invitation-status', ''); sgRenderOrganizationsSelection(); sgLoadDetails(); });
 sgNode('retry-organization-sync').addEventListener('click', sgSynchronize);
+sgNode('refresh-overage-alerts').addEventListener('click', sgLoadOverageAlerts);
 
 sgNode('initial-invitation-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -188,4 +268,4 @@ sgNode('provisioning-recovery-form').addEventListener('submit', async (event) =>
 });
 
 // Exactly one sync attempt on initial load or F5; no timer or automatic retries.
-sgSynchronize();
+sgSynchronize().then(sgLoadOverageAlerts);
