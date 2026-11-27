@@ -125,7 +125,7 @@ export class SecureGuardIdentityService {
     return this.startChallenge(user);
   }
 
-  private getLiveChallenge(token: string, purpose: 'login' | 'enroll'): Promise<SecureGuardMfaChallenge | null> {
+  private getLiveChallenge(token: string, purpose: 'login' | 'enroll' | 'admin_reauth'): Promise<SecureGuardMfaChallenge | null> {
     let tokenHash: string;
     try { tokenHash = hashMfaChallengeToken(token); } catch { return Promise.resolve(null); }
     return this.repo.mfaFindChallenge(tokenHash).then((challenge) => {
@@ -260,6 +260,54 @@ export class SecureGuardIdentityService {
     const user = await this.repo.findUserById(challenge.userId);
     if (!user || user.status !== 'active') return 'denied';
     return this.deliverEmail(user, hash);
+  }
+
+
+  // Recovery requires a challenge created only after successful password login.
+  // The verified backup code resets MFA and session_version, but never issues JWT.
+  async recoverMfa(token: string, backupCode: string): Promise<SecureGuardMfaLoginFlow | null> {
+    const challenge = await this.getLiveChallenge(token, 'login');
+    if (!challenge) return null;
+    if (!/^[a-f0-9]{32}$/.test(backupCode)) return null;
+    const codeHash = this.crypto().recoveryCodeHmac(challenge.userId, backupCode);
+    const newChallenge = createMfaChallenge('enroll');
+    const recovered = await this.repo.mfaRecoverWithBackup({
+      userId: challenge.userId, tokenHash: challenge.tokenHash,
+      recoveryHmac: codeHash, enrollmentTokenHash: newChallenge.tokenHash,
+      enrollmentExpiresAt: newChallenge.expiresAt,
+    });
+    if (!recovered) return null;
+    return { flow: 'MFA_ENROLLMENT_REQUIRED', challengeToken: newChallenge.token };
+  }
+
+  async startAdminReauth(userId: string): Promise<{
+    challengeToken: string; method: SecureGuardMfaMethod;
+  } | null> {
+    const user = await this.repo.findUserById(userId);
+    if (!user || user.status !== 'active' || !(await this.repo.mfaHasOrgAdminMembership(userId))) return null;
+    const setting = await this.repo.mfaGetSetting(userId);
+    if (!setting || setting.state !== 'active') return null;
+    this.crypto(); // secrets required before issuing a credential proof
+    const challenge = createMfaChallenge('admin_reauth');
+    if (!(await this.repo.mfaIssueChallenge({
+      userId, tokenHash: challenge.tokenHash, purpose: 'admin_reauth',
+      method: setting.method, expiresAt: challenge.expiresAt,
+    }))) return null;
+    if (setting.method === 'email') {
+      const delivered = await this.deliverEmail(user, challenge.tokenHash);
+      if (delivered !== 'sent') throw new Error('MFA_EMAIL_DELIVERY_UNAVAILABLE');
+    }
+    return { challengeToken: challenge.token, method: setting.method };
+  }
+
+  async verifyAdminReauth(userId: string, token: string, code: string): Promise<boolean> {
+    const challenge = await this.getLiveChallenge(token, 'admin_reauth');
+    if (!challenge || challenge.userId !== userId || !challenge.method) return false;
+    if (!(await this.repo.mfaHasOrgAdminMembership(userId))) return false;
+    return this.repo.mfaVerifyAdminReauth({
+      userId, tokenHash: challenge.tokenHash,
+      verify: (setting, locked) => this.checkCode(setting, locked, code, Date.now()),
+    });
   }
 
   async replaceInitialInvitation(input: {
