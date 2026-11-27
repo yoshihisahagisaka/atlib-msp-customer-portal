@@ -73,10 +73,10 @@ M3受入：
 
 ユーザーが提供した既存VM（**新規VM作成禁止**）：
 - `atlib-test-runner` / project `msp-zabbix` / `asia-northeast1-a` / Ubuntu 24.04 / e2-standard-4（4CPU/16GB）/ OS Login + IAP。
-- Home `/home/yoshihisa_hagisaka_atlib_jp/`。**Secure Guard専用 `~/projects/secure-guard/` のみ**を使用。他プロジェクトのディレクトリに触れない。
+- Home `/home/yoshihisa_hagisaka_atlib_jp/`。**既存Clone `~/atlib-test/atlib-msp-customer-portal/` のみ**を使用（再Clone禁止）。他プロジェクトのディレクトリに触れない。
 - IAP SSH/OS Loginで接続し、`scripts/readiness/secureGuardVmPreflight.sh` を実行。既存Git/Node/npm/Docker/PG readinessを確認。Docker/Node未導入、GitHub認証失敗ならSTOP。sudo/apt/npm global/install VM設定変更は承認を得てから。
 - コードをローカルclone/fetchし、**固定SHAでcheckout、working tree cleanを照合**。VMからProduction DB、共用Cloud SQL、DNSFilter実API、SMTP/Slackへ接続しない。テストDBは `127.0.0.1:55432` のDisposable PG16のみ。実認証情報をenv/ファイル/CLIへ注入しない。
-- VMはテスト・ビルド・静的診断専用。結果は `~/projects/secure-guard/evidence/` に日時・Git HEAD・固定テスト結果・安全なログのみ記録。VM内GitのCommit/Pushは実装担当のレビュー済み作業ブランチに限定。CI/GitHubを唯一の提出先とする。
+- VMはテスト・ビルド・静的診断専用。結果はGitの追跡対象にしない `~/atlib-test/evidence/atlib-msp-customer-portal/` に日時・Git HEAD・固定テスト結果・安全なログのみ記録。VM内GitのCommit/Pushは実装担当のレビュー済み作業ブランチに限定。CI/GitHubを唯一の提出先とする。
 - VMが未準備でも通常GitHub Actionsは実行可能。環境整備のために設計を変えない。
 
 ## 6. 必須実行と報告様式
