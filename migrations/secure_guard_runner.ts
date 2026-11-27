@@ -35,6 +35,20 @@ async function main(): Promise<void> {
   if (process.env.SECURE_GUARD_MIGRATION_TARGET_CONFIRMATION !== targetConfirmation) {
     throw new Error('Secure Guard migration target confirmation mismatch');
   }
+  // Migration 006 is an OFFLINE-only artifact. No Cloud SQL socket, deployed Job,
+  // or remote database can run it even with the general migration approval flag.
+  const offlineMfa = process.env.SECURE_GUARD_MFA_OFFLINE_006 === 'true';
+  if (offlineMfa) {
+    if (process.env.CI !== 'true' || process.env.NODE_ENV !== 'test'
+      || process.env.SECURE_GUARD_DB_HOST !== '127.0.0.1'
+      || process.env.SECURE_GUARD_DB_PORT !== '55432'
+      || !!process.env.SECURE_GUARD_DB_SOCKET_PATH
+      || path.basename(process.env.SECURE_GUARD_MIGRATION_MANIFEST ?? '') !== 'secure-guard-staging-001-006.json') {
+      throw new Error('Secure Guard MFA migration 006 is permitted only on isolated CI PostgreSQL 16');
+    }
+  } else if (path.basename(process.env.SECURE_GUARD_MIGRATION_MANIFEST ?? '') === 'secure-guard-staging-001-006.json') {
+    throw new Error('Secure Guard MFA 006 requires explicit offline CI-only guard');
+  }
   const settings = readSecureGuardDatabaseSettings(process.env, 'migration');
   if (!settings) throw new Error('Secure Guard migration requires a dedicated database');
   if (settings.name !== 'secure_guard_staging'

@@ -7,7 +7,26 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const verifier = require('../scripts/readiness/verifySecureGuardMigrationManifest.cjs');
 const manifestPath = path.join(root, 'migration-manifests/secure-guard-staging-001-005.json');
-const migrationsDirectory = path.join(root, 'migrations/secure_guard');
+const fullMfaDirectory = path.join(root, 'migrations/secure_guard');
+// Preserve the approved 001-005 artifact tests by checking a strict 5-file fixture.
+const migrationsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-approved-005-'));
+for (const name of verifier.expectedNames) {
+  fs.copyFileSync(path.join(fullMfaDirectory, name), path.join(migrationsDirectory, name));
+}
+process.once('exit', () => fs.rmSync(migrationsDirectory, { recursive: true, force: true }));
+
+test('offline MFA 006 manifest checks all six fixed files without changing the 005 manifest', () => {
+  const offlinePath = path.join(root, 'migration-manifests/secure-guard-staging-001-006.json');
+  const result = verifier.verify(offlinePath, fullMfaDirectory, true);
+  assert.equal(result.count, 6);
+  assert.deepEqual(result.filenames, verifier.offlineMfaNames);
+  const five = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).migrations;
+  const six = JSON.parse(fs.readFileSync(offlinePath, 'utf8')).migrations;
+  assert.deepEqual(six.slice(0, 5), five);
+  assert.equal(six[5].filename, '006_mfa_identity.sql');
+  assert.throws(() => verifier.verify(manifestPath, fullMfaDirectory, true),
+    /artifact contains missing or additional migrations/);
+});
 
 test('SG migration manifest fixes exactly 001-005 and their approved SHA-256 values', () => {
   const result = verifier.verify(manifestPath, migrationsDirectory, true);

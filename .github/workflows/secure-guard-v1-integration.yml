@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - feature/secure-guard-daily-management
+      - feat/sg-v1-dedicated-integration-20261112
     paths:
       - 'src/**'
       - 'test/**'
@@ -19,6 +20,7 @@ on:
   push:
     branches:
       - feat/sg-v1-dedicated-integration-20261112
+      - feat/secure-guard-mfa-v1-20261127
 
 permissions:
   contents: read
