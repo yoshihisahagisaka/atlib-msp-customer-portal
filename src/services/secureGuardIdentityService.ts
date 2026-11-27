@@ -180,9 +180,10 @@ export class SecureGuardIdentityService {
     if (!setting.totpCiphertext || !setting.totpNonce || !setting.totpTag || !setting.keyVersion) {
       return { valid: false };
     }
+    if (setting.keyVersion !== 1) throw new Error('MFA_UNSUPPORTED_KEY_VERSION');
     const secret = mfa.decryptTotp(setting.userId, {
       ciphertext: setting.totpCiphertext, nonce: setting.totpNonce,
-      tag: setting.totpTag, keyVersion: 1,
+      tag: setting.totpTag, keyVersion: setting.keyVersion,
     });
     const step = verifyTotp(secret, code, now, setting.lastTotpStep);
     return { valid: step !== null, totpStep: step ?? undefined };
