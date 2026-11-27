@@ -61,6 +61,21 @@ export class Mailer {
     });
   }
 
+  async sendSecureGuardMfaResetEmail(to: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: 'atLIB Secure Guard MFA再登録のご案内',
+      text: [
+        '管理者によって多要素認証（MFA）の再登録が必要な状態になりました。',
+        '既存のログインセッションは無効化されています。',
+        'ご自身のパスワードでログインし、新しい認証方式を登録してください。',
+        '',
+        '心当たりがない場合は、社内管理者またはatLIBへご連絡ください。',
+      ].join('\n'),
+    });
+  }
+
   async sendSecureGuardMfaOtpEmail(to: string, code: string): Promise<void> {
     if (!/^[0-9]{6}$/.test(code)) throw new Error('INVALID_SECURE_GUARD_MFA_CODE');
     await this.transporter.sendMail({
