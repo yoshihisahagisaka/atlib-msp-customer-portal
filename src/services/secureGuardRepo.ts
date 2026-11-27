@@ -1,5 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 import type { CustomerRole, CustomerScope } from '../domain/secureGuard';
+import type {
+  SecureGuardMfaChallenge, SecureGuardMfaChallengeResult, SecureGuardMfaMethod,
+  SecureGuardMfaPurpose, SecureGuardMfaSetting, SecureGuardMfaState,
+} from '../domain/secureGuardMfa';
+import { MFA_MAX_FAILED_ATTEMPTS, MFA_MAX_EMAIL_SENDS, MFA_EMAIL_RESEND_INTERVAL_MS } from '../domain/secureGuardMfa';
 
 export interface PortalUser {
   id: string;
@@ -45,6 +50,204 @@ type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 
 export class SecureGuardRepo {
   constructor(private readonly pool: Pool) {}
+
+  // MFA identity data uses the same Secure Guard dedicated DB and pool.
+  private async withMfaTransaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await run(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async mfaIssueChallenge(input: {
+    userId: string; tokenHash: string; purpose: SecureGuardMfaPurpose;
+    method: SecureGuardMfaMethod | null; expiresAt: Date;
+  }): Promise<boolean> {
+    return this.withMfaTransaction(async (client) => {
+      const user = await client.query(
+        "SELECT id FROM portal_users WHERE id = $1 AND status = 'active' FOR UPDATE",
+        [input.userId],
+      );
+      if (!user.rowCount) return false;
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL',
+        [input.userId],
+      );
+      await client.query(
+        `INSERT INTO secure_guard_mfa_challenges
+          (token_hash, user_id, purpose, method, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [input.tokenHash, input.userId, input.purpose, input.method, input.expiresAt],
+      );
+      return true;
+    });
+  }
+
+  async mfaGetSetting(userId: string): Promise<SecureGuardMfaSetting | null> {
+    const { rows } = await this.pool.query(
+      'SELECT * FROM secure_guard_mfa_settings WHERE user_id = $1',
+      [userId],
+    );
+    return rows[0] ? this.mapMfaSetting(rows[0]) : null;
+  }
+
+  async mfaPutSetting(input: {
+    userId: string; method: SecureGuardMfaMethod; state: SecureGuardMfaState;
+    totpCiphertext?: Buffer | null; totpNonce?: Buffer | null;
+    totpTag?: Buffer | null; keyVersion?: number | null;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO secure_guard_mfa_settings
+         (user_id, method, state, totp_ciphertext, totp_nonce, totp_tag, key_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id) DO UPDATE SET
+         method = EXCLUDED.method, state = EXCLUDED.state,
+         totp_ciphertext = EXCLUDED.totp_ciphertext,
+         totp_nonce = EXCLUDED.totp_nonce, totp_tag = EXCLUDED.totp_tag,
+         key_version = EXCLUDED.key_version, last_totp_step = NULL, updated_at = now()`,
+      [input.userId, input.method, input.state, input.totpCiphertext ?? null,
+        input.totpNonce ?? null, input.totpTag ?? null, input.keyVersion ?? null],
+    );
+  }
+
+  // Replacement email OTP invalidates the previous code; failures never extend TTL.
+  async mfaRecordEmailOtp(
+    userId: string, tokenHash: string, otpHmac: string, at = new Date(),
+  ): Promise<'recorded' | 'denied' | 'rate_limited'> {
+    return this.withMfaTransaction<'recorded' | 'denied' | 'rate_limited'>(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE", [userId],
+      );
+      if (!actor.rowCount) return 'denied';
+      const { rows } = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE token_hash=$1 AND user_id=$2 FOR UPDATE`, [tokenHash, userId],
+      );
+      const row = rows[0];
+      if (!row || row.method !== 'email' || row.consumed_at || row.expires_at <= at
+        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS) return 'denied';
+      if (Number(row.send_count) >= MFA_MAX_EMAIL_SENDS
+        || (row.last_sent_at && at.getTime() - row.last_sent_at.getTime() < MFA_EMAIL_RESEND_INTERVAL_MS)) {
+        return 'rate_limited';
+      }
+      await client.query(
+        `UPDATE secure_guard_mfa_challenges
+           SET otp_hmac=$1, send_count=send_count+1, last_sent_at=$2
+         WHERE token_hash=$3`, [otpHmac, at, tokenHash],
+      );
+      return 'recorded';
+    });
+  }
+
+  // Locks Identity -> Challenge -> MFA setting; caller proves code without persisting it.
+  async mfaConsumeChallenge(input: {
+    userId: string; tokenHash: string; purpose: SecureGuardMfaPurpose; now?: Date;
+    verify: (
+      setting: SecureGuardMfaSetting | null, challenge: SecureGuardMfaChallenge,
+    ) => Promise<{ valid: boolean; totpStep?: bigint }> | { valid: boolean; totpStep?: bigint };
+  }): Promise<SecureGuardMfaChallengeResult> {
+    return this.withMfaTransaction<SecureGuardMfaChallengeResult>(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [input.userId],
+      );
+      if (!actor.rowCount) return { status: 'invalid' };
+      const found = await client.query(
+        'SELECT * FROM secure_guard_mfa_challenges WHERE user_id=$1 AND token_hash=$2 FOR UPDATE',
+        [input.userId, input.tokenHash],
+      );
+      if (!found.rows[0]) return { status: 'invalid' };
+      const challenge = this.mapMfaChallenge(found.rows[0]);
+      const now = input.now ?? new Date();
+      if (challenge.purpose !== input.purpose) return { status: 'purpose_mismatch' };
+      if (challenge.consumedAt) return { status: 'consumed' };
+      if (challenge.expiresAt <= now) return { status: 'expired' };
+      if (challenge.failedAttempts >= MFA_MAX_FAILED_ATTEMPTS) return { status: 'attempts_exhausted' };
+      const factor = await client.query(
+        'SELECT * FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [input.userId],
+      );
+      const setting = factor.rows[0] ? this.mapMfaSetting(factor.rows[0]) : null;
+      const checked = await input.verify(setting, challenge);
+      const step = checked.totpStep;
+      const replay = step !== undefined && (!setting
+        || (setting.lastTotpStep !== null && step <= setting.lastTotpStep));
+      if (!checked.valid || replay) {
+        await client.query(
+          `UPDATE secure_guard_mfa_challenges
+             SET failed_attempts = LEAST(failed_attempts + 1, $1)
+           WHERE token_hash=$2`, [MFA_MAX_FAILED_ATTEMPTS, input.tokenHash],
+        );
+        return { status: 'invalid' };
+      }
+      if (step !== undefined) {
+        await client.query(
+          'UPDATE secure_guard_mfa_settings SET last_totp_step=$1, updated_at=now() WHERE user_id=$2',
+          [step.toString(), input.userId],
+        );
+      }
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET consumed_at=$1 WHERE token_hash=$2',
+        [now, input.tokenHash],
+      );
+      return { status: 'verified' };
+    });
+  }
+
+  async mfaConsumeRecoveryCode(userId: string, codeHmac: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE secure_guard_mfa_recovery_codes SET consumed_at = now()
+       WHERE user_id=$1 AND code_hmac=$2 AND consumed_at IS NULL
+       RETURNING user_id`, [userId, codeHmac],
+    );
+    return result.rowCount === 1;
+  }
+
+  async mfaReplaceRecoveryHashes(userId: string, hashes: string[]): Promise<void> {
+    await this.withMfaTransaction(async (client) => {
+      const user = await client.query('SELECT id FROM portal_users WHERE id=$1 FOR UPDATE', [userId]);
+      if (!user.rowCount) throw new Error('MFA_IDENTITY_UNAVAILABLE');
+      await client.query('DELETE FROM secure_guard_mfa_recovery_codes WHERE user_id=$1', [userId]);
+      for (const hash of hashes) {
+        await client.query(
+          'INSERT INTO secure_guard_mfa_recovery_codes (user_id, code_hmac) VALUES ($1, $2)',
+          [userId, hash],
+        );
+      }
+    });
+  }
+
+  private mapMfaSetting(row: Record<string, unknown>): SecureGuardMfaSetting {
+    return {
+      userId: String(row.user_id), method: row.method as SecureGuardMfaMethod,
+      state: row.state as SecureGuardMfaState,
+      totpCiphertext: row.totp_ciphertext as Buffer | null,
+      totpNonce: row.totp_nonce as Buffer | null, totpTag: row.totp_tag as Buffer | null,
+      keyVersion: row.key_version === null ? null : Number(row.key_version),
+      lastTotpStep: row.last_totp_step === null ? null : BigInt(String(row.last_totp_step)),
+    };
+  }
+
+  private mapMfaChallenge(row: Record<string, unknown>): SecureGuardMfaChallenge {
+    return {
+      tokenHash: String(row.token_hash), userId: String(row.user_id),
+      purpose: row.purpose as SecureGuardMfaPurpose,
+      method: row.method as SecureGuardMfaMethod | null,
+      otpHmac: row.otp_hmac === null ? null : String(row.otp_hmac),
+      expiresAt: row.expires_at as Date, failedAttempts: Number(row.failed_attempts),
+      sendCount: Number(row.send_count), lastSentAt: row.last_sent_at as Date | null,
+      verifiedAt: row.verified_at as Date | null, consumedAt: row.consumed_at as Date | null,
+    };
+  }
+
 
   async findUserByEmail(email: string): Promise<PortalUser | null> {
     const { rows } = await this.pool.query(
