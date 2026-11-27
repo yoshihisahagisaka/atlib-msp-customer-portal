@@ -24,13 +24,16 @@ if [[ "$ID" != "ubuntu" || "$VERSION_ID" != "24.04" ]]; then
   exit 1
 fi
 
-PROJECT_ROOT="$HOME/projects/secure-guard"
-if [[ -L "$HOME/projects" || -L "$PROJECT_ROOT" ]]; then
-  echo "STOP: project directory must not be a symlink" >&2
+PROJECT_ROOT="$HOME/atlib-test/atlib-msp-customer-portal"
+if [[ -L "$HOME/atlib-test" || -L "$PROJECT_ROOT" || ! -d "$PROJECT_ROOT" ]]; then
+  echo "STOP: established atlib-test repository missing or is a symlink" >&2
   exit 1
 fi
-mkdir -p "$PROJECT_ROOT"/{evidence,tmp}
-chmod 700 "$PROJECT_ROOT" "$PROJECT_ROOT/evidence" "$PROJECT_ROOT/tmp"
+TOP="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$TOP" != "$PROJECT_ROOT" ]]; then
+  echo "STOP: expected existing repository; no duplicate clone" >&2
+  exit 1
+fi
 echo "=== Secure Guard verification VM preflight ==="
 echo "host=$HOST"
 echo "user=$(id -un)"
@@ -66,4 +69,4 @@ if command -v ss >/dev/null 2>&1; then
   echo "=== Existing local PostgreSQL test port 55432 (read only) ==="
   ss -ltn '( sport = :55432 )' || true
 fi
-echo "=== Preflight complete. No repo cloned and no tests executed. ==="
+echo "=== Preflight complete. Existing repo checked; no clone, installation or tests executed. ==="
