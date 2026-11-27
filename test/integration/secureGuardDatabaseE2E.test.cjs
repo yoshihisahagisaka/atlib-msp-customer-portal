@@ -1258,7 +1258,12 @@ test('PostgreSQL 16: M3 recovery, admin MFA reauth, scoped reset and session rev
     const login = await service.login('m3-recovery@ci.invalid', password);
     assert.equal(login.flow, 'MFA_REQUIRED');
     assert.equal(await service.recoverMfa(login.challengeToken, '0'.repeat(32)), null);
-    const recovered = await service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]);
+    const simultaneousRecovery = await Promise.all([
+      service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]),
+      service.recoverMfa(login.challengeToken, recoveryCodes.codes[0]),
+    ]);
+    assert.equal(simultaneousRecovery.filter(Boolean).length, 1, 'only one recovery may win');
+    const recovered = simultaneousRecovery.find(Boolean);
     assert.equal(recovered.flow, 'MFA_ENROLLMENT_REQUIRED');
     assert.match(recovered.challengeToken, /^[a-f0-9]{64}$/);
     assert.equal(await service.verifyActiveSession(attrs(recover)), null);
@@ -1307,12 +1312,14 @@ test('PostgreSQL 16: M3 recovery, admin MFA reauth, scoped reset and session rev
       userId: target, tokenHash: oldChallenge.tokenHash, purpose: 'login',
       method: 'totp', expiresAt: oldChallenge.expiresAt,
     }), true);
-    const resetResult = await repo.mfaResetByOrgAdmin({
+    const resetRequests = Array.from({ length: 2 }, () => repo.mfaResetByOrgAdmin({
       actorUserId: admin, actorSessionVersion: 1, actorMembershipId: adminMembership,
       targetMembershipId: targetMembership,
       reauthTokenHash: hashMfaChallengeToken(reauth.challengeToken),
-    });
-    assert.equal(resetResult.email, 'm3-target@ci.invalid');
+    }));
+    const resetResults = await Promise.all(resetRequests);
+    assert.equal(resetResults.filter(Boolean).length, 1, 'same proof cannot reset twice concurrently');
+    assert.equal(resetResults.find(Boolean).email, 'm3-target@ci.invalid');
     assert.equal(await service.verifyActiveSession(attrs(target)), null);
     assert.equal((await pool.query('SELECT session_version FROM portal_users WHERE id=$1', [target]))
       .rows[0].session_version, 2);
