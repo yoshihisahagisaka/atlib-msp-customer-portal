@@ -236,12 +236,17 @@ export class SecureGuardIdentityService {
     if (!this.sendMfaEmail) throw new Error('MFA_EMAIL_DELIVERY_UNAVAILABLE');
     const mfa = this.crypto();
     const otp = mfa.generateEmailOtp();
-    const status = await this.repo.mfaRecordEmailOtp(
-      user.id, tokenHash, mfa.emailOtpHmac(user.id, tokenHash, otp),
+    // Reserve the send slot with NULL otp_hmac. An uncertain/failed SMTP
+    // attempt must never leave a verifiable OTP in the database.
+    const reserved = await this.repo.mfaRecordEmailOtp(user.id, tokenHash, null);
+    if (typeof reserved === 'string') {
+      return reserved === 'recorded' ? 'denied' : reserved;
+    }
+    await this.sendMfaEmail(user.email, otp); // no automatic retry
+    const confirmed = await this.repo.mfaConfirmEmailDelivery(
+      user.id, tokenHash, mfa.emailOtpHmac(user.id, tokenHash, otp), reserved.sendCount,
     );
-    if (status !== 'recorded') return status;
-    // Fail closed on SMTP error/unknown delivery; do not return the OTP or retry.
-    await this.sendMfaEmail(user.email, otp);
+    if (!confirmed) throw new Error('MFA_EMAIL_CONFIRMATION_UNAVAILABLE');
     return 'sent';
   }
 
