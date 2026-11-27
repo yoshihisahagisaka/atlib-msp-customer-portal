@@ -936,7 +936,7 @@ test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomi
           now: new Date(last.expiresAt.getTime() + 1000),
           verify: () => ({ valid: true }),
         });
-assert.equal(limitResult.status, 'expired');
+        assert.equal(limitResult.status, 'expired');
 
         // Five wrong codes exhaust a challenge permanently.
         const locked = createMfaChallenge('login');
@@ -1020,6 +1020,16 @@ assert.equal(limitResult.status, 'expired');
         assert.deepEqual(oneTime.sort(), [false, true]);
         await repo.mfaPutSetting({ userId, method: 'totp', state: 'reset_required' });
         assert.equal((await repo.mfaGetSetting(userId)).state, 'reset_required');
+        // A successful-looking callback cannot override reset_required.
+        const resetChallenge = createMfaChallenge('login');
+        await repo.mfaIssueChallenge({
+          userId, tokenHash: resetChallenge.tokenHash, purpose: 'login',
+          method: 'totp', expiresAt: resetChallenge.expiresAt,
+        });
+        assert.equal((await repo.mfaConsumeChallenge({
+          userId, tokenHash: resetChallenge.tokenHash, purpose: 'login',
+          verify: () => ({ valid: true }),
+        })).status, 'invalid');
         await assert.rejects(repo.mfaPutSetting({ userId, method: 'totp', state: 'active' }),
           (error) => error.code === '23514');
       } finally { await pool.end(); }
