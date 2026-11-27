@@ -132,11 +132,10 @@ test('email MFA login never issues a normal Cookie before OTP, even on wrong or 
     assert.equal(sent[0].to, user.email);
     const resend = await post('/mfa/email/resend', { challengeToken: body.challengeToken });
     assert.equal(resend.status, 429);
-    const wrong = await post('/mfa/verify', { challengeToken: body.challengeToken, code: '123456' });
-    if (sent[0].otp !== '123456') {
-      assert.equal(wrong.status, 401);
-      assertNoSessionCookie(wrong);
-    }
+    const invalidCode = sent[0].otp === '123456' ? '654321' : '123456';
+    const wrong = await post('/mfa/verify', { challengeToken: body.challengeToken, code: invalidCode });
+    assert.equal(wrong.status, 401);
+    assertNoSessionCookie(wrong);
     const verified = await post('/mfa/verify', { challengeToken: body.challengeToken, code: sent[0].otp });
     assert.equal(verified.status, 204);
     const cookie = verified.headers.get('set-cookie');
