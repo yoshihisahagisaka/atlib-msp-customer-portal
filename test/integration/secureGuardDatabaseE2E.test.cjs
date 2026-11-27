@@ -1123,6 +1123,17 @@ test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomi
         );
         assert.equal(storedCodes.rowCount, 10);
         assert.deepEqual(storedCodes.rows.map((row) => row.code_hmac).sort(), enrollment.hashes.slice().sort());
+        const mfaAudit = await pool.query(
+          'SELECT action, result FROM secure_guard_audit_events WHERE actor_user_id=$1 ORDER BY created_at',
+          [userId],
+        );
+        assert.ok(mfaAudit.rows.some((row) =>
+          row.action === 'mfa.enroll.started' && row.result === 'success'));
+        assert.ok(mfaAudit.rows.some((row) =>
+          row.action === 'mfa.enroll.verify' && row.result === 'success'));
+        assert.ok(mfaAudit.rows.some((row) =>
+          row.action === 'mfa.login.verify' && row.result === 'denied'));
+        assert.ok(mfaAudit.rows.every((row) => !String(row.action).includes(enrollCode)));
         assert.equal((await repo.mfaConsumeChallenge({
           userId, tokenHash: enroll.tokenHash, purpose: 'enroll',
           enrollmentRecoveryHashes: enrollment.hashes,
