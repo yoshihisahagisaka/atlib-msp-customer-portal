@@ -157,3 +157,70 @@ test('viewer denial, missing reset mailer, and unknown delivery never retry comm
     assert.equal(effects[1].action, 'mfa.reset.notification.failed');
   });
 });
+
+
+test('email admin reauthentication requires a delivered OTP and yields a one-use proof', async () => {
+  const { SecureGuardIdentityService } = require('../dist/services/secureGuardIdentityService');
+  const { SecureGuardMfaCrypto } = require('../dist/services/secureGuardMfa');
+  const keys = {
+    SECURE_GUARD_MFA_ENCRYPTION_KEY_V1: Buffer.alloc(32, 63).toString('base64'),
+    SECURE_GUARD_MFA_OTP_PEPPER: Buffer.alloc(32, 64).toString('base64'),
+  };
+  const cryptoMfa = new SecureGuardMfaCrypto(keys);
+  const user = { id: 'email-admin', email: 'email-admin@fixture.invalid',
+    status: 'active', sessionVersion: 1 };
+  const factor = { userId: user.id, method: 'email', state: 'active', lastTotpStep: null };
+  let challenge = null;
+  let delivered = null;
+  const repo = {
+    findUserById: async () => user,
+    mfaHasOrgAdminMembership: async () => true,
+    mfaGetSetting: async () => factor,
+    mfaIssueChallenge: async (value) => {
+      challenge = { ...value, failedAttempts: 0, sendCount: 0, otpHmac: null,
+        consumedAt: null, verifiedAt: null, lastSentAt: null };
+      return true;
+    },
+    mfaRecordEmailOtp: async (_userId, tokenHash, mac) => {
+      assert.equal(tokenHash, challenge.tokenHash);
+      assert.equal(mac, null);
+      challenge.sendCount++;
+      return { status: 'reserved', sendCount: challenge.sendCount };
+    },
+    mfaConfirmEmailDelivery: async (_userId, tokenHash, mac, count) => {
+      assert.equal(tokenHash, challenge.tokenHash);
+      assert.equal(count, 1);
+      challenge.otpHmac = mac;
+      return true;
+    },
+    mfaFindChallenge: async (hash) => hash === challenge.tokenHash ? challenge : null,
+    mfaVerifyAdminReauth: async (input) => {
+      if (challenge.verifiedAt || challenge.consumedAt) return false;
+      const result = await input.verify(factor, challenge);
+      if (!result.valid) return false;
+      challenge.verifiedAt = new Date();
+      return true;
+    },
+  };
+  const service = new SecureGuardIdentityService(
+    repo, 'synthetic-m3-secret-2026', '1h',
+    async (to, otp) => {
+      assert.equal(challenge.otpHmac, null, 'OTP must be invalid before delivery acknowledgement');
+      delivered = { to, otp };
+    }, keys,
+  );
+  const start = await service.startAdminReauth(user.id);
+  assert.equal(start.method, 'email');
+  assert.match(start.challengeToken, /^[a-f0-9]{64}$/);
+  assert.equal(challenge.purpose, 'admin_reauth');
+  assert.ok(challenge.expiresAt.getTime() - Date.now() <= 300000);
+  assert.equal(delivered.to, user.email);
+  assert.match(challenge.otpHmac, /^[a-f0-9]{64}$/);
+  assert.equal(cryptoMfa.matchesEmailOtp(user.id, challenge.tokenHash,
+    delivered.otp, challenge.otpHmac), true);
+  const wrong = delivered.otp === '123456' ? '654321' : '123456';
+  assert.equal(await service.verifyAdminReauth(user.id, start.challengeToken, wrong), false);
+  assert.equal(await service.verifyAdminReauth(user.id, start.challengeToken, delivered.otp), true);
+  assert.equal(await service.verifyAdminReauth(user.id, start.challengeToken, delivered.otp), false);
+});
+
