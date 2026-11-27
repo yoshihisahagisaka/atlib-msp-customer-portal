@@ -2,6 +2,29 @@
 <html lang="ja">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>atLIB Secure Guard 招待受諾</title><link rel="stylesheet" href="/css/style.css"></head>
   <body><main class="container"><h1>atLIB Secure Guard</h1><p>個人用パスワードを設定してください。</p>
-    <form id="accept-form"><label>パスワード<input id="password" type="password" required minlength="12" autocomplete="new-password"></label><button type="submit">利用を開始する</button></form><p id="error" role="alert"></p>
+    <form id="accept-form"><label>パスワード<input id="password" type="password" required minlength="12" autocomplete="new-password"></label><button type="submit">利用を開始する</button></form>    <section id="mfa-section" hidden aria-label="多要素認証">
+      <p id="mfa-instructions"></p>
+      <form id="mfa-method-form" hidden>
+        <label for="mfa-method">認証方式</label>
+        <select id="mfa-method">
+          <option value="totp">認証アプリ（推奨）</option>
+          <option value="email">メール認証コード</option>
+        </select>
+        <button type="submit">認証方式を登録</button>
+      </form>
+      <p id="mfa-totp-details" hidden></p>
+      <form id="mfa-code-form" hidden>
+        <label for="mfa-code">6桁の認証コード</label>
+        <input id="mfa-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        <button type="submit">認証してログイン</button>
+      </form>
+      <button id="mfa-resend" type="button" hidden>メール認証コードを再送する</button>
+      <section id="mfa-backup" hidden aria-label="バックアップコード">
+        <p>バックアップコードは今回だけ表示されます。安全な場所に保存してください。次回は表示できません。</p>
+        <pre id="mfa-backup-codes"></pre>
+        <button id="mfa-done" type="button">保存しました・利用を開始する</button>
+      </section>
+    </section>
+<p id="error" role="alert"></p>
   </main><script src="/js/secureGuard.js"></script></body>
 </html>
