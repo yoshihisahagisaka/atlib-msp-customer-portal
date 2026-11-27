@@ -98,6 +98,10 @@ test('one shared Secure Guard process starts without Portal/Zabbix/SMTP/OAuth an
       '/api/secure-guard/agents/00000000-0000-4000-8000-000000000000/queued-uninstall',
       '/api/secure-guard/memberships/invitations',
       '/api/secure-guard/auth/invitations/accept',
+      '/api/secure-guard/auth/mfa/recovery',
+      '/api/secure-guard/auth/mfa/reauth/start',
+      '/api/secure-guard/auth/mfa/reauth/verify',
+      '/api/secure-guard/memberships/00000000-0000-4000-8000-000000000002/mfa/reset',
     ]) {
       const response = await fetch(base + url, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
