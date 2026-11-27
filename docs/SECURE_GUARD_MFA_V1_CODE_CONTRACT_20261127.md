@@ -138,4 +138,32 @@ overage roleにはこの3表の権限を与えず、Ledger・DDLへのruntime権
 - `src/services/mailer.ts`：OTP・MFAリセット通知メソッドのみ追加、既存SMTP transport再利用
 - `public/js/secureGuard.js`、`public/secure-guard-login.html`、`public/secure-guard-accept.html`、既存顧客利用者管理画面：MFA入力/登録/回復・案内を最小UIで追加。既存静的配信境界を維持
 - `src/secureGuardStagingRuntime.ts`：offline検証のauth経路だけ既存安全境界内で必要最小の更新。**実Stagingの実メール・外部書込み許可は不可**
-- 対応 `test
+
+- 対応 `test/` 以下のMFA/既存認証/使い捨てPG16/E2E、既存UI受入テスト、READMEではなく本契約への証跡追記。必要なビルドManifestのoffline参照変更を明記。
+
+新ファイルが必要なら上記許可範囲と機能の一対一対応を示して統括へSTOP報告。顧客別テーブル、Redis、Queue、KMS用常駐アプリ、請求基盤、独自DNSFilter状態管理などは作らない。
+
+## 8. MFAリセットの厳格条件
+
+`org_admin`は自社だけに有効Membershipがある**他Identity**のみreset可能。操作ユーザー自分自身、複数組織所属、MSP Grant保有者、無効Identity、対象不在、`operator`/`viewer`、最近のMFA再認証なしは拒否。対象ユーザーのMembership/Grant/Identity/MFAと操作側権限と`admin_reauth` Challengeを一transactionでロック・照合し、recovery codes/Challenge無効化、TOTP暗号化秘密消去、session_version+1、監査固定コードの記録後COMMIT。通知メール送信はCOMMIT後だけ。送信失敗・不明は状態を戻さず、監査し人手確認。atLIB例外復旧はAPI実装せず個別手順（別承認）。
+
+## 9. オフライン受入契約
+
+- 認証：passwordのみ・招待受諾のみ・旧JWT・MFA未登録・Challenge期限切れ・二重送信・Challenge並列消費で通常JWTが**1つも発行されない**。
+- TOTP：RFC6238公開テストベクトル、±1 step、再利用不可、暗号化/復号と異なる鍵のSTOP、ログ非露出。
+- email：6桁のCSPRNG、間隔・回数、旧コード失効、SMTP送信失敗/UNKNOWNのSTOP、同一Challengeの限度と別Org共有禁止。
+- recovery：codeハッシュのみ、同時消費は1件、sessionVersion旧Cookie無効、MFA再登録までno-cookie。
+- admin reset：自社単一組織所属の他者のみ、自己/複数所属/MSP grant/他社/再認証なしを拒否、監査、通知失敗でも状態巻戻しなし。
+- DB：001–006 fresh、既存001–005→006、固定SHA/replay、migration role owner、runtime最小権限、overage/Insight分離、旧Portal DB不変。
+- ユーザーUI：方式選択、コード入力、回復コード一度のみ、MFA登録失敗/期限切れ、初回招待で無Cookie。秘密のコンソール/HTTPログ非出力。
+- VM/CI：既存CIを正本として使い、`atlib-test-runner`のローカルPostgreSQL16・localhost限定テストで相互確認。実GCP DB/SQL Job/DNSFilterをテストに流用しない。
+- 旧回帰（2026-11-20実績117件）、PG16隔離とDocker起動が全PASS。負のケース全てPASSまでMFA商用GateはSTOP。
+
+## 10. 実装順序・停止条件
+
+- Slice M1：006 schema、domain定数、crypto/TOTP/challenge repository、unit/PG16テスト。JWT・HTTPの動作変更なし。
+- Slice M2：`login`/`acceptInvitation`のJWT直発行廃止、認証/登録/メールOTPのRouter、Cookie/middleware、最小UI。既存端末/管理APIを触らない。
+- Slice M3：バックアップコード、再登録、`org_admin`の限定MFA reset、監査・通知・セッション失効。
+- 各SliceでCodexの変更対象/意図/証跡を独立commit、既存PR #6から**stacked Draft PR**を作成、CIとVM実測を比較。main/PR #6へ直接mergeしない。
+- 実Staging：Gate S3の公式修正版Migration ImageでCritical=0/HIGH=0実測、005単独適用とACL read-back PASSが先。006・MFA app/Secret/Cloud Runは**別の明示承認**。Gate S4/Production No-Goを維持する。
+- 不明な値、Canonical衝突、Git HEAD漂流、Unexpected DB state、Secrets/SDK不足、test failure、CI GCP到達の疑義は**STOP→Fit/Gap→統括報告**。自動復旧/無断再試行/テストの削除/閾値緩和は禁止。
