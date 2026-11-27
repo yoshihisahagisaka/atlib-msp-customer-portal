@@ -87,6 +87,10 @@ export class SecureGuardRepo {
          VALUES ($1, $2, $3, $4, $5)`,
         [input.tokenHash, input.userId, input.purpose, input.method, input.expiresAt],
       );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, 'mfa.challenge.issued', 'success')",
+        [input.userId],
+      );
       return true;
     });
   }
@@ -142,6 +146,10 @@ export class SecureGuardRepo {
       await client.query(
         'UPDATE secure_guard_mfa_challenges SET method=$1 WHERE token_hash=$2',
         [input.method, input.tokenHash],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, 'mfa.enroll.started', 'success')",
+        [input.userId],
       );
       return true;
     });
@@ -301,6 +309,10 @@ export class SecureGuardRepo {
              SET failed_attempts = LEAST(failed_attempts + 1, $1)
            WHERE token_hash=$2`, [MFA_MAX_FAILED_ATTEMPTS, input.tokenHash],
         );
+        await client.query(
+          "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, $2, 'denied')",
+          [input.userId, input.purpose === 'enroll' ? 'mfa.enroll.verify' : 'mfa.login.verify'],
+        );
         return { status: 'invalid' };
       }
       if (input.purpose === 'enroll') {
@@ -329,6 +341,10 @@ export class SecureGuardRepo {
       await client.query(
         'UPDATE secure_guard_mfa_challenges SET consumed_at=$1 WHERE token_hash=$2',
         [now, input.tokenHash],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, $2, 'success')",
+        [input.userId, input.purpose === 'enroll' ? 'mfa.enroll.verify' : 'mfa.login.verify'],
       );
       return { status: 'verified' };
     });
