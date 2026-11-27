@@ -5,7 +5,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.secure-guard-migration.json tsconfig.secure-guard-migration-build.json ./
 COPY src ./src
-COPY migrations ./migrations
+# Preserve the approved Staging 001-005 artifact exactly. MFA 006 is CI-only.
+COPY migrations/secure_guard_runner.ts ./migrations/secure_guard_runner.ts
+COPY migrations/secure_guard/00[1-5]*.sql ./migrations/secure_guard/
 COPY migration-manifests/secure-guard-staging-001-005.json ./migration-manifests/secure-guard-staging-001-005.json
 COPY scripts/readiness/verifySecureGuardMigrationManifest.cjs ./scripts/readiness/verifySecureGuardMigrationManifest.cjs
 RUN npm run build:secure-guard-migration
