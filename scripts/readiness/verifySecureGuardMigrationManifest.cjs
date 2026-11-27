@@ -11,6 +11,7 @@ const expectedNames = [
   '004_agent_uninstall_claims.sql',
   '005_runtime_overage_privileges.sql',
 ];
+const offlineMfaNames = [...expectedNames, '006_mfa_identity.sql'];
 
 function fail(message) {
   throw new Error(`SECURE_GUARD_MIGRATION_MANIFEST_INVALID: ${message}`);
@@ -23,12 +24,14 @@ function verify(manifestPath, migrationsDirectory, strict = true) {
     || manifest.role !== 'secure_guard_migration_staging') {
     fail('unexpected database or role target');
   }
-  if (!Array.isArray(manifest.migrations) || manifest.migrations.length !== 5) {
-    fail('exactly five migrations are required');
+  const offlineMfa = path.basename(manifestPath) === 'secure-guard-staging-001-006.json';
+  const allowedNames = offlineMfa ? offlineMfaNames : expectedNames;
+  if (!Array.isArray(manifest.migrations) || manifest.migrations.length !== allowedNames.length) {
+    fail('unexpected migration count');
   }
   const names = manifest.migrations.map((entry) => entry.filename);
-  if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
-    fail('migration order or filename differs from 001-005 allowlist');
+  if (JSON.stringify(names) !== JSON.stringify(allowedNames)) {
+    fail('migration order or filename differs from approved allowlist');
   }
   for (const entry of manifest.migrations) {
     if (!/^[0-9a-f]{64}$/.test(entry.sha256)) fail(`invalid SHA-256 for ${entry.filename}`);
@@ -44,7 +47,7 @@ function verify(manifestPath, migrationsDirectory, strict = true) {
     const actualNames = fs.readdirSync(migrationsDirectory)
       .filter((name) => /^\d+_[a-z0-9_]+\.sql$/.test(name))
       .sort();
-    if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+    if (JSON.stringify(actualNames) !== JSON.stringify(allowedNames)) {
       fail('artifact contains missing or additional migrations');
     }
   }
@@ -72,4 +75,4 @@ if (require.main === module) {
   })}\n`);
 }
 
-module.exports = { expectedNames, verify };
+module.exports = { expectedNames, offlineMfaNames, verify };
