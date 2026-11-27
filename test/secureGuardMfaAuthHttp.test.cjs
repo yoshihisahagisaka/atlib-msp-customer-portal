@@ -246,6 +246,31 @@ test('SMTP failure cannot leave a verifiable email OTP or issue a normal session
   });
 });
 
+test('existing MFA Identity accepts membership without resetting factor or bypassing password', async () => {
+  const password = 'existing-personal-secret';
+  const user = { id: 'existing-mfa', email: 'existing@example.test',
+    passwordHash: await bcrypt.hash(password, 4), status: 'active', sessionVersion: 2 };
+  const repo = inMemoryRepo(user, { userId: user.id, method: 'totp', state: 'active' });
+  await withAuth(repo, [], async (post) => {
+    const withoutPassword = await post('/invitations/accept', {
+      token: 'synthetic-existing-invite', password: 'incorrect-password',
+    });
+    assert.equal(withoutPassword.status, 202);
+    assertNoSessionCookie(withoutPassword);
+    assert.deepEqual(await withoutPassword.json(), { flow: 'MFA_LOGIN_REQUIRED' });
+    assert.equal((await repo.mfaGetSetting(user.id)).state, 'active');
+
+    const withPassword = await post('/invitations/accept', {
+      token: 'synthetic-existing-invite', password,
+    });
+    assert.equal(withPassword.status, 202);
+    assertNoSessionCookie(withPassword);
+    const flow = await withPassword.json();
+    assert.equal(flow.flow, 'MFA_REQUIRED');
+    assert.equal(flow.method, 'totp');
+  });
+});
+
 test('invitation acceptance is an MFA enrollment flow without normal JWT', async () => {
   const password = 'invite-password-2026!';
   const user = { id: 'invited-1', email: 'invited@example.test',
