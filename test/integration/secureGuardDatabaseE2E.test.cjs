@@ -669,6 +669,16 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
     await assert.rejects(secuOtherDb.connect(), (error) => error.code === '42501');
     await secuOtherDb.end().catch(() => undefined);
 
+    // Offline-only migration 006 is required for MFA HTTP acceptance.
+    const mfaMigration = runMigration({
+      SECURE_GUARD_MFA_OFFLINE_006: 'true',
+      SECURE_GUARD_MIGRATIONS_DIR: path.join(__dirname, '../../migrations/secure_guard'),
+      SECURE_GUARD_MIGRATION_MANIFEST: path.join(
+        __dirname, '../../migration-manifests/secure-guard-staging-001-006.json'),
+    });
+    assert.equal(mfaMigration.status, 0, `Offline MFA upgrade must pass: ${mfaMigration.stderr}`);
+    assert.match(mfaMigration.stdout, /applied: 006_mfa_identity\.sql/);
+
     // Real HTTP + PostgreSQL acceptance of the EXISTING shared SG Staging runtime.
     // Only the disposable CI PostgreSQL 16 on fixed loopback port is used.
     // No GCP, real DNSFilter, SMTP, Slack, or Production credentials are inherited.
@@ -695,6 +705,24 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         VALUES ($1, $2, 'viewer', 'active', now()) RETURNING id`, [userB, orgB]);
       ids = { userA, userB, orgA, orgB, memberA: memberA.rows[0].id, memberB: memberB.rows[0].id };
       await fixtureDb.query(`INSERT INTO msp_role_grants (user_id, role) VALUES ($1, 'msp_admin')`, [userA]);
+      const fixtureMfaKeys = {
+        SECURE_GUARD_MFA_ENCRYPTION_KEY_V1: Buffer.alloc(32, 81).toString('base64'),
+        SECURE_GUARD_MFA_OTP_PEPPER: Buffer.alloc(32, 82).toString('base64'),
+      };
+      const { SecureGuardMfaCrypto, totpAtStep } =
+        require('../../dist/services/secureGuardMfa');
+      const mfaCrypto = new SecureGuardMfaCrypto(fixtureMfaKeys);
+      const totpSecrets = new Map();
+      for (const id of [userA, userB]) {
+        const secret = mfaCrypto.generateTotpSecret();
+        const encrypted = mfaCrypto.encryptTotp(id, secret);
+        totpSecrets.set(id, secret);
+        await fixtureDb.query(`INSERT INTO secure_guard_mfa_settings
+          (user_id, method, state, totp_ciphertext, totp_nonce, totp_tag, key_version)
+          VALUES ($1, 'totp', 'active', $2,$3,$4,$5)`,
+        [id, encrypted.ciphertext, encrypted.nonce, encrypted.tag, encrypted.keyVersion]);
+      }
+
 
       const portServer = net.createServer();
       await new Promise((resolve) => portServer.listen(0, safeTestHost, resolve));
@@ -705,7 +733,11 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         cwd: path.join(__dirname, '../..'),
         env: {
           PATH: process.env.PATH,
-          NODE_ENV: 'production',
+          NODE_ENV: 'test',
+          CI: 'true',
+          SECURE_GUARD_MFA_OFFLINE_E2E: 'true',
+          SECURE_GUARD_MFA_ENCRYPTION_KEY_V1: fixtureMfaKeys.SECURE_GUARD_MFA_ENCRYPTION_KEY_V1,
+          SECURE_GUARD_MFA_OTP_PEPPER: fixtureMfaKeys.SECURE_GUARD_MFA_OTP_PEPPER,
           PORT: String(appPort),
           SECURE_GUARD_STAGING_ISOLATED: 'true',
           SECURE_GUARD_DB_MODE: 'dedicated',
@@ -734,21 +766,43 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
       }
       assert.ok(ready, 'Live Secure Guard server must start using only the SG DB');
 
-      const login = async (email) => {
+      const login = async (email, id) => {
         const response = await fetch(base + '/api/secure-guard/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        assert.equal(response.status, 204);
-        const setCookie = response.headers.get('set-cookie');
+        assert.equal(response.status, 202);
+        const initialCookie = response.headers.get('set-cookie') || '';
+        assert.doesNotMatch(initialCookie, /secure_guard_session=[^;\s]+/);
+        const flow = await response.json();
+        assert.equal(flow.flow, 'MFA_REQUIRED');
+        assert.equal(flow.method, 'totp');
+        assert.match(flow.challengeToken, /^[a-f0-9]{64}$/);
+        assert.equal((await fetch(base + '/api/secure-guard/me')).status, 401);
+        const step = BigInt(Math.floor(Date.now() / 30000));
+        const code = totpAtStep(totpSecrets.get(id), step);
+        const verified = await fetch(base + '/api/secure-guard/auth/mfa/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ challengeToken: flow.challengeToken, code }),
+        });
+        assert.equal(verified.status, 204);
+        const setCookie = verified.headers.get('set-cookie');
         assert.match(setCookie, /secure_guard_session=/);
         assert.match(setCookie, /HttpOnly/i);
         assert.match(setCookie, /Secure/i);
+        const replay = await fetch(base + '/api/secure-guard/auth/mfa/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ challengeToken: flow.challengeToken, code }),
+        });
+        assert.equal(replay.status, 401);
+        assert.doesNotMatch(replay.headers.get('set-cookie') || '', /secure_guard_session=[^;\s]+/);
         return setCookie.split(';')[0];
       };
-      const cookieA = await login('live-a@ci.invalid');
-      const cookieB = await login('live-b@ci.invalid');
+      const cookieA = await login('live-a@ci.invalid', userA);
+      const cookieB = await login('live-b@ci.invalid', userB);
       const get = (url, cookie, membershipId) => fetch(base + url, {
         headers: { Cookie: cookie, ...(membershipId ? { 'X-Secure-Guard-Membership': membershipId } : {}) },
       });
@@ -797,6 +851,9 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         });
       }
       if (ids) {
+        await fixtureDb.query('DELETE FROM secure_guard_mfa_challenges WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
+        await fixtureDb.query('DELETE FROM secure_guard_mfa_recovery_codes WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
+        await fixtureDb.query('DELETE FROM secure_guard_mfa_settings WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
         await fixtureDb.query('DELETE FROM msp_role_grants WHERE user_id = $1', [ids.userA]);
         await fixtureDb.query('DELETE FROM customer_memberships WHERE id = ANY($1::uuid[])', [[ids.memberA, ids.memberB]]);
         await fixtureDb.query('DELETE FROM customer_organizations WHERE id = ANY($1::uuid[])', [[ids.orgA, ids.orgB]]);
