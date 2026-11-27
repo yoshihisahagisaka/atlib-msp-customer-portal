@@ -86,7 +86,10 @@ async function main(): Promise<void> {
   const secureGuardOverageStore = secureGuardDatabaseSettings
     ? new SecureGuardOverageStore(secureGuardPool)
     : undefined;
-  const secureGuardIdentityService = new SecureGuardIdentityService(secureGuardRepo, config.jwtSecret, config.jwtExpiresIn);
+  const secureGuardIdentityService = new SecureGuardIdentityService(
+    secureGuardRepo, config.jwtSecret, config.jwtExpiresIn,
+    (to, code) => mailer.sendSecureGuardMfaOtpEmail(to, code),
+  );
   // Deployment supplies this only to the server process. No browser route can read it.
   const dnsFilterInventoryClient = new DnsFilterInventoryClient(process.env.DNSFILTER_API_KEY);
   const dnsFilterRoamingUsageClient = new DnsFilterRoamingUsageClient(config.gcpProjectId);
