@@ -61,6 +61,23 @@ export class Mailer {
     });
   }
 
+  async sendSecureGuardMfaOtpEmail(to: string, code: string): Promise<void> {
+    if (!/^[0-9]{6}$/.test(code)) throw new Error('INVALID_SECURE_GUARD_MFA_CODE');
+    await this.transporter.sendMail({
+      from: this.config.from,
+      to,
+      subject: 'atLIB Secure Guard 認証コード',
+      text: [
+        'atLIB Secure Guardのワンタイム認証コードです。',
+        '',
+        code,
+        '',
+        '有効期限は10分です。お心当たりがない場合は破棄してください。',
+        'このコードを第三者に教えないでください。',
+      ].join('\n'),
+    });
+  }
+
   async sendSecureGuardInvitationEmail(to: string, acceptUrl: string): Promise<void> {
     await this.transporter.sendMail({
       from: this.config.from,

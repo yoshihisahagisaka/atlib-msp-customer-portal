@@ -5,6 +5,8 @@ export type MspRole = 'msp_admin';
 export interface SecureGuardSessionPayload {
   userId: string;
   sessionVersion: number;
+  mfaVerified: true;
+  mfaMethod: 'totp' | 'email';
 }
 
 export interface CustomerScope {

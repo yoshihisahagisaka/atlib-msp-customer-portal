@@ -87,6 +87,70 @@ export class SecureGuardRepo {
          VALUES ($1, $2, $3, $4, $5)`,
         [input.tokenHash, input.userId, input.purpose, input.method, input.expiresAt],
       );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, 'mfa.challenge.issued', 'success')",
+        [input.userId],
+      );
+      return true;
+    });
+  }
+
+
+  async mfaFindChallenge(tokenHash: string): Promise<SecureGuardMfaChallenge | null> {
+    if (!/^[0-9a-f]{64}$/.test(tokenHash)) return null;
+    const { rows } = await this.pool.query(
+      `SELECT c.* FROM secure_guard_mfa_challenges c
+       JOIN portal_users u ON u.id=c.user_id AND u.status='active'
+       WHERE c.token_hash=$1`,
+      [tokenHash],
+    );
+    return rows[0] ? this.mapMfaChallenge(rows[0]) : null;
+  }
+
+  // Binds a password-authenticated enrolment token exactly once.
+  async mfaStartEnrollment(input: {
+    tokenHash: string; userId: string; method: SecureGuardMfaMethod;
+    totpCiphertext?: Buffer; totpNonce?: Buffer; totpTag?: Buffer; keyVersion?: number;
+  }): Promise<boolean> {
+    return this.withMfaTransaction(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [input.userId],
+      );
+      if (!actor.rowCount) return false;
+      const current = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE token_hash=$1 AND user_id=$2 FOR UPDATE`, [input.tokenHash, input.userId],
+      );
+      const challenge = current.rows[0];
+      if (!challenge || challenge.purpose !== 'enroll' || challenge.method !== null
+        || challenge.consumed_at || challenge.expires_at <= new Date()
+        || challenge.failed_attempts >= MFA_MAX_FAILED_ATTEMPTS) return false;
+      const factor = await client.query(
+        'SELECT state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [input.userId],
+      );
+      if (factor.rows[0]?.state === 'active') return false;
+      await client.query(
+        `INSERT INTO secure_guard_mfa_settings
+         (user_id, method, state, totp_ciphertext, totp_nonce, totp_tag, key_version)
+         VALUES ($1,$2,'enrolling',$3,$4,$5,$6)
+         ON CONFLICT (user_id) DO UPDATE SET
+         method=EXCLUDED.method, state='enrolling',
+         totp_ciphertext=EXCLUDED.totp_ciphertext, totp_nonce=EXCLUDED.totp_nonce,
+         totp_tag=EXCLUDED.totp_tag, key_version=EXCLUDED.key_version,
+         last_totp_step=NULL, updated_at=now()`,
+        [input.userId, input.method, input.totpCiphertext ?? null,
+          input.totpNonce ?? null, input.totpTag ?? null, input.keyVersion ?? null],
+      );
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET method=$1 WHERE token_hash=$2',
+        [input.method, input.tokenHash],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, 'mfa.enroll.started', 'success')",
+        [input.userId],
+      );
       return true;
     });
   }
@@ -120,9 +184,11 @@ export class SecureGuardRepo {
 
   // Replacement email OTP invalidates the previous code; failures never extend TTL.
   async mfaRecordEmailOtp(
-    userId: string, tokenHash: string, otpHmac: string, at = new Date(),
-  ): Promise<'recorded' | 'denied' | 'rate_limited'> {
-    return this.withMfaTransaction<'recorded' | 'denied' | 'rate_limited'>(async (client) => {
+    userId: string, tokenHash: string, otpHmac: string | null, at = new Date(),
+  ): Promise<'recorded' | 'denied' | 'rate_limited' | { status: 'reserved'; sendCount: number }> {
+    return this.withMfaTransaction<
+      'recorded' | 'denied' | 'rate_limited' | { status: 'reserved'; sendCount: number }
+    >(async (client) => {
       const actor = await client.query(
         "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE", [userId],
       );
@@ -133,17 +199,67 @@ export class SecureGuardRepo {
       );
       const row = rows[0];
       if (!row || row.method !== 'email' || row.consumed_at || row.expires_at <= at
-        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS) return 'denied';
+        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS
+        || (row.purpose !== 'login' && row.purpose !== 'enroll')) return 'denied';
+      const factor = await client.query(
+        'SELECT method, state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE',
+        [userId],
+      );
+      const expected = row.purpose === 'login' ? 'active' : 'enrolling';
+      if (factor.rows[0]?.method !== 'email' || factor.rows[0]?.state !== expected) {
+        return 'denied';
+      }
       if (Number(row.send_count) >= MFA_MAX_EMAIL_SENDS
         || (row.last_sent_at && at.getTime() - row.last_sent_at.getTime() < MFA_EMAIL_RESEND_INTERVAL_MS)) {
         return 'rate_limited';
       }
-      await client.query(
+      const changed = await client.query(
         `UPDATE secure_guard_mfa_challenges
            SET otp_hmac=$1, send_count=send_count+1, last_sent_at=$2
-         WHERE token_hash=$3`, [otpHmac, at, tokenHash],
+         WHERE token_hash=$3 RETURNING send_count`, [otpHmac, at, tokenHash],
       );
-      return 'recorded';
+      // Null stores no valid code while delivery is pending or uncertain.
+      return otpHmac === null
+        ? { status: 'reserved', sendCount: Number(changed.rows[0].send_count) }
+        : 'recorded';
+    });
+  }
+
+
+  // Delivery must be acknowledged BEFORE an email OTP hash becomes verifiable.
+  // If SMTP fails/unknown, otp_hmac stays NULL and never authenticates.
+  async mfaConfirmEmailDelivery(
+    userId: string, tokenHash: string, otpHmac: string, reservedSendCount: number,
+    at = new Date(),
+  ): Promise<boolean> {
+    if (!/^[a-f0-9]{64}$/.test(otpHmac) || !Number.isInteger(reservedSendCount)
+      || reservedSendCount < 1 || reservedSendCount > MFA_MAX_EMAIL_SENDS) return false;
+    return this.withMfaTransaction(async (client) => {
+      const actor = await client.query(
+        "SELECT id FROM portal_users WHERE id=$1 AND status='active' FOR UPDATE",
+        [userId],
+      );
+      if (!actor.rowCount) return false;
+      const result = await client.query(
+        `SELECT * FROM secure_guard_mfa_challenges
+         WHERE token_hash=$1 AND user_id=$2 FOR UPDATE`, [tokenHash, userId],
+      );
+      const row = result.rows[0];
+      if (!row || row.consumed_at || row.expires_at <= at
+        || row.method !== 'email' || row.otp_hmac !== null
+        || Number(row.send_count) !== reservedSendCount
+        || Number(row.failed_attempts) >= MFA_MAX_FAILED_ATTEMPTS
+        || (row.purpose !== 'login' && row.purpose !== 'enroll')) return false;
+      const setting = await client.query(
+        'SELECT method, state FROM secure_guard_mfa_settings WHERE user_id=$1 FOR UPDATE', [userId],
+      );
+      const expectedState = row.purpose === 'login' ? 'active' : 'enrolling';
+      if (setting.rows[0]?.method !== 'email' || setting.rows[0]?.state !== expectedState) return false;
+      await client.query(
+        'UPDATE secure_guard_mfa_challenges SET otp_hmac=$1 WHERE token_hash=$2',
+        [otpHmac, tokenHash],
+      );
+      return true;
     });
   }
 
@@ -153,6 +269,7 @@ export class SecureGuardRepo {
     verify: (
       setting: SecureGuardMfaSetting | null, challenge: SecureGuardMfaChallenge,
     ) => Promise<{ valid: boolean; totpStep?: bigint }> | { valid: boolean; totpStep?: bigint };
+    enrollmentRecoveryHashes?: string[];
   }): Promise<SecureGuardMfaChallengeResult> {
     return this.withMfaTransaction<SecureGuardMfaChallengeResult>(async (client) => {
       const actor = await client.query(
@@ -192,9 +309,30 @@ export class SecureGuardRepo {
              SET failed_attempts = LEAST(failed_attempts + 1, $1)
            WHERE token_hash=$2`, [MFA_MAX_FAILED_ATTEMPTS, input.tokenHash],
         );
+        await client.query(
+          "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, $2, 'denied')",
+          [input.userId, input.purpose === 'enroll' ? 'mfa.enroll.verify' : 'mfa.login.verify'],
+        );
         return { status: 'invalid' };
       }
-      if (step !== undefined) {
+      if (input.purpose === 'enroll') {
+        const hashes = input.enrollmentRecoveryHashes;
+        if (!hashes || hashes.length !== 10 || new Set(hashes).size !== 10
+          || hashes.some((hash) => !/^[a-f0-9]{64}$/.test(hash))) {
+          throw new Error('MFA_ENROLLMENT_RECOVERY_HASHES_INVALID');
+        }
+        await client.query(
+          "UPDATE secure_guard_mfa_settings SET state='active', last_totp_step=$1, updated_at=now() WHERE user_id=$2",
+          [step?.toString() ?? null, input.userId],
+        );
+        await client.query('DELETE FROM secure_guard_mfa_recovery_codes WHERE user_id=$1', [input.userId]);
+        for (const hash of hashes) {
+          await client.query(
+            'INSERT INTO secure_guard_mfa_recovery_codes(user_id,code_hmac) VALUES ($1,$2)',
+            [input.userId, hash],
+          );
+        }
+      } else if (step !== undefined) {
         await client.query(
           'UPDATE secure_guard_mfa_settings SET last_totp_step=$1, updated_at=now() WHERE user_id=$2',
           [step.toString(), input.userId],
@@ -203,6 +341,10 @@ export class SecureGuardRepo {
       await client.query(
         'UPDATE secure_guard_mfa_challenges SET consumed_at=$1 WHERE token_hash=$2',
         [now, input.tokenHash],
+      );
+      await client.query(
+        "INSERT INTO secure_guard_audit_events(actor_user_id, action, result) VALUES ($1, $2, 'success')",
+        [input.userId, input.purpose === 'enroll' ? 'mfa.enroll.verify' : 'mfa.login.verify'],
       );
       return { status: 'verified' };
     });

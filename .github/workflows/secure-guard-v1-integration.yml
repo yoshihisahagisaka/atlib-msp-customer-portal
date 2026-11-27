@@ -5,6 +5,7 @@ on:
     branches:
       - feature/secure-guard-daily-management
       - feat/sg-v1-dedicated-integration-20261112
+      - feat/secure-guard-mfa-v1-20261127
     paths:
       - 'src/**'
       - 'test/**'
@@ -21,6 +22,7 @@ on:
     branches:
       - feat/sg-v1-dedicated-integration-20261112
       - feat/secure-guard-mfa-v1-20261127
+      - feat/secure-guard-mfa-m2-20261127
 
 permissions:
   contents: read
