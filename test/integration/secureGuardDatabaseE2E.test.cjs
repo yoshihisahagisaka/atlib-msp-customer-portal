@@ -854,6 +854,7 @@ test('PostgreSQL 16: SG baseline, idempotent runner and role/database isolation'
         await fixtureDb.query('DELETE FROM secure_guard_mfa_challenges WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
         await fixtureDb.query('DELETE FROM secure_guard_mfa_recovery_codes WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
         await fixtureDb.query('DELETE FROM secure_guard_mfa_settings WHERE user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
+        await fixtureDb.query('DELETE FROM secure_guard_audit_events WHERE actor_user_id = ANY($1::uuid[])', [[ids.userA, ids.userB]]);
         await fixtureDb.query('DELETE FROM msp_role_grants WHERE user_id = $1', [ids.userA]);
         await fixtureDb.query('DELETE FROM customer_memberships WHERE id = ANY($1::uuid[])', [[ids.memberA, ids.memberB]]);
         await fixtureDb.query('DELETE FROM customer_organizations WHERE id = ANY($1::uuid[])', [[ids.orgA, ids.orgB]]);
