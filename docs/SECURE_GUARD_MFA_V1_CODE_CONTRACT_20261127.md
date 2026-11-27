@@ -16,8 +16,8 @@
 
 1. DBは既存SG DBに**MFA専用3表のみ**追加する。`secure_guard_mfa_settings`（Identityに現在1設定）、`secure_guard_mfa_challenges`（使い捨て/失効/試行）、`secure_guard_mfa_recovery_codes`（バックアップコードハッシュ）。MFA待ち状態はsettings.stateに置き、4番目の状態表は作らない。
 2. ChallengeはDBの行ロックとトランザクションで制御し、Redis、Queue、別サービス、別テナントDB、別MFA Identityを導入しない。
-3. TOTP秘密だけをAES-256-GCMで暗号化し、暗号鍵はDB外のSecret注入、キー版数をsettingsに保持する。メールOTP/バックアップコード/Challenge tokenは平文保存しない。
-4. MFAの認証成功後だけ既存JWTを発行し、JWTに `mfaVerified: true` と `mfaMethod: 'totp'|'email'` を付ける。`verifySession()`はこのclaimを必須検査し、以前のパスワードのみのJWTを拒否する。Membership/RoleはJWTに載せず毎リクエストDB確認を維持する。
+3. TOTP秘密だけをAES-256-GCMで暗号化（AADは `user_id|secure_guard_totp_v1` に固定）し、暗号鍵はDB外のSecret注入、キー版数をsettingsに保持する。メールOTP/バックアップコード/Challenge tokenは平文保存しない。
+4. MFAの認証成功後だけ既存JWTを発行し、JWTに `mfaVerified: true` と `mfaMethod: 'totp'|'email'` を付ける。`verifySession()`はこのclaimを必須検査し、以前のパスワードのみのJWTを拒否する。`verifyActiveSession()`は既存user/session_versionに加えsettings.state=`active`をDBで再確認する。Membership/RoleはJWTに載せず毎リクエストDB確認を維持する。
 5. 既存JWT期限（環境設定、現行は24h）・CookieのSecure/HttpOnly/SameSiteを維持する。MFA前のChallengeは通常Cookieとは異なるランダム不透明tokenとし、通常APIでは受理しない。
 
 ## 3. 固定するセキュリティ数値・暗号仕様
@@ -55,8 +55,9 @@ CREATE TABLE secure_guard_mfa_settings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (
-    (method='totp' AND totp_ciphertext IS NOT NULL AND totp_nonce IS NOT NULL AND totp_tag IS NOT NULL AND key_version IS NOT NULL)
-    OR (method='email' AND totp_ciphertext IS NULL AND totp_nonce IS NULL AND totp_tag IS NULL AND key_version IS NULL)
+    (state='reset_required' AND totp_ciphertext IS NULL AND totp_nonce IS NULL AND totp_tag IS NULL AND key_version IS NULL)
+    OR (state<>'reset_required' AND method='totp' AND totp_ciphertext IS NOT NULL AND totp_nonce IS NOT NULL AND totp_tag IS NOT NULL AND key_version IS NOT NULL)
+    OR (state<>'reset_required' AND method='email' AND totp_ciphertext IS NULL AND totp_nonce IS NULL AND totp_tag IS NULL AND key_version IS NULL)
   )
 );
 CREATE TABLE secure_guard_mfa_challenges (
@@ -99,9 +100,9 @@ overage roleにはこの3表の権限を与えず、Ledger・DDLへのruntime権
 | メール方式登録開始 | factor `enrolling`→登録済みemailにOTP送信→本人照合 | **発行禁止** |
 | 登録検証成功 | factor `active`、Challengeを原子的に消費、回復コード10個生成/ハッシュ保存・一回だけ返す | **この時だけ発行** |
 | 通常MFA検証成功 | Identity/state/Challenge/試行数/コード/前回TOTP stepを同一transactionで照合・消費 | **この時だけ発行** |
-| バックアップコードで復旧 | コード1つを消費、factor `reset_required`、未消費Challenge停止、`session_version`加算、再登録Challenge発行 | **発行禁止** |
+| バックアップコードで復旧 | コード1つを消費、factor `reset_required`、未消費Challenge停止、TOTP暗号化秘密を消去、`session_version`加算、再登録Challenge発行 | **発行禁止** |
 | org_adminの再認証 | `admin_reauth` Challengeが`verified_at`保持、5分有効 | 新規JWT発行不要 |
-| 対象MFAリセット | reauth proof消費、対象factor `reset_required`、全Challenge/コード失効、`session_version`加算、監査 | **対象へ発行禁止** |
+| 対象MFAリセット | reauth proof消費、対象factor `reset_required`（暗号化秘密消去）、全Challenge/コード失効、`session_version`加算、監査 | **対象へ発行禁止** |
 
 暗号化済みfactorがなくても、パスワード成功時に通常Cookieを返すfallbackは禁止。Challengeが期限切れ、結果不明、競合、DB接続不可ならfail-closed。メール未到達や送信結果不明も検証成功扱いしない。再送によって旧OTPを無効化する。バックアップコードは成功消費で再登録へ進むものでありMFA迂回手段ではない。
 
@@ -128,6 +129,7 @@ overage roleにはこの3表の権限を与えず、Ledger・DDLへのruntime権
 - `migration-manifests/secure-guard-staging-001-006.json`、必要な固定Manifest参照（**新しいoffline imageでのみ**）。旧001–005 ManifestやSQLを変更しない
 - `src/domain/secureGuard.ts`：`SecureGuardSessionPayload`にMFA claimを追加
 - `src/domain/secureGuardMfa.ts`（新規）：上述固定型・定数・状態
+- `migrations/secure_guard_runner.ts`、`Dockerfile.secure-guard-migration`、`scripts/readiness/verifySecureGuardMigrationManifest.cjs`の**オフライン006用の参照更新だけ**。既存001–005のSHA判定と実Staging固定Job/Templateは変更しない。006ファイルが増えると旧001–005 Manifestのままではオフライン実行がSTOPするため、stacked MFA PR内のデフォルトManifestを001–006へ固定し、CIも期待ファイルを更新する
 - `src/services/secureGuardMfa.ts`（新規）：Challenge、TOTP、OTP、回復、暗号とMFA状態遷移を担当。別認証基盤を作らない
 - `src/services/secureGuardIdentityService.ts`：`login`、`acceptInvitation`をChallenge開始へ置換、JWT発行の唯一の関数をMFA成功内部に限定、旧JWT reject
 - `src/services/secureGuardRepo.ts`：MFA専用SQLとトランザクション。既存テナントSQLの変更なし
