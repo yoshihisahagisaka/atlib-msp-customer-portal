@@ -1089,6 +1089,45 @@ test('PostgreSQL 16: MFA 006 fresh, upgrade, exact ACL and identity-scoped atomi
         })).status, 'invalid');
         await assert.rejects(repo.mfaPutSetting({ userId, method: 'totp', state: 'active' }),
           (error) => error.code === '23514');
+
+        // M2 enrollment is a single transaction: the factor becomes active
+        // only when the enrolled OTP is verified and 10 hashes are persisted.
+        const enroll = createMfaChallenge('enroll');
+        assert.equal(await repo.mfaIssueChallenge({
+          userId, tokenHash: enroll.tokenHash, purpose: 'enroll',
+          method: null, expiresAt: enroll.expiresAt,
+        }), true);
+        assert.equal(await repo.mfaStartEnrollment({
+          userId, tokenHash: enroll.tokenHash, method: 'email',
+        }), true);
+        assert.equal(await repo.mfaStartEnrollment({
+          userId, tokenHash: enroll.tokenHash, method: 'email',
+        }), false, 'an enrolled method and TOTP secret cannot be fetched twice');
+        assert.equal((await repo.mfaGetSetting(userId)).state, 'enrolling');
+        const enrollCode = mfa.generateEmailOtp();
+        const enrollMac = mfa.emailOtpHmac(userId, enroll.tokenHash, enrollCode);
+        assert.equal(await repo.mfaRecordEmailOtp(userId, enroll.tokenHash, enrollMac), 'recorded');
+        const enrollment = mfa.createRecoveryCodes(userId);
+        const activation = await repo.mfaConsumeChallenge({
+          userId, tokenHash: enroll.tokenHash, purpose: 'enroll',
+          enrollmentRecoveryHashes: enrollment.hashes,
+          verify: (_setting, current) => ({
+            valid: mfa.matchesEmailOtp(userId, current.tokenHash, enrollCode, current.otpHmac || ''),
+          }),
+        });
+        assert.equal(activation.status, 'verified');
+        assert.equal((await repo.mfaGetSetting(userId)).state, 'active');
+        const storedCodes = await pool.query(
+          'SELECT code_hmac FROM secure_guard_mfa_recovery_codes WHERE user_id=$1 ORDER BY code_hmac',
+          [userId],
+        );
+        assert.equal(storedCodes.rowCount, 10);
+        assert.deepEqual(storedCodes.rows.map((row) => row.code_hmac).sort(), enrollment.hashes.slice().sort());
+        assert.equal((await repo.mfaConsumeChallenge({
+          userId, tokenHash: enroll.tokenHash, purpose: 'enroll',
+          enrollmentRecoveryHashes: enrollment.hashes,
+          verify: () => ({ valid: true }),
+        })).status, 'consumed');
       } finally { await pool.end(); }
 
       // Old approved 001-005 followed by offline 006, with no re-application of 005.
