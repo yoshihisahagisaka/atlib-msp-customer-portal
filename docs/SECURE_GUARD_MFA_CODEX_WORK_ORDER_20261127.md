@@ -29,8 +29,8 @@
 - `migration-manifests/secure-guard-staging-001-006.json`（001–005 SHAは固定。006だけ実ファイルから既存CRLF規則で計算）
 - `src/domain/secureGuardMfa.ts`、`src/services/secureGuardMfa.ts`
 - `src/services/secureGuardRepo.ts`（MFA専用SQLのみ）
-- `test/secureGuardMfa*.test.cjs`、`test/integration/secureGuardDatabaseE2E.test.cjs`、移行イメージのオフライン受入に必要な最小ファイル
-- 既存のMigrations全件検証器は旧`001–005`を壊さない。006を使用する**新しいoffline専用**設定・manifestを追加するだけ。
+- `test/secureGuardMfa*.test.cjs`、`test/integration/secureGuardDatabaseE2E.test.cjs`、既存Migrations SQLファイル一覧を検証するテスト、移行イメージのオフライン受入に必要な最小ファイル
+- 006を `migrations/secure_guard/` に追加した場合、現在のrunner（ディレクトリ全件列挙）と旧001–005 manifestの組み合わせは必ずSTOPする。**MFA stacked PR内のオフライン実行に限り** `migrations/secure_guard_runner.ts`、`Dockerfile.secure-guard-migration`、`scripts/readiness/verifySecureGuardMigrationManifest.cjs`のManifest参照を001–006へ整合させ、CIの期待ファイル/旧テストを更新する。001–005のSQL/SHAは一切変えない。既存PR #6・実GCP Job Template/Deploy定義は更新せず、S3での005単独適用経路を温存する。
 
 禁止：
 - DB Migrationを実Stagingへ適用、既存001–005 SQL/SHA書換え、メール/GCP実送信、JWT/ログインの仕様変更（M1中のみ）、別認証基盤、複数Tenant DB、Redis、Queue。
