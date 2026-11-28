@@ -9,6 +9,7 @@ on:
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
+      - fix/secure-guard-app-deps-security-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -17,6 +18,9 @@ on:
       - 'migration-runtime/**'
       - 'migration-manifests/secure-guard-staging-001-005.json'
       - 'Dockerfile'
+      - 'batch/**'
+      - 'scripts/readiness/monthlyReportPuppeteer25Smoke.cjs'
+      - 'tsconfig.batch.json'
       - 'Dockerfile.secure-guard-migration'
       - 'scripts/readiness/verifySecureGuardMigrationManifest.cjs'
       - 'package.json'
@@ -30,6 +34,7 @@ on:
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
+      - chore/secure-guard-monthly-batch-node24-20261128
 
 permissions:
   contents: read
@@ -236,3 +241,75 @@ jobs:
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
 
+  # The monthly-report renderer is a SEPARATE batch image, not the Secure Guard web app.
+  # This job uses a network-isolated synthetic HTML page, never customer data.
+  monthly-report-browser-compatibility:
+    if: github.event_name == 'push' && github.ref_name == 'chore/secure-guard-monthly-batch-node24-20261128'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Compile existing monthly-report batch with locked dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build:batch
+      - name: Build original monthly-report batch Dockerfile with Node 24
+        run: >-
+          docker build --file batch/Dockerfile
+          --tag secure-guard-monthly-batch-ci:${{ github.sha }} .
+      - name: Offline Puppeteer 25 browser and Japanese PDF smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            --mount "type=bind,source=$PWD/scripts/readiness/monthlyReportPuppeteer25Smoke.cjs,target=/app/monthlyReportPuppeteer25Smoke.cjs,readonly" \
+            --entrypoint node secure-guard-monthly-batch-ci:${{ github.sha }} \
+            /app/monthlyReportPuppeteer25Smoke.cjs
+      - name: Trivy monthly batch image security report (Critical / High)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # signed v0.36.0
+        with:
+          scan-type: image
+          image-ref: secure-guard-monthly-batch-ci:${{ github.sha }}
+          format: json
+          output: secure-guard-monthly-batch-vulnerabilities.json
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          scanners: vuln
+          ignore-unfixed: 'false'
+          exit-code: '0'
+      - name: Preserve monthly batch image security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-guard-monthly-batch-security-${{ github.run_id }}
+          path: secure-guard-monthly-batch-vulnerabilities.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Enforce monthly batch candidate image security gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s secure-guard-monthly-batch-vulnerabilities.json || {
+            echo "MONTHLY_BATCH_IMAGE_GATE=STOP_NO_REPORT"; exit 1;
+          }
+          jq -e 'type=="object" and (.Results | type=="array")' \
+            secure-guard-monthly-batch-vulnerabilities.json >/dev/null
+          critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' secure-guard-monthly-batch-vulnerabilities.json)"
+          high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' secure-guard-monthly-batch-vulnerabilities.json)"
+          echo "MONTHLY_BATCH_IMAGE_CRITICAL=$critical MONTHLY_BATCH_IMAGE_HIGH=$high"
+          jq -r '.Results[]? | (.Target//"unknown") as $t | (.Type//"unknown") as $k | .Vulnerabilities[]? |
+            select(.Severity=="CRITICAL" or .Severity=="HIGH") |
+            [.Severity,.VulnerabilityID,.PkgName,.InstalledVersion,(.FixedVersion//"UNFIXED"),$k,$t] | @tsv' \
+            secure-guard-monthly-batch-vulnerabilities.json
+          if [[ "$critical" != "0" || "$high" != "0" ]]; then
+            echo "MONTHLY_BATCH_IMAGE_GATE=STOP"
+            exit 1
+          fi
+          echo "MONTHLY_BATCH_IMAGE_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
