@@ -11,6 +11,7 @@ on:
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
       - chore/secure-guard-app-base-digest-20261128
+      - fix/sg-app-gcp-scan-cves-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -35,6 +36,7 @@ on:
       - fix/secure-guard-app-deps-security-20261128
       - chore/secure-guard-app-base-digest-20261128
       - fix/sg-app-gcp-scan-cves-20261128
+      - fix/sg-migration-distroless-pinned-20261128
 
 permissions:
   contents: read
@@ -126,6 +128,26 @@ jobs:
         env:
           CI: 'true'
           SECURE_GUARD_MIGRATION_IMAGE_E2E_ENABLED: 'true'
+      - name: Verify pinned Distroless migration runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fxq 'FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:774b396818c5dbc4d9aba312b84d548045939ca6efdadc840a928f205116fc74' Dockerfile.secure-guard-migration
+          label="$(docker image inspect secure-guard-migration-ci:current --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "$label" == "$REVIEWED_SHA" ]]
+          docker run --rm --network none --entrypoint node secure-guard-migration-ci:current -e '
+            const fs = require("node:fs");
+            const assert = require("node:assert/strict");
+            assert.match(process.versions.node, /^24\./);
+            assert.equal(process.getuid(), 65532);
+            assert.deepEqual(require("/app/package.json").dependencies, {pg:"8.22.0"});
+            const expected = {libc6:"2.41-12+deb13u5",libzstd1:"1.5.7+dfsg-1+deb13u1",libssl3t64:"3.5.9-1~deb13u1"};
+            for (const [name, version] of Object.entries(expected)) {
+              assert.equal(fs.readFileSync("/var/lib/dpkg/status.d/" + name,"utf8").match(/^Version:\s*(.+)$/m)?.[1], version, name);
+            }
+            for (const p of ["/bin/sh","/bin/bash","/usr/bin/npm","/usr/local/bin/npm","/nodejs/bin/npm","/usr/local/lib/node_modules/npm","/app/dist/server.js"]) assert.equal(fs.existsSync(p), false, p);
+          '
+          echo "SG_MIGRATION_DISTROLESS_RUNTIME=PASS"
       - name: Resolve upstream Node 24 Alpine base digest (read only)
         shell: bash
         run: |
@@ -293,3 +315,40 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
+
+      # Capture all severities for review. No security exception is granted by CI.
+      - name: Trivy migration image security report (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: secure-guard-migration-ci:current
+          format: json
+          output: secure-guard-migration-image-vulnerabilities.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          vuln-type: os,library
+          scanners: vuln
+          ignore-unfixed: 'false'
+          exit-code: '0'
+      - name: Preserve migration image scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-guard-migration-image-security-${{ github.run_id }}
+          path: secure-guard-migration-image-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Enforce migration image security gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=secure-guard-migration-image-vulnerabilities.json
+          test -s "$report"
+          jq -e 'type=="object" and (.Results|type=="array") and (.Results|length>0)' "$report" >/dev/null
+          jq -r '[.Results[]?.Vulnerabilities[]?] | group_by(.Severity // "UNKNOWN") | map({severity:(.[0].Severity // "UNKNOWN"),count:length})' "$report"
+          jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity // "UNKNOWN") as $s | $s=="CRITICAL" or $s=="HIGH" or $s=="UNKNOWN") | [.Severity,.VulnerabilityID,.PkgName,.InstalledVersion,(.FixedVersion // "UNFIXED")] | @tsv' "$report"
+          count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity // "UNKNOWN") as $s | $s=="CRITICAL" or $s=="HIGH" or $s=="UNKNOWN")]|length' "$report")"
+          if [[ "$count" != 0 ]]; then
+            echo "SG_MIGRATION_IMAGE_SECURITY=STOP_RESIDUAL_REVIEW_REQUIRED"
+            exit 1
+          fi
+          echo "SG_MIGRATION_IMAGE_SECURITY=CI_PASS_GCP_SCAN_STILL_REQUIRED"
