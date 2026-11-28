@@ -9,6 +9,7 @@ on:
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
+      - fix/secure-guard-app-deps-security-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -30,6 +31,7 @@ on:
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
+      - chore/secure-guard-app-base-digest-20261128
 
 permissions:
   contents: read
@@ -100,6 +102,25 @@ jobs:
         env:
           CI: 'true'
           SECURE_GUARD_MIGRATION_IMAGE_E2E_ENABLED: 'true'
+      - name: Resolve upstream Node 24 Alpine base digest (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_count="$(awk '$1=="FROM" && $2 ~ /^node:24-alpine/ {print $2}' Dockerfile | wc -l)"
+          base="$(awk '$1=="FROM" && $2 ~ /^node:24-alpine/ {print $2}' Dockerfile | sort -u)"
+          [[ "$base_count" == "2" && "$(printf '%s\n' "$base" | wc -l)" == "1" ]] || {
+            echo "APP_BASE_IMAGE=STOP_MISMATCH"; exit 1;
+          }
+          info="$(docker buildx imagetools inspect "$base")"
+          digest="$(printf '%s\n' "$info" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "APP_BASE_IMAGE=STOP_UNKNOWN_DIGEST"; exit 1;
+          }
+          docker buildx imagetools inspect --raw "$base" |
+            jq -e '[.manifests[]? | select(.platform.os=="linux" and .platform.architecture=="amd64")] | length > 0' >/dev/null
+          echo "APP_NODE24_BASE_REF=$base"
+          echo "APP_NODE24_BASE_DIGEST=$digest"
+          echo "APP_NODE24_BASE_AMD64=PASS"
       - name: Build current application image (no new service or Dockerfile)
         run: >-
           docker build --file Dockerfile
