@@ -34,5 +34,8 @@ RUN npm ci --omit=dev \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build /app/dist ./dist
 COPY public ./public
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+USER node
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
