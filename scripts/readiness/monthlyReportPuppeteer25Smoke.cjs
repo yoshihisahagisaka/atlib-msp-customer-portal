@@ -30,7 +30,7 @@ async function main() {
         'window.refreshReportData=()=>{document.body.dataset.reportRefreshed="yes"};',
         'window.onWanIfChange=()=>{document.body.dataset.wanUpdated="yes"};',
         'window.applyOpsHistoryEntries=entries=>{document.querySelector("#operations").textContent=entries[0].description};',
-        '// Only the call signature is tested; real Zabbix PPTX export is external.',
+        '/* Only the call signature is tested; real Zabbix PPTX export is external. */',
         'window.exportToPPTX=({returnBase64})=>returnBase64?btoa("synthetic-pptx-contract-only"):"";',
         '</script></section></body></html>',
       ].join('');
