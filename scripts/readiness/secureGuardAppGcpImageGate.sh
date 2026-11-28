@@ -8,7 +8,7 @@ PROJECT='msp-zabbix'
 REGION='asia-northeast1'
 BASE='sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5'
 LOCK='31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591'
-HEAD="$1"
+HEAD="${1:-}"
 stop() { echo "[STOP] $*" >&2; exit 1; }
 [[ "$HEAD" =~ ^[a-f0-9]{40}$ ]] || stop 'Supply reviewed 40-character PR18 HEAD'
 for tool in gh git gcloud jq tar sha256sum; do
