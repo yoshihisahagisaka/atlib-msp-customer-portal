@@ -102,14 +102,18 @@ test('dedicated migration artifact has no web startup and validates its manifest
     fs.readFileSync(path.join(root, 'migration-runtime/package-lock.json'), 'utf8'),
   );
   assert.match(dockerfile, /FROM node:24-bookworm-slim AS build/);
-  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs24-debian13:nonroot/);
-  assert.match(dockerfile, /PATH=\/nodejs\/bin/);
+  assert.match(dockerfile, /FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5/);
+  assert.match(dockerfile, /ENTRYPOINT \["node"\]/);
+  assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
+  for (const pin of ['openssl=3.5.9-r1', 'libcrypto3=3.5.9-r1', 'libssl3=3.5.9-r1', 'zlib=1.4-r0']) {
+    assert.ok(dockerfile.includes(pin), 'Missing pinned runtime security package: ' + pin);
+  }
   assert.match(dockerfile, /npm run build:secure-guard-migration/);
   assert.match(dockerfile, /verifySecureGuardMigrationManifest\.cjs/);
-  assert.match(dockerfile, /COPY --from=build --chown=nonroot:nonroot \/app\/migrations\/secure_guard \.\/migrations\/secure_guard/);
-  assert.match(dockerfile, /USER nonroot/);
+  assert.match(dockerfile, /COPY --from=build --chown=node:node \/app\/migrations\/secure_guard \.\/migrations\/secure_guard/);
+  assert.match(dockerfile, /USER node/);
   assert.match(dockerfile, /secure_guard_runner\.js/);
-  assert.doesNotMatch(dockerfile, /EXPOSE|dist\/server\.js|ts-node|node:20|node:24-alpine/);
+  assert.doesNotMatch(dockerfile, /EXPOSE|dist\/server\.js|ts-node|node:20|apk upgrade/);
   assert.deepEqual(runtimePackage.dependencies, { pg: '8.22.0' });
   assert.equal(runtimeLock.packages['node_modules/pg'].version, '8.22.0');
   assert.deepEqual(Object.keys(runtimeLock.packages[''].dependencies), ['pg']);

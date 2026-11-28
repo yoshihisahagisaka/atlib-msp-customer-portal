@@ -11,6 +11,7 @@ on:
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
       - chore/secure-guard-app-base-digest-20261128
+      - fix/sg-app-gcp-scan-cves-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -35,6 +36,7 @@ on:
       - fix/secure-guard-app-deps-security-20261128
       - chore/secure-guard-app-base-digest-20261128
       - fix/sg-app-gcp-scan-cves-20261128
+      - test/sg-migration-alpine-runtime-20261128
 
 permissions:
   contents: read
@@ -126,6 +128,55 @@ jobs:
         env:
           CI: 'true'
           SECURE_GUARD_MIGRATION_IMAGE_E2E_ENABLED: 'true'
+      - name: Verify alternative migration runtime (review only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint node secure-guard-migration-ci:current -e '
+            const fs = require("node:fs");
+            const assert = require("node:assert/strict");
+            assert.match(process.versions.node, /^24\./);
+            assert.equal(process.getuid(), 1000);
+            assert.deepEqual(require("/app/package.json").dependencies, {pg:"8.22.0"});
+            for (const p of ["/usr/local/bin/npm", "/usr/local/bin/npx", "/usr/local/lib/node_modules/npm", "/app/dist/server.js"]) assert.equal(fs.existsSync(p), false, p);
+          '
+          label="$(docker image inspect secure-guard-migration-ci:current --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "$label" == "$REVIEWED_SHA" ]]
+          docker run --rm --entrypoint sh secure-guard-migration-ci:current -ec 'apk info -e openssl libcrypto3 libssl3 zlib'
+          echo "SG_MIGRATION_ALTERNATIVE_RUNTIME=PASS"
+      - name: Trivy migration image security report (Critical / High)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: secure-guard-migration-ci:current
+          format: json
+          output: secure-guard-migration-image-vulnerabilities.json
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          scanners: vuln
+          ignore-unfixed: 'false'
+          exit-code: '0'
+      - name: Preserve migration image scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-guard-migration-image-security-${{ github.run_id }}
+          path: secure-guard-migration-image-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Enforce alternative migration image security gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=secure-guard-migration-image-vulnerabilities.json
+          test -s "$report"
+          jq -e 'type=="object" and (.Results|type=="array") and (.Results|length>0)' "$report" >/dev/null
+          critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")]|length' "$report")"
+          high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")]|length' "$report")"
+          echo "SG_MIGRATION_IMAGE_CRITICAL=$critical SG_MIGRATION_IMAGE_HIGH=$high"
+          [[ "$critical" == 0 && "$high" == 0 ]]
+          echo "SG_MIGRATION_ALTERNATIVE=CI_PASS_REVIEW_ONLY_GCP_SCAN_AND_OWNER_DECISION_REQUIRED"
+
       - name: Resolve upstream Node 24 Alpine base digest (read only)
         shell: bash
         run: |
