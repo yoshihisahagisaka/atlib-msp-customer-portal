@@ -7,6 +7,7 @@ on:
       - feat/sg-v1-dedicated-integration-20261112
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
+      - feat/secure-guard-mfa-m3-20261127
     paths:
       - 'src/**'
       - 'test/**'
@@ -14,6 +15,7 @@ on:
       - 'migrations/secure_guard_runner.ts'
       - 'migration-runtime/**'
       - 'migration-manifests/secure-guard-staging-001-005.json'
+      - 'Dockerfile'
       - 'Dockerfile.secure-guard-migration'
       - 'scripts/readiness/verifySecureGuardMigrationManifest.cjs'
       - 'package.json'
@@ -25,6 +27,7 @@ on:
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
+      - chore/secure-guard-node24-release-candidate-20261128
 
 permissions:
   contents: read
@@ -82,6 +85,16 @@ jobs:
         run: >-
           docker build --file Dockerfile
           --tag secure-guard-app-ci:${{ github.sha }} .
+      - name: Verify supported app container runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(docker run --rm --entrypoint node secure-guard-app-ci:${{ github.sha }} -p 'process.versions.node')"
+          [[ "$version" == 24.* ]] || {
+            echo "STOP: App runtime is not Node 24 LTS"
+            exit 1
+          }
+          echo "NODE_APP_RUNTIME=24_LTS_PASS"
       - name: Smoke current application image with isolated Secure Guard Staging profile
         shell: bash
         run: |
@@ -138,3 +151,60 @@ jobs:
           expect_status 503 /api/secure-guard/agents/00000000-0000-4000-8000-000000000000/queued-uninstall POST
           expect_status 503 /api/secure-guard/admin/dnsfilter/organizations POST
           echo "PASS: existing image, isolated Secure Guard, legacy routes absent, mutations denied"
+
+      # Security scan is on the built application image, not just package-lock.
+      # Never push any image or access GCP/Cloud SQL/Production.
+      - name: Trivy app image security report (Critical / High)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, signed immutable release
+        with:
+          scan-type: image
+          image-ref: secure-guard-app-ci:${{ github.sha }}
+          format: json
+          output: secure-guard-app-image-vulnerabilities.json
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          scanners: vuln
+          ignore-unfixed: 'false'
+          exit-code: '0'
+
+      - name: Keep scanner evidence for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-guard-app-image-security-${{ github.run_id }}
+          path: secure-guard-app-image-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce candidate application image security gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -s secure-guard-app-image-vulnerabilities.json ]] || {
+            echo "APP_IMAGE_SECURITY_GATE=STOP_REPORT_MISSING"
+            exit 1
+          }
+          jq -e 'type == "object" and (.Results | type == "array")' \
+            secure-guard-app-image-vulnerabilities.json >/dev/null || {
+              echo "APP_IMAGE_SECURITY_GATE=STOP_REPORT_INVALID"
+              exit 1
+            }
+          critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' secure-guard-app-image-vulnerabilities.json)"
+          high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' secure-guard-app-image-vulnerabilities.json)"
+          echo "APP_IMAGE_CRITICAL=$critical APP_IMAGE_HIGH=$high"
+          echo "=== Candidate image Critical/High findings (severity, CVE, package, installed, fixed, class, target) ==="
+          jq -r '
+            .Results[]?
+            | (.Target // "unknown") as $target
+            | (.Type // "unknown") as $class
+            | .Vulnerabilities[]?
+            | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+            | [ .Severity, .VulnerabilityID, .PkgName,
+                .InstalledVersion, (.FixedVersion // "UNFIXED"),
+                $class, $target ] | @tsv
+          ' secure-guard-app-image-vulnerabilities.json
+          if [[ "$critical" != "0" || "$high" != "0" ]]; then
+            echo "APP_IMAGE_SECURITY_GATE=STOP"
+            exit 1
+          fi
+          echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
