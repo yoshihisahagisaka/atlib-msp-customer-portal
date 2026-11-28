@@ -59,27 +59,25 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      # Read-only candidate lock resolution, never committed by CI.
-      # This conditional step is limited to the security remediation branch.
-      - name: Resolve candidate security dependency lockfile
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
+      - name: Verify reviewed lockfile is immutable
+        shell: bash
         run: |
           set -euo pipefail
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm update --package-lock-only --ignore-scripts --no-audit --no-fund
-          echo "CANDIDATE_LOCKFILE_RESOLVED=PASS"
-
-      - name: Export candidate lockfile for reviewed commit
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
-        uses: actions/upload-artifact@v4
-        with:
-          name: secure-guard-candidate-package-lock-${{ github.run_id }}
-          path: package-lock.json
-          retention-days: 14
-          if-no-files-found: error
-
+          expected="31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591"
+          actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "APP_LOCKFILE=STOP_SHA_MISMATCH"
+            exit 1
+          fi
+          echo "APP_LOCKFILE=VERIFIED"
       - name: Install locked dependencies
         run: npm ci
+      - name: Verify checkout unchanged by locked install
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- package.json package-lock.json
+          echo "APP_DEPENDENCY_LOCKFILE=IMMUTABLE_PASS"
       - name: Offline regression suite
         run: npm test
       - name: Dedicated SG migration typecheck
@@ -237,15 +235,4 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
-
-      - name: Stop until reviewed lockfile is committed
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! git diff --quiet -- package-lock.json; then
-            echo "APP_DEPENDENCY_LOCKFILE=STOP_UNCOMMITTED"
-            exit 1
-          fi
-          echo "APP_DEPENDENCY_LOCKFILE=COMMITTED"
 
