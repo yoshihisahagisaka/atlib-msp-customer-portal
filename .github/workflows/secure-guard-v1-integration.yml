@@ -83,28 +83,11 @@ jobs:
           grep -Fq "SECURE_GUARD_GATE_S3=STOP_MIGRATION_IMAGE_OPENSSL" scripts/readiness/secureGuardAppGcpImageGate.sh
           test -s cloudbuild.secure-guard-app-review.yaml
           echo "REVIEW_ONLY_GCP_GATE_STATIC=PASS"
-      - name: Resolve Zod 4 security candidate lockfile (review-only CI)
-        if: github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128'
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          node -e "const p=require('./package-lock.json');if(!p.packages['node_modules/zod']?.version?.startsWith('4.'))process.exit(1)"
-          echo "SG_ZOD4_CANDIDATE_LOCK=RESOLVED"
-      - name: Preserve candidate lockfile for reviewed commit
-        if: github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sg-zod4-security-candidate-lock-${{ github.run_id }}
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 14
       - name: Verify reviewed lockfile is immutable
-        if: ${{ !( github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128' ) }}
         shell: bash
         run: |
           set -euo pipefail
-          expected="31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591"
+          expected="c0e46f37608a4c2f75f15351220227e2eb552d3fa4e865016f1d055bbd0d30b4"
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [[ "$actual" != "$expected" ]]; then
             echo "APP_LOCKFILE=STOP_SHA_MISMATCH"
@@ -114,7 +97,6 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Verify checkout unchanged by locked install
-        if: ${{ !( github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128' ) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,7 +105,6 @@ jobs:
       - name: Offline regression suite
         run: npm test
       - name: Compile legacy monthly-report batch for Zod4 compatibility
-        if: github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128'
         run: npm run build:batch
       - name: Dedicated SG migration typecheck
         run: npm run typecheck:secure-guard-migration
@@ -312,16 +293,3 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
-      - name: STOP until Zod4 candidate lockfile is committed and reviewed
-        if: github.ref_name == 'fix/sg-app-gcp-scan-cves-20261128' || github.head_ref == 'fix/sg-app-gcp-scan-cves-20261128'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! git diff --quiet -- package.json package-lock.json; then
-            echo "SG_ZOD4_LOCKFILE=STOP_UNCOMMITTED"
-            exit 1
-          fi
-          echo "SG_ZOD4_LOCKFILE=COMMITTED_REQUIRES_FIXED_SHA_GUARD"
-          exit 1
-
-
