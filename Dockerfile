@@ -18,7 +18,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# Install once, then remove the npm CLI from the runtime image.
+# Secure Guard executes Node directly. npm's bundled dependencies contain
+# unrelated vulnerable copies of undici / brace-expansion.
+RUN npm ci --omit=dev \
+  && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build /app/dist ./dist
 COPY public ./public
 EXPOSE 8080

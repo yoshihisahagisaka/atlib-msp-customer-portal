@@ -8,6 +8,7 @@ on:
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
+      - chore/secure-guard-node24-release-candidate-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -28,6 +29,7 @@ on:
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
+      - fix/secure-guard-app-deps-security-20261128
 
 permissions:
   contents: read
@@ -57,8 +59,25 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Verify reviewed lockfile is immutable
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591"
+          actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "APP_LOCKFILE=STOP_SHA_MISMATCH"
+            exit 1
+          fi
+          echo "APP_LOCKFILE=VERIFIED"
       - name: Install locked dependencies
         run: npm ci
+      - name: Verify checkout unchanged by locked install
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- package.json package-lock.json
+          echo "APP_DEPENDENCY_LOCKFILE=IMMUTABLE_PASS"
       - name: Offline regression suite
         run: npm test
       - name: Dedicated SG migration typecheck
@@ -95,6 +114,14 @@ jobs:
             exit 1
           }
           echo "NODE_APP_RUNTIME=24_LTS_PASS"
+          docker run --rm --entrypoint sh secure-guard-app-ci:${{ github.sha }} -ec '
+            if command -v npm >/dev/null || command -v npx >/dev/null; then
+              echo "APP_RUNTIME_NPM_CLI=STOP_PRESENT"
+              exit 1
+            fi
+            test ! -d /usr/local/lib/node_modules/npm
+            echo "APP_RUNTIME_NPM_CLI=ABSENT_PASS"
+          '
       - name: Smoke current application image with isolated Secure Guard Staging profile
         shell: bash
         run: |
@@ -208,3 +235,4 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
+
