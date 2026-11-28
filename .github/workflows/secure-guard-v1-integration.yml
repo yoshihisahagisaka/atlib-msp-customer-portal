@@ -7,6 +7,7 @@ on:
       - feat/sg-v1-dedicated-integration-20261112
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
+      - feat/secure-guard-mfa-m3-20261127
     paths:
       - 'src/**'
       - 'test/**'
@@ -14,6 +15,7 @@ on:
       - 'migrations/secure_guard_runner.ts'
       - 'migration-runtime/**'
       - 'migration-manifests/secure-guard-staging-001-005.json'
+      - 'Dockerfile'
       - 'Dockerfile.secure-guard-migration'
       - 'scripts/readiness/verifySecureGuardMigrationManifest.cjs'
       - 'package.json'
@@ -25,6 +27,7 @@ on:
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
+      - chore/secure-guard-node24-release-candidate-20261128
 
 permissions:
   contents: read
@@ -82,6 +85,16 @@ jobs:
         run: >-
           docker build --file Dockerfile
           --tag secure-guard-app-ci:${{ github.sha }} .
+      - name: Verify supported app container runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(docker run --rm --entrypoint node secure-guard-app-ci:${{ github.sha }} -p 'process.versions.node')"
+          [[ "$version" == 24.* ]] || {
+            echo "STOP: App runtime is not Node 24 LTS"
+            exit 1
+          }
+          echo "NODE_APP_RUNTIME=24_LTS_PASS"
       - name: Smoke current application image with isolated Secure Guard Staging profile
         shell: bash
         run: |
