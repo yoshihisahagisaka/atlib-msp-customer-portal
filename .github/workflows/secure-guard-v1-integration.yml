@@ -192,6 +192,17 @@ jobs:
           critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' secure-guard-app-image-vulnerabilities.json)"
           high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' secure-guard-app-image-vulnerabilities.json)"
           echo "APP_IMAGE_CRITICAL=$critical APP_IMAGE_HIGH=$high"
+          echo "=== Candidate image Critical/High findings (severity, CVE, package, installed, fixed, class, target) ==="
+          jq -r '
+            .Results[]?
+            | (.Target // "unknown") as $target
+            | (.Type // "unknown") as $class
+            | .Vulnerabilities[]?
+            | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+            | [ .Severity, .VulnerabilityID, .PkgName,
+                .InstalledVersion, (.FixedVersion // "UNFIXED"),
+                $class, $target ] | @tsv
+          ' secure-guard-app-image-vulnerabilities.json
           if [[ "$critical" != "0" || "$high" != "0" ]]; then
             echo "APP_IMAGE_SECURITY_GATE=STOP"
             exit 1
