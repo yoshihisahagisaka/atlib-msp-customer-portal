@@ -18,7 +18,7 @@ WORKDIR /runtime
 COPY migration-runtime/package.json migration-runtime/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM gcr.io/distroless/nodejs24-debian13:nonroot
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:774b396818c5dbc4d9aba312b84d548045939ca6efdadc840a928f205116fc74
 WORKDIR /app
 ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
