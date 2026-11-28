@@ -87,3 +87,45 @@ test('HTTP initial invitation recovery rejects callers without an MSP grant', as
     assert.deepEqual(await response.json(), { error: 'MSP_SCOPE_DENIED' });
   });
 });
+
+
+test('Zod 4 compatibility preserves UUID and email fail-closed HTTP validation without side effects', async () => {
+  let canceled = 0;
+  let reissued = 0;
+  let emailed = 0;
+  const basic = baseInput();
+  const input = baseInput({
+    repo: {
+      ...basic.repo,
+      cancelInitialInvitation: async () => { canceled++; return true; },
+    },
+    identityService: {
+      ...basic.identityService,
+      replaceInitialInvitation: async () => { reissued++; return { token: 'synthetic', expiresAt: new Date() }; },
+    },
+    mailer: { sendSecureGuardInvitationEmail: async () => { emailed++; } },
+  });
+  await withApp(input, async (base) => {
+    const endpoint = '/api/secure-guard/admin/initial-memberships/invitations/';
+    for (const badUuid of ['not-a-uuid', '00000000-0000-0000-0000-000000000001']) {
+      const response = await fetch(base + endpoint + 'cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: 'secure_guard_session=test' },
+        body: JSON.stringify({ customerOrganizationId: badUuid }),
+      });
+      assert.equal(response.status, 400, 'Invalid organization UUID must be rejected');
+    }
+    const invalidEmail = await fetch(base + endpoint + 'reissue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: 'secure_guard_session=test' },
+      body: JSON.stringify({
+        customerOrganizationId: '00000000-0000-4000-8000-000000000001',
+        email: 'not-an-email',
+      }),
+    });
+    assert.equal(invalidEmail.status, 400, 'Invalid email must be rejected');
+  });
+  assert.equal(canceled, 0);
+  assert.equal(reissued, 0);
+  assert.equal(emailed, 0);
+});
