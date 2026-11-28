@@ -62,7 +62,7 @@ jobs:
       # Read-only candidate lock resolution, never committed by CI.
       # This conditional step is limited to the security remediation branch.
       - name: Resolve candidate security dependency lockfile
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
         run: |
           set -euo pipefail
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
@@ -70,7 +70,7 @@ jobs:
           echo "CANDIDATE_LOCKFILE_RESOLVED=PASS"
 
       - name: Export candidate lockfile for reviewed commit
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
         uses: actions/upload-artifact@v4
         with:
           name: secure-guard-candidate-package-lock-${{ github.run_id }}
@@ -116,6 +116,14 @@ jobs:
             exit 1
           }
           echo "NODE_APP_RUNTIME=24_LTS_PASS"
+          docker run --rm --entrypoint sh secure-guard-app-ci:${{ github.sha }} -ec '
+            if command -v npm >/dev/null || command -v npx >/dev/null; then
+              echo "APP_RUNTIME_NPM_CLI=STOP_PRESENT"
+              exit 1
+            fi
+            test ! -d /usr/local/lib/node_modules/npm
+            echo "APP_RUNTIME_NPM_CLI=ABSENT_PASS"
+          '
       - name: Smoke current application image with isolated Secure Guard Staging profile
         shell: bash
         run: |
@@ -231,7 +239,7 @@ jobs:
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
 
       - name: Stop until reviewed lockfile is committed
-        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128' || github.head_ref == 'fix/secure-guard-app-deps-security-20261128'
         shell: bash
         run: |
           set -euo pipefail
