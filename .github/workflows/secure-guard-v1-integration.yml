@@ -61,6 +61,15 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Validate review-only GCP image gate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/readiness/secureGuardAppGcpImageGate.sh
+          grep -Fq "SECURE_GUARD_PRODUCTION=NO_GO" scripts/readiness/secureGuardAppGcpImageGate.sh
+          grep -Fq "SECURE_GUARD_GATE_S3=STOP_MIGRATION_IMAGE_OPENSSL" scripts/readiness/secureGuardAppGcpImageGate.sh
+          test -s cloudbuild.secure-guard-app-review.yaml
+          echo "REVIEW_ONLY_GCP_GATE_STATIC=PASS"
       - name: Verify reviewed lockfile is immutable
         shell: bash
         run: |
