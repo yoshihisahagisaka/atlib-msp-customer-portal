@@ -1,5 +1,5 @@
 # --- build stage ---
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # puppeteerはmonthly-report-batch(batch/)専用の依存で、このAlpineイメージでは
@@ -13,7 +13,7 @@ COPY scripts ./scripts
 RUN npm run build
 
 # --- runtime stage ---
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_DOWNLOAD=true
