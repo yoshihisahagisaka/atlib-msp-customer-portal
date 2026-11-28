@@ -1,0 +1,21 @@
+# Secure Guard V1: review-only application image. No Cloud Run deploy or migration.
+# The source commit is verified by scripts/readiness/secureGuardAppGcpImageGate.sh.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --platform=linux/amd64
+      - --file
+      - Dockerfile
+      - --label
+      - org.opencontainers.image.revision=${_SOURCE_REVISION}
+      - --tag
+      - ${_IMAGE}
+      - .
+images:
+  - '${_IMAGE}'
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _SOURCE_REVISION: review-required
+  _IMAGE: asia-northeast1-docker.pkg.dev/msp-zabbix/cloud-run-source-deploy/secure-guard-app-review:review-required
