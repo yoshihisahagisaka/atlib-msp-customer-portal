@@ -8,6 +8,7 @@ on:
       - feat/secure-guard-mfa-v1-20261127
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
+      - chore/secure-guard-node24-release-candidate-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -28,6 +29,7 @@ on:
       - feat/secure-guard-mfa-m2-20261127
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
+      - fix/secure-guard-app-deps-security-20261128
 
 permissions:
   contents: read
@@ -57,6 +59,25 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      # Read-only candidate lock resolution, never committed by CI.
+      # This conditional step is limited to the security remediation branch.
+      - name: Resolve candidate security dependency lockfile
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm update --package-lock-only --ignore-scripts --no-audit --no-fund
+          echo "CANDIDATE_LOCKFILE_RESOLVED=PASS"
+
+      - name: Export candidate lockfile for reviewed commit
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-guard-candidate-package-lock-${{ github.run_id }}
+          path: package-lock.json
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Install locked dependencies
         run: npm ci
       - name: Offline regression suite
@@ -208,3 +229,15 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
+
+      - name: Stop until reviewed lockfile is committed
+        if: github.ref_name == 'fix/secure-guard-app-deps-security-20261128'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- package-lock.json; then
+            echo "APP_DEPENDENCY_LOCKFILE=STOP_UNCOMMITTED"
+            exit 1
+          fi
+          echo "APP_DEPENDENCY_LOCKFILE=COMMITTED"
+
