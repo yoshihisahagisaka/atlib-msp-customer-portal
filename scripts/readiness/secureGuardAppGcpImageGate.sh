@@ -3,14 +3,14 @@
 set -Eeuo pipefail
 umask 077
 REPO='yoshihisahagisaka/atlib-msp-customer-portal'
-BRANCH='chore/secure-guard-app-base-digest-20261128'
+BRANCH='fix/sg-app-gcp-scan-cves-20261128'
 PROJECT='msp-zabbix'
 REGION='asia-northeast1'
 BASE='sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5'
-LOCK='31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591'
+LOCK='c0e46f37608a4c2f75f15351220227e2eb552d3fa4e865016f1d055bbd0d30b4'
 HEAD="${1:-}"
 stop() { echo "[STOP] $*" >&2; exit 1; }
-[[ "$HEAD" =~ ^[a-f0-9]{40}$ ]] || stop 'Supply reviewed 40-character PR18 HEAD'
+[[ "$HEAD" =~ ^[a-f0-9]{40}$ ]] || stop 'Supply reviewed 40-character PR19 HEAD'
 for tool in gh git gcloud jq tar sha256sum; do
   command -v "$tool" >/dev/null || stop "Missing $tool"
 done
@@ -24,7 +24,7 @@ fmt="$(gcloud artifacts repositories describe cloud-run-source-deploy --project=
   --location="$REGION" --format='value(format)')"
 [[ "$fmt" == DOCKER ]] || stop 'Review target is not an existing Docker repository'
 ROOT="$REGION-docker.pkg.dev/$PROJECT/cloud-run-source-deploy/secure-guard-app-review"
-TAG="$ROOT:pr18-$HEAD"
+TAG="$ROOT:pr19-$HEAD"
 if gcloud artifacts docker images describe "$TAG" --project="$PROJECT" \
   --format='value(image_summary.digest)' >/dev/null 2>&1; then
   stop "Review tag already exists; no overwrite: $TAG"
@@ -48,9 +48,9 @@ gh repo clone "$REPO" "$WORK/repo" -- --single-branch --depth 1 --branch "$BRANC
 [[ "$(git -C "$WORK/repo" rev-parse HEAD)" == "$HEAD" ]] || stop 'GitHub HEAD drift'
 [[ -z "$(git -C "$WORK/repo" status --porcelain)" ]] || stop 'Unclean clone'
 # Require exact HEAD CI successes before any paid GCP operation.
-runs="$(gh api "repos/$REPO/actions/runs?branch=$BRANCH&per_page=30")"
+runs="$(gh api "repos/$REPO/actions/workflows/secure-guard-v1-integration.yml/runs?branch=$BRANCH&per_page=30")"
 pass="$(jq -r --arg head "$HEAD" \
-  '[.workflow_runs[] | select(.head_sha==$head and .conclusion=="success")] | length' <<< "$runs")"
+  '[.workflow_runs[] | select(.head_sha==$head and .status=="completed" and .conclusion=="success" and (.event=="push" or .event=="pull_request")) | .id] | unique | length' <<< "$runs")"
 (( pass >= 2 )) || stop "Expected 2 successful CI runs on exact HEAD, got $pass"
 # Only committed source enters the Build; never upload .git or local files.
 git -C "$WORK/repo" archive "$HEAD" | tar -xf - -C "$WORK/src"

@@ -10,6 +10,7 @@ on:
       - feat/secure-guard-mfa-m3-20261127
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
+      - chore/secure-guard-app-base-digest-20261128
     paths:
       - 'src/**'
       - 'test/**'
@@ -21,6 +22,7 @@ on:
       - 'Dockerfile.secure-guard-migration'
       - 'scripts/readiness/verifySecureGuardMigrationManifest.cjs'
       - 'package.json'
+      - 'package-lock.json'
       - 'tsconfig.secure-guard-migration.json'
       - '.github/workflows/secure-guard-v1-integration.yml'
   push:
@@ -32,6 +34,7 @@ on:
       - chore/secure-guard-node24-release-candidate-20261128
       - fix/secure-guard-app-deps-security-20261128
       - chore/secure-guard-app-base-digest-20261128
+      - fix/sg-app-gcp-scan-cves-20261128
 
 permissions:
   contents: read
@@ -55,8 +58,18 @@ jobs:
           --health-retries 10
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
+      REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_SHA }}
+      - name: Verify exact reviewed source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          echo "SG_SOURCE_HEAD=EXACT_PASS"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -74,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected="31ebf3b7e5afb4f83d7e33815cfe14625afd3da4e281dbfebd08079ba62fe591"
+          expected="c0e46f37608a4c2f75f15351220227e2eb552d3fa4e865016f1d055bbd0d30b4"
           actual="$(sha256sum package-lock.json | cut -d' ' -f1)"
           if [[ "$actual" != "$expected" ]]; then
             echo "APP_LOCKFILE=STOP_SHA_MISMATCH"
@@ -91,12 +104,14 @@ jobs:
           echo "APP_DEPENDENCY_LOCKFILE=IMMUTABLE_PASS"
       - name: Offline regression suite
         run: npm test
+      - name: Compile legacy monthly-report batch for Zod4 compatibility
+        run: npm run build:batch
       - name: Dedicated SG migration typecheck
         run: npm run typecheck:secure-guard-migration
       - name: Build dedicated SG migration image
         run: >-
           docker build --file Dockerfile.secure-guard-migration
-          --build-arg SOURCE_REVISION=${{ github.sha }}
+          --build-arg SOURCE_REVISION=${{ env.REVIEWED_SHA }}
           --tag secure-guard-migration-ci:current .
       - name: Isolated PG16 migration and role-boundary acceptance
         run: npm run test:secure-guard-db-e2e
@@ -140,18 +155,24 @@ jobs:
       - name: Build current application image (no new service or Dockerfile)
         run: >-
           docker build --file Dockerfile
-          --tag secure-guard-app-ci:${{ github.sha }} .
+          --build-arg SOURCE_REVISION=${{ env.REVIEWED_SHA }}
+          --tag secure-guard-app-ci:${{ env.REVIEWED_SHA }} .
       - name: Verify supported app container runtime
         shell: bash
         run: |
           set -euo pipefail
-          version="$(docker run --rm --entrypoint node secure-guard-app-ci:${{ github.sha }} -p 'process.versions.node')"
+          version="$(docker run --rm --entrypoint node secure-guard-app-ci:${{ env.REVIEWED_SHA }} -p 'process.versions.node')"
           [[ "$version" == 24.* ]] || {
             echo "STOP: App runtime is not Node 24 LTS"
             exit 1
           }
           echo "NODE_APP_RUNTIME=24_LTS_PASS"
-          docker run --rm --entrypoint sh secure-guard-app-ci:${{ github.sha }} -ec '
+          uid="$(docker run --rm --entrypoint node secure-guard-app-ci:${{ env.REVIEWED_SHA }} -p 'process.getuid()')"
+          [[ "$uid" == "1000" ]] || { echo "APP_RUNTIME_NONROOT=STOP_UID_$uid"; exit 1; }
+          label="$(docker image inspect secure-guard-app-ci:${{ env.REVIEWED_SHA }} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "$label" == "$REVIEWED_SHA" ]] || { echo "APP_IMAGE_SOURCE_LABEL=STOP"; exit 1; }
+          echo "APP_RUNTIME_NONROOT=PASS APP_IMAGE_SOURCE_LABEL=PASS"
+          docker run --rm --entrypoint sh secure-guard-app-ci:${{ env.REVIEWED_SHA }} -ec '
             if command -v npm >/dev/null || command -v npx >/dev/null; then
               echo "APP_RUNTIME_NPM_CLI=STOP_PRESENT"
               exit 1
@@ -178,7 +199,7 @@ jobs:
             --env SECURE_GUARD_DB_PASSWORD=synthetic-ci-no-real-db \
             --env SECURE_GUARD_JWT_SECRET=synthetic-ci-only-session-key-not-for-deployment \
             --env SECURE_GUARD_BASE_URL=https://secure-guard.example.test/ \
-            secure-guard-app-ci:${{ github.sha }} >/dev/null
+            secure-guard-app-ci:${{ env.REVIEWED_SHA }} >/dev/null
 
           ready=0
           for i in {1..30}; do
@@ -222,7 +243,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, signed immutable release
         with:
           scan-type: image
-          image-ref: secure-guard-app-ci:${{ github.sha }}
+          image-ref: secure-guard-app-ci:${{ env.REVIEWED_SHA }}
           format: json
           output: secure-guard-app-image-vulnerabilities.json
           severity: CRITICAL,HIGH
@@ -272,4 +293,3 @@ jobs:
             exit 1
           fi
           echo "APP_IMAGE_SECURITY_GATE=CI_PASS_GCP_SCAN_STILL_REQUIRED"
-
